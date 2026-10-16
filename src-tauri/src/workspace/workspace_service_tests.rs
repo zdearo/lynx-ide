@@ -107,6 +107,36 @@ fn add_repo_rejects_a_missing_path() {
 }
 
 #[test]
+fn create_project_makes_an_empty_repo_and_registers_it() {
+    let state_dir = tempfile::tempdir().expect("state dir");
+    let service = service_in(&state_dir);
+    let parent = tempfile::tempdir().expect("parent");
+
+    let repo = service
+        .create_project(&parent.path().to_string_lossy(), "my-app")
+        .expect("create project");
+
+    assert_eq!(repo.name, "my-app");
+    assert!(parent.path().join("my-app").join(".git").is_dir());
+    assert_eq!(service.list_repos().expect("repos").len(), 1);
+    let worktrees = service.list_worktrees(&repo.id).expect("worktrees");
+    assert_eq!(worktrees.len(), 1);
+    assert!(worktrees[0].is_main);
+}
+
+#[test]
+fn create_project_registers_nothing_when_the_name_is_refused() {
+    let state_dir = tempfile::tempdir().expect("state dir");
+    let service = service_in(&state_dir);
+    let parent = tempfile::tempdir().expect("parent");
+
+    let result = service.create_project(&parent.path().to_string_lossy(), "a/b");
+
+    assert!(matches!(result, Err(AppError::InvalidName(_))));
+    assert!(service.list_repos().expect("repos").is_empty());
+}
+
+#[test]
 fn add_repo_rejects_bare_repositories() {
     let root = tempfile::tempdir().expect("root");
     let bare = root.path().join("bare.git");
@@ -633,4 +663,154 @@ fn a_removed_worktree_or_repo_can_no_longer_be_resolved() {
         .remove_repo(&fixture.repo.id)
         .expect("remove repo");
     assert!(fixture.service.resolve_worktree(&main).is_err());
+}
+
+#[test]
+fn folders_nest_and_list_in_creation_order() {
+    let fixture = plain_fixture();
+    let work = fixture.service.create_folder("Work", None).expect("work");
+    let client = fixture
+        .service
+        .create_folder("Client X", Some(&work.id))
+        .expect("client");
+
+    let listed = fixture.service.list_folders().expect("list");
+
+    assert_eq!(
+        listed.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+        ["Work", "Client X"]
+    );
+    assert_eq!(
+        listed[1].parent_id.as_deref(),
+        Some(client.parent_id.as_deref().unwrap())
+    );
+}
+
+#[test]
+fn folder_names_are_trimmed_and_blank_or_long_names_are_refused() {
+    let fixture = plain_fixture();
+    assert_eq!(
+        fixture
+            .service
+            .create_folder("  Work  ", None)
+            .expect("trimmed")
+            .name,
+        "Work"
+    );
+    assert!(matches!(
+        fixture.service.create_folder("   ", None),
+        Err(AppError::InvalidName(_))
+    ));
+    assert!(matches!(
+        fixture.service.create_folder(&"x".repeat(101), None),
+        Err(AppError::InvalidName(_))
+    ));
+    assert!(matches!(
+        fixture.service.rename_folder("nope", "Name"),
+        Err(AppError::FolderNotFound(_))
+    ));
+}
+
+#[test]
+fn a_folder_cannot_be_moved_into_itself_or_a_folder_inside_it() {
+    let fixture = plain_fixture();
+    let work = fixture.service.create_folder("Work", None).expect("work");
+    let client = fixture
+        .service
+        .create_folder("Client", Some(&work.id))
+        .expect("client");
+    let project = fixture
+        .service
+        .create_folder("Project", Some(&client.id))
+        .expect("project");
+
+    assert!(matches!(
+        fixture.service.move_folder(&work.id, Some(&work.id)),
+        Err(AppError::FolderCycle)
+    ));
+    assert!(matches!(
+        fixture.service.move_folder(&work.id, Some(&project.id)),
+        Err(AppError::FolderCycle)
+    ));
+
+    // Moving the inner folder out to the top is fine, and then Work can go under it.
+    fixture
+        .service
+        .move_folder(&project.id, None)
+        .expect("out to the top");
+    fixture
+        .service
+        .move_folder(&work.id, Some(&project.id))
+        .expect("now allowed");
+}
+
+#[test]
+fn deleting_a_folder_keeps_its_repos_and_worktrees() {
+    let fixture = plain_fixture();
+    let client = fixture
+        .service
+        .create_folder("Client", None)
+        .expect("client");
+    fixture
+        .service
+        .move_repo(&fixture.repo.id, Some(&client.id))
+        .expect("place repo");
+    let created = fixture
+        .service
+        .create_worktree(&fixture.repo.id, "task", None)
+        .expect("worktree");
+
+    fixture.service.delete_folder(&client.id).expect("delete");
+
+    assert!(fixture.service.list_folders().expect("list").is_empty());
+    assert_eq!(
+        fixture.service.list_repos().expect("repos")[0].folder_id,
+        None
+    );
+    assert!(
+        Path::new(&created.path).is_dir(),
+        "nothing is removed from disk"
+    );
+    assert!(matches!(
+        fixture.service.delete_folder(&client.id),
+        Err(AppError::FolderNotFound(_))
+    ));
+}
+
+#[test]
+fn repos_only_go_into_folders_that_exist() {
+    let fixture = plain_fixture();
+    assert!(matches!(
+        fixture.service.move_repo(&fixture.repo.id, Some("ghost")),
+        Err(AppError::FolderNotFound(_))
+    ));
+    assert!(matches!(
+        fixture.service.move_repo("ghost", None),
+        Err(AppError::RepoNotFound(_))
+    ));
+}
+
+#[test]
+fn folders_and_their_placement_survive_reopening_the_database() {
+    let git_repo = TestRepository::new();
+    let state_dir = tempfile::tempdir().expect("state dir");
+    let service = service_in(&state_dir);
+    let repo = service
+        .add_repo(&git_repo.path.to_string_lossy())
+        .expect("add");
+    let work = service.create_folder("Work", None).expect("work");
+    service
+        .set_folder_collapsed(&work.id, true)
+        .expect("collapse");
+    service.move_repo(&repo.id, Some(&work.id)).expect("place");
+
+    let reopened = service_in(&state_dir);
+
+    assert!(reopened.list_folders().expect("folders")[0].collapsed);
+    assert_eq!(
+        reopened.list_repos().expect("repos")[0]
+            .folder_id
+            .as_deref(),
+        Some(work.id.as_str())
+    );
 }

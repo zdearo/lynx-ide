@@ -10,6 +10,8 @@ const INITIAL_ROWS = 32;
 interface TerminalState {
   sessions: TerminalInfo[];
   activeByWorktree: Record<string, string>;
+  /** Asks a view to take keyboard focus, even when its tab was already the active one. */
+  focusRequest: { id: string; nonce: number } | null;
 
   load: () => Promise<void>;
   create: (
@@ -19,12 +21,14 @@ interface TerminalState {
   close: (id: string) => Promise<void>;
   closeAllIn: (worktreePath: string) => Promise<void>;
   setActive: (worktreePath: string, id: string) => void;
+  requestFocus: (id: string) => void;
   markExited: (id: string, exitCode: number | null) => void;
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   sessions: [],
   activeByWorktree: {},
+  focusRequest: null,
 
   /** Sessions outlive a webview reload, so the list comes from the backend. */
   async load() {
@@ -84,6 +88,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   setActive(worktreePath, id) {
     set((state) => ({
       activeByWorktree: { ...state.activeByWorktree, [worktreePath]: id },
+    }));
+  },
+
+  requestFocus(id) {
+    set((state) => ({
+      focusRequest: { id, nonce: (state.focusRequest?.nonce ?? 0) + 1 },
     }));
   },
 

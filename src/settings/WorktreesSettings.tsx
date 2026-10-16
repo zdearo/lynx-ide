@@ -1,3 +1,5 @@
+import { open } from "@tauri-apps/plugin-dialog";
+
 import { TextSetting } from "@/settings/SettingFields";
 import { useSettings } from "@/settings/use-settings";
 import { copy } from "@/ui-copy";
@@ -17,6 +19,18 @@ export function WorktreesSettings() {
       onCommit={(directory) =>
         save({ ...config, worktrees: { ...config.worktrees, directory } })
       }
+      browse={{
+        label: copy.settings.worktrees.directory.browse,
+        onBrowse: async () => {
+          const chosen = await open({ directory: true, multiple: false });
+          if (typeof chosen === "string") {
+            await save({
+              ...config,
+              worktrees: { ...config.worktrees, directory: chosen },
+            });
+          }
+        },
+      }}
     />
   );
 }

@@ -10,6 +10,37 @@ pub const MAX_FONT_SIZE: u8 = 32;
 pub const DEFAULT_SCROLLBACK: u32 = 5_000;
 pub const MAX_SCROLLBACK: u32 = 100_000;
 
+/// What a bell from a program does. Sound is left out: the terminal engine only reports the bell.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum BellStyle {
+    None,
+    #[default]
+    Visual,
+}
+
+/// Themes the terminal can use. `Default` is the look the app has always had. A theme
+/// gives the background; its text palette can also be used for the text.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ColorScheme {
+    #[default]
+    Default,
+    Light,
+    SolarizedDark,
+    SolarizedLight,
+    Dracula,
+    Nord,
+    CatppuccinLatte,
+    CatppuccinFrappe,
+    CatppuccinMacchiato,
+    CatppuccinMocha,
+    GruvboxDark,
+    OneDark,
+    TokyoNight,
+    Monokai,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalConfig {
@@ -20,6 +51,19 @@ pub struct TerminalConfig {
     pub shell: Option<String>,
     /// Lines of history kept per terminal.
     pub scrollback: u32,
+    /// Copies a selection to the clipboard as soon as the mouse is released.
+    pub copy_on_select: bool,
+    pub bell: BellStyle,
+    /// macOS only: the Option key sends Meta, which Emacs and readline shortcuts expect.
+    pub mac_option_is_meta: bool,
+    /// Closes the tab when its program exits, instead of keeping the last output.
+    pub close_on_exit: bool,
+    /// Asks before closing a tab whose process is alive, an idle shell included.
+    pub confirm_close: bool,
+    /// The theme: its background is the terminal's background.
+    pub color_scheme: ColorScheme,
+    /// Theme whose text palette (text colour and ANSI colours) the text uses; `None` uses `color_scheme`'s.
+    pub text_color_scheme: Option<ColorScheme>,
 }
 
 impl Default for TerminalConfig {
@@ -29,6 +73,13 @@ impl Default for TerminalConfig {
             font_size: DEFAULT_FONT_SIZE,
             shell: None,
             scrollback: DEFAULT_SCROLLBACK,
+            copy_on_select: false,
+            bell: BellStyle::default(),
+            mac_option_is_meta: false,
+            close_on_exit: false,
+            confirm_close: false,
+            color_scheme: ColorScheme::default(),
+            text_color_scheme: None,
         }
     }
 }
@@ -144,6 +195,21 @@ impl AppConfig {
             "terminal.fontSize" => self.terminal.font_size = defaults.terminal.font_size,
             "terminal.shell" => self.terminal.shell = defaults.terminal.shell,
             "terminal.scrollback" => self.terminal.scrollback = defaults.terminal.scrollback,
+            "terminal.colorScheme" => self.terminal.color_scheme = defaults.terminal.color_scheme,
+            "terminal.textColorScheme" => {
+                self.terminal.text_color_scheme = defaults.terminal.text_color_scheme;
+            }
+            "terminal.copyOnSelect" => {
+                self.terminal.copy_on_select = defaults.terminal.copy_on_select
+            }
+            "terminal.bell" => self.terminal.bell = defaults.terminal.bell,
+            "terminal.macOptionIsMeta" => {
+                self.terminal.mac_option_is_meta = defaults.terminal.mac_option_is_meta;
+            }
+            "terminal.closeOnExit" => self.terminal.close_on_exit = defaults.terminal.close_on_exit,
+            "terminal.confirmClose" => {
+                self.terminal.confirm_close = defaults.terminal.confirm_close
+            }
             "worktrees.directory" => self.worktrees.directory = defaults.worktrees.directory,
             _ => {}
         }
@@ -170,6 +236,27 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
         }
         if let Some(lines) = number(terminal, "scrollback", "terminal", &mut issues) {
             config.terminal.scrollback = u32::try_from(lines).unwrap_or(u32::MAX);
+        }
+        if let Some(value) = flag(terminal, "copyOnSelect", "terminal", &mut issues) {
+            config.terminal.copy_on_select = value;
+        }
+        if let Some(bell) = bell_style(terminal, &mut issues) {
+            config.terminal.bell = bell;
+        }
+        if let Some(value) = flag(terminal, "macOptionIsMeta", "terminal", &mut issues) {
+            config.terminal.mac_option_is_meta = value;
+        }
+        if let Some(value) = flag(terminal, "closeOnExit", "terminal", &mut issues) {
+            config.terminal.close_on_exit = value;
+        }
+        if let Some(value) = flag(terminal, "confirmClose", "terminal", &mut issues) {
+            config.terminal.confirm_close = value;
+        }
+        if let Some(scheme) = color_scheme(terminal, "colorScheme", &mut issues) {
+            config.terminal.color_scheme = scheme;
+        }
+        if let Some(scheme) = color_scheme(terminal, "textColorScheme", &mut issues) {
+            config.terminal.text_color_scheme = Some(scheme);
         }
     }
     if let Some(worktrees) = section(root, "worktrees", &mut issues) {
@@ -224,6 +311,55 @@ fn optional_text(
                 &format!("{section}.{key}"),
                 "must be text",
             ));
+            None
+        }
+    }
+}
+
+fn flag(
+    object: &Map<String, Value>,
+    key: &str,
+    section: &str,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<bool> {
+    match object.get(key)? {
+        Value::Bool(value) => Some(*value),
+        Value::Null => None,
+        _ => {
+            issues.push(ConfigIssue::new(
+                &format!("{section}.{key}"),
+                "must be true or false",
+            ));
+            None
+        }
+    }
+}
+
+fn color_scheme(
+    object: &Map<String, Value>,
+    key: &str,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<ColorScheme> {
+    let text = optional_text(object, key, "terminal", issues)?;
+    // Same names as the serialized form, so the file and the interface agree.
+    match serde_json::from_value(Value::String(text)) {
+        Ok(scheme) => Some(scheme),
+        Err(_) => {
+            issues.push(ConfigIssue::new(
+                &format!("terminal.{key}"),
+                "must be one of the colour schemes the settings offer",
+            ));
+            None
+        }
+    }
+}
+
+fn bell_style(object: &Map<String, Value>, issues: &mut Vec<ConfigIssue>) -> Option<BellStyle> {
+    match optional_text(object, "bell", "terminal", issues)?.as_str() {
+        "none" => Some(BellStyle::None),
+        "visual" => Some(BellStyle::Visual),
+        _ => {
+            issues.push(ConfigIssue::new("terminal.bell", "must be none or visual"));
             None
         }
     }
@@ -409,5 +545,75 @@ mod tests {
         );
         assert_eq!(expand_home("/a/~/b", home), PathBuf::from("/a/~/b"));
         assert_eq!(expand_home("~user/x", home), PathBuf::from("~user/x"));
+    }
+
+    #[test]
+    fn reads_the_terminal_behaviour_options() {
+        let (config, issues) = parse(json!({
+            "terminal": {
+                "copyOnSelect": true,
+                "bell": "none",
+                "macOptionIsMeta": true,
+                "closeOnExit": true,
+                "confirmClose": true
+            }
+        }));
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(config.terminal.copy_on_select);
+        assert_eq!(config.terminal.bell, BellStyle::None);
+        assert!(config.terminal.mac_option_is_meta);
+        assert!(config.terminal.close_on_exit);
+        assert!(config.terminal.confirm_close);
+    }
+
+    #[test]
+    fn behaviour_options_default_to_quiet_with_a_visual_bell() {
+        let terminal = TerminalConfig::default();
+        assert!(!terminal.copy_on_select);
+        assert_eq!(terminal.bell, BellStyle::Visual);
+        assert!(!terminal.mac_option_is_meta);
+        assert!(!terminal.close_on_exit);
+        assert!(!terminal.confirm_close);
+    }
+
+    #[test]
+    fn a_bell_outside_the_list_and_non_boolean_flags_fall_back_to_defaults() {
+        let (config, issues) = parse(json!({
+            "terminal": { "bell": "sound", "copyOnSelect": "yes", "confirmClose": 0 }
+        }));
+        assert_eq!(
+            keys(&issues),
+            [
+                "terminal.copyOnSelect",
+                "terminal.bell",
+                "terminal.confirmClose"
+            ]
+        );
+        assert_eq!(config.terminal, TerminalConfig::default());
+    }
+
+    #[test]
+    fn reads_the_theme_and_the_text_theme() {
+        let (config, issues) = parse(json!({
+            "terminal": { "colorScheme": "solarizedDark", "textColorScheme": "dracula" }
+        }));
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(config.terminal.color_scheme, ColorScheme::SolarizedDark);
+        assert_eq!(
+            config.terminal.text_color_scheme,
+            Some(ColorScheme::Dracula)
+        );
+    }
+
+    #[test]
+    fn unknown_themes_fall_back_to_defaults() {
+        let (config, issues) = parse(json!({
+            "terminal": { "colorScheme": "neon", "textColorScheme": "red" }
+        }));
+        assert_eq!(
+            keys(&issues),
+            ["terminal.colorScheme", "terminal.textColorScheme"]
+        );
+        assert_eq!(config.terminal, TerminalConfig::default());
     }
 }

@@ -29,6 +29,10 @@ interface WorktreeRowProps {
   onSelect: () => void;
 }
 
+/**
+ * The worktree's own line. It draws no selection background: when selected, the
+ * surrounding `WorktreeGroup` paints one surface for the line and its agents.
+ */
 export function WorktreeRow({
   repoId,
   worktree,
@@ -40,7 +44,7 @@ export function WorktreeRow({
   const label = worktreeLabel(worktree);
 
   return (
-    <li className="group/row relative">
+    <div className="group/row relative">
       <button
         type="button"
         data-nav-item
@@ -49,13 +53,17 @@ export function WorktreeRow({
         className={cn(
           "flex h-7 w-full items-center gap-2 rounded-md pr-2 pl-7 text-left text-ui",
           selected
-            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            ? "text-sidebar-accent-foreground"
             : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
         )}
       >
         <StateDot state={runningCount > 0 ? "running" : "idle"} />
         <span
-          className={cn("min-w-0 flex-1 truncate", label.detached && "italic")}
+          className={cn(
+            "min-w-0 flex-1 truncate",
+            label.detached && "italic",
+            selected && "font-medium",
+          )}
           title={label.text}
         >
           {label.text}
@@ -75,17 +83,11 @@ export function WorktreeRow({
           <Lock className="size-3 shrink-0" aria-label={copy.worktree.locked} />
         )}
         {worktree.isMain && (
-          <span className="shrink-0 rounded-sm px-1 text-meta text-muted-foreground ring-1 ring-border ring-inset group-focus-within/row:invisible group-hover/row:invisible">
+          <span className="shrink-0 text-meta text-muted-foreground group-focus-within/row:invisible group-hover/row:invisible">
             {copy.worktree.primary}
           </span>
         )}
       </button>
-
-      {selected && worktree.baseRef && (
-        <p className="truncate pr-2 pb-1 pl-[3.25rem] text-meta text-muted-foreground">
-          {copy.worktree.from(worktree.baseRef)}
-        </p>
-      )}
 
       <div
         className={cn(
@@ -119,6 +121,6 @@ export function WorktreeRow({
           </DropdownMenu>
         )}
       </div>
-    </li>
+    </div>
   );
 }

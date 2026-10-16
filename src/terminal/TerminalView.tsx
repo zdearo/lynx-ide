@@ -9,10 +9,11 @@ import { useTerminalConfig } from "@/config/config-store";
 import { cn } from "@/lib/utils";
 import { unwrap } from "@/lib/ipc-result";
 import {
-  TERMINAL_THEME,
   terminalFontFamily,
   terminalFontsReady,
 } from "@/terminal/terminal-appearance";
+import { resolveTerminalTheme } from "@/terminal/terminal-color-schemes";
+import { useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalStreamGate } from "@/terminal/terminal-stream-gate";
 
 interface TerminalViewProps {
@@ -34,14 +35,18 @@ function mountTerminal(
   container: HTMLElement,
   terminalId: string,
   onExit: (exitCode: number | null) => void,
-  settings: TerminalConfig,
+  getSettings: () => TerminalConfig,
 ): Mounted {
+  const settings = getSettings();
   const terminal = new Terminal({
     cursorBlink: true,
     fontFamily: terminalFontFamily(settings.fontFamily),
     fontSize: settings.fontSize,
     scrollback: settings.scrollback,
-    theme: TERMINAL_THEME,
+    macOptionIsMeta: settings.macOptionIsMeta,
+    theme: resolveTerminalTheme(settings),
+    // Programs pick their own colours; this keeps any text readable (WCAG AA).
+    minimumContrastRatio: 4.5,
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
@@ -106,6 +111,28 @@ function mountTerminal(
   const observer = new ResizeObserver(fitIfVisible);
   observer.observe(container);
 
+  // The bell is only shown: the terminal engine reports it, it plays no sound.
+  const bell = terminal.onBell(() => {
+    if (getSettings().bell === "visual") {
+      container.classList.add("terminal-bell");
+    }
+  });
+  const endFlash = (event: AnimationEvent) => {
+    if (event.animationName === "terminal-bell") {
+      container.classList.remove("terminal-bell");
+    }
+  };
+  container.addEventListener("animationend", endFlash);
+
+  const copyOnRelease = () => {
+    if (!getSettings().copyOnSelect || !terminal.hasSelection()) return;
+    // The clipboard can refuse; the selection stays, so it can still be copied by hand.
+    void navigator.clipboard
+      .writeText(terminal.getSelection())
+      .catch(() => undefined);
+  };
+  container.addEventListener("mouseup", copyOnRelease);
+
   return {
     terminal,
     fit,
@@ -114,6 +141,9 @@ function mountTerminal(
       observer.disconnect();
       input.dispose();
       resize.dispose();
+      bell.dispose();
+      container.removeEventListener("animationend", endFlash);
+      container.removeEventListener("mouseup", copyOnRelease);
       unlisteners.forEach((unlisten) => unlisten());
       terminal.dispose();
     },
@@ -132,6 +162,7 @@ export function TerminalView({
   const onExitRef = useRef(onExit);
   const activeRef = useRef(active);
   const settings = useTerminalConfig();
+  const focusRequest = useTerminalStore((state) => state.focusRequest);
   const settingsRef = useRef(settings);
 
   useEffect(() => {
@@ -151,7 +182,7 @@ export function TerminalView({
         container,
         terminalId,
         (code) => onExitRef.current?.(code),
-        settingsRef.current,
+        () => settingsRef.current,
       );
       mountedRef.current = mounted;
       // The tab may have become active while the fonts were loading.
@@ -173,8 +204,20 @@ export function TerminalView({
     terminal.options.fontFamily = terminalFontFamily(settings.fontFamily);
     terminal.options.fontSize = settings.fontSize;
     terminal.options.scrollback = settings.scrollback;
+    terminal.options.macOptionIsMeta = settings.macOptionIsMeta;
+    terminal.options.theme = resolveTerminalTheme(settings);
     if (containerRef.current && containerRef.current.clientWidth > 0) fit.fit();
-  }, [settings.fontFamily, settings.fontSize, settings.scrollback]);
+    // Re-applies the whole config: every field here is cheap to set again.
+  }, [settings]);
+
+  // Something outside (an agent row in the sidebar) wants this terminal focused.
+  useEffect(() => {
+    if (!active || focusRequest?.id !== terminalId) return;
+    const frame = requestAnimationFrame(() =>
+      mountedRef.current?.terminal.focus(),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [focusRequest, active, terminalId]);
 
   useEffect(() => {
     if (!active) return;
@@ -188,13 +231,11 @@ export function TerminalView({
 
   return (
     // The padding lives out here: xterm sizes itself from its parent's box and
-    // would count padding on that parent as room it does not have.
+    // would count padding on that parent as room it does not have. Its colour is
+    // the terminal's, so a light scheme does not sit inside a dark frame.
     <div
-      className={cn(
-        "size-full bg-background p-2",
-        !active && "hidden",
-        className,
-      )}
+      className={cn("size-full p-2", !active && "hidden", className)}
+      style={{ backgroundColor: resolveTerminalTheme(settings).background }}
     >
       <div ref={containerRef} className="size-full" />
     </div>

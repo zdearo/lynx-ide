@@ -9,6 +9,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import type {
   AppConfig,
   ConfigSnapshot,
+  Folder,
   Repo,
   TerminalInfo,
   WorktreeInfo,
@@ -81,8 +82,18 @@ function seedRepos(): {
   worktrees: Record<string, WorktreeInfo[]>;
 } {
   const repos: Repo[] = [
-    { id: "r1", name: "agent-ade", path: "/home/dev/agent-ade" },
-    { id: "r2", name: "api-server", path: "/home/dev/api-server" },
+    {
+      id: "r1",
+      name: "agent-ade",
+      path: "/home/dev/agent-ade",
+      folderId: null,
+    },
+    {
+      id: "r2",
+      name: "api-server",
+      path: "/home/dev/api-server",
+      folderId: "f-client",
+    },
   ];
   return {
     repos,
@@ -173,7 +184,19 @@ const MOCK_FILES: Record<string, MockEntry[]> = {
 };
 
 const DEFAULT_CONFIG: AppConfig = {
-  terminal: { fontFamily: null, fontSize: 13, shell: null, scrollback: 5000 },
+  terminal: {
+    fontFamily: null,
+    fontSize: 13,
+    shell: null,
+    scrollback: 5000,
+    copyOnSelect: false,
+    bell: "visual",
+    macOptionIsMeta: false,
+    closeOnExit: false,
+    confirmClose: false,
+    colorScheme: "default",
+    textColorScheme: null,
+  },
   worktrees: { directory: null },
 };
 
@@ -218,7 +241,60 @@ export function installMockTauri(scenario: string): void {
     revealed: null,
   };
   const repos: Repo[] = [...seeded.repos];
+  // Work > Client X, with api-server inside Client X: the shape a real user would build.
+  const folders: Folder[] =
+    scenario === "empty"
+      ? []
+      : [
+          { id: "f-work", name: "Work", parentId: null, collapsed: false },
+          {
+            id: "f-client",
+            name: "Client X",
+            parentId: "f-work",
+            collapsed: false,
+          },
+        ];
+  let nextFolderId = 0;
+  const descendantsOf = (id: string): Set<string> => {
+    const ids = new Set([id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const folder of folders) {
+        if (
+          folder.parentId &&
+          ids.has(folder.parentId) &&
+          !ids.has(folder.id)
+        ) {
+          ids.add(folder.id);
+          grew = true;
+        }
+      }
+    }
+    return ids;
+  };
+  const findFolder = (id: unknown) => {
+    const folder = folders.find((f) => f.id === id);
+    if (!folder)
+      throw {
+        kind: "folderNotFound",
+        message: `folder not found: ${String(id)}`,
+      };
+    return folder;
+  };
   const worktrees: Record<string, WorktreeInfo[]> = { ...seeded.worktrees };
+
+  const addMockRepo = (path: string): Repo => {
+    const repo: Repo = {
+      id: `r${repos.length + 1}`,
+      name: path.split("/").at(-1) ?? path,
+      path,
+      folderId: null,
+    };
+    repos.push(repo);
+    worktrees[repo.id] = [worktree(path, repo.name, "main", null, true)];
+    return repo;
+  };
 
   let nextSessionId = 0;
   const sessions: TerminalInfo[] = [];
@@ -230,6 +306,7 @@ export function installMockTauri(scenario: string): void {
     command: string | null,
     running: boolean,
     text: string,
+    startedSecondsAgo = 0,
   ) {
     const id = `t${++nextSessionId}`;
     sessions.push({
@@ -239,10 +316,28 @@ export function installMockTauri(scenario: string): void {
       shell: "zsh",
       running,
       exitCode: running ? null : 0,
+      startedAt: Math.floor(Date.now() / 1000) - startedSecondsAgo,
     });
     transcripts.set(id, text);
     seq.set(id, 1);
     return id;
+  }
+
+  if (scenario === "crowded") {
+    // Four agents in one worktree, to show the collapsed badges and the "+X" count.
+    for (const [command, secondsAgo] of [
+      ["claude", 60],
+      ["claude", 2 * 3600],
+      ["codex", 2 * 86400],
+    ] as const) {
+      addSession(
+        "/home/dev/agent-ade-worktrees/fix-pty",
+        command,
+        true,
+        AGENT_TRANSCRIPT,
+        secondsAgo,
+      );
+    }
   }
 
   if (scenario !== "empty") {
@@ -251,6 +346,7 @@ export function installMockTauri(scenario: string): void {
       "claude",
       true,
       AGENT_TRANSCRIPT,
+      5 * 60,
     );
     addSession(
       "/home/dev/agent-ade-worktrees/feat-auth",
@@ -263,12 +359,14 @@ export function installMockTauri(scenario: string): void {
       "codex",
       true,
       AGENT_TRANSCRIPT,
+      3 * 3600,
     );
     addSession(
       "/home/dev/api-server-worktrees/refactor-db",
       "claude",
       false,
       AGENT_TRANSCRIPT,
+      2 * 86400,
     );
   }
 
@@ -298,6 +396,8 @@ export function installMockTauri(scenario: string): void {
         case "reveal_in_file_manager":
           probe.revealed = `${String(args.worktreePath)}::${String(args.relativePath)}`;
           return null;
+        case "list_shells":
+          return ["/bin/bash", "/bin/zsh", "/usr/bin/fish"];
         case "get_config":
           return structuredClone(configSnapshot);
         case "update_config": {
@@ -320,6 +420,69 @@ export function installMockTauri(scenario: string): void {
         case "open_config_file":
           probe.configFileOpened = true;
           return null;
+        case "list_folders":
+          return structuredClone(folders);
+        case "create_folder": {
+          const name = String(args.name ?? "").trim();
+          if (!name)
+            throw {
+              kind: "invalidName",
+              message: "invalid name: the folder name is empty",
+            };
+          const parentId = (args.parentId as string | null) ?? null;
+          if (parentId) findFolder(parentId);
+          const folder: Folder = {
+            id: `f${++nextFolderId}`,
+            name,
+            parentId,
+            collapsed: false,
+          };
+          folders.push(folder);
+          return structuredClone(folder);
+        }
+        case "rename_folder": {
+          const folder = findFolder(args.folderId);
+          folder.name = String(args.name ?? "").trim() || folder.name;
+          return structuredClone(folder);
+        }
+        case "move_folder": {
+          const folder = findFolder(args.folderId);
+          const parentId = (args.parentId as string | null) ?? null;
+          if (parentId) findFolder(parentId);
+          if (parentId && descendantsOf(folder.id).has(parentId)) {
+            throw {
+              kind: "folderCycle",
+              message:
+                "a folder cannot be moved into itself or into one of its own folders",
+            };
+          }
+          folder.parentId = parentId;
+          return null;
+        }
+        case "delete_folder": {
+          const folder = findFolder(args.folderId);
+          for (const child of folders)
+            if (child.parentId === folder.id) child.parentId = folder.parentId;
+          for (const repo of repos)
+            if (repo.folderId === folder.id) repo.folderId = folder.parentId;
+          folders.splice(folders.indexOf(folder), 1);
+          return null;
+        }
+        case "set_folder_collapsed":
+          findFolder(args.folderId).collapsed = Boolean(args.collapsed);
+          return null;
+        case "move_repo": {
+          const repo = repos.find((r) => r.id === args.repoId);
+          if (!repo)
+            throw {
+              kind: "repoNotFound",
+              message: `repository not found: ${String(args.repoId)}`,
+            };
+          const folderId = (args.folderId as string | null) ?? null;
+          if (folderId) findFolder(folderId);
+          repo.folderId = folderId;
+          return null;
+        }
         case "list_repos":
           // Copies, like real IPC: the app must never share memory with the backend.
           return structuredClone(repos);
@@ -338,16 +501,16 @@ export function installMockTauri(scenario: string): void {
           };
         case "plugin:dialog|open":
           return "/home/dev/web-app";
-        case "add_repo": {
-          const path = String(args.path);
-          const repo = {
-            id: `r${repos.length + 1}`,
-            name: path.split("/").at(-1) ?? path,
-            path,
-          };
-          repos.push(repo);
-          worktrees[repo.id] = [worktree(path, repo.name, "main", null, true)];
-          return repo;
+        case "add_repo":
+          return addMockRepo(String(args.path));
+        case "create_project": {
+          const name = String(args.name).trim();
+          if (!name || /[/\\:*?"<>|]/.test(name))
+            throw {
+              kind: "invalidName",
+              message: `invalid name: ${name || "the project name is empty"}`,
+            };
+          return addMockRepo(`${String(args.parentPath)}/${name}`);
         }
         case "remove_repo":
           repos.splice(
@@ -443,6 +606,15 @@ export function installMockTauri(scenario: string): void {
   Object.assign(window, {
     __lynxMock: {
       probe,
+      /** Ends every running program, as if each one had exited with code 0. */
+      endAllTerminals() {
+        for (const session of sessions) {
+          if (!session.running) continue;
+          session.running = false;
+          session.exitCode = 0;
+          void emit("terminal-exit", { id: session.id, exitCode: 0 });
+        }
+      },
       editConfigFile(patch: Partial<AppConfig["terminal"]>) {
         configSnapshot = {
           ...configSnapshot,

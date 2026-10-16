@@ -7,7 +7,15 @@ import { useWorkspaceStore } from "@/workspace/workspace-store";
 vi.mock("@/bindings", () => ({
   commands: {
     listRepos: vi.fn(),
+    listFolders: vi.fn(),
+    createFolder: vi.fn(),
+    renameFolder: vi.fn(),
+    moveFolder: vi.fn(),
+    deleteFolder: vi.fn(),
+    setFolderCollapsed: vi.fn(),
+    moveRepo: vi.fn(),
     addRepo: vi.fn(),
+    createProject: vi.fn(),
     removeRepo: vi.fn(),
     listWorktrees: vi.fn(),
     createWorktree: vi.fn(),
@@ -18,13 +26,14 @@ vi.mock("@/bindings", () => ({
 const api = vi.mocked(commands);
 const initialState = useWorkspaceStore.getState();
 
-const repoA = { id: "a", name: "api", path: "/work/api" };
-const repoB = { id: "b", name: "web", path: "/work/web" };
+const repoA = { id: "a", name: "api", path: "/work/api", folderId: null };
+const repoB = { id: "b", name: "web", path: "/work/web", folderId: null };
 const mainA = worktree("/work/api", { isMain: true, branch: "main" });
 const mainB = worktree("/work/web", { isMain: true, branch: "main" });
 
 beforeEach(() => {
   vi.resetAllMocks();
+  api.listFolders.mockResolvedValue(ok([]));
   useWorkspaceStore.setState(initialState, true);
 });
 
@@ -88,6 +97,39 @@ describe("refreshWorktrees", () => {
     await useWorkspaceStore.getState().refreshWorktrees("a");
 
     expect(useWorkspaceStore.getState().worktrees.a).toEqual([mainA]);
+  });
+});
+
+describe("createProject", () => {
+  it("registers the new repo like an opened one and selects its main worktree", async () => {
+    const created = {
+      id: "c",
+      name: "notes",
+      path: "/work/notes",
+      folderId: null,
+    };
+    api.createProject.mockResolvedValue(ok(created));
+    listsByRepo({
+      c: [worktree("/work/notes", { isMain: true, branch: "main" })],
+    });
+
+    await useWorkspaceStore.getState().createProject("/work", "notes");
+
+    expect(api.createProject).toHaveBeenCalledWith("/work", "notes");
+    const state = useWorkspaceStore.getState();
+    expect(state.repos).toEqual([created]);
+    expect(state.selectedWorktreePath).toBe("/work/notes");
+  });
+
+  it("rejects with the backend's error and adds nothing", async () => {
+    api.createProject.mockResolvedValue(
+      failure("alreadyExists", "/work/notes already exists"),
+    );
+
+    await expect(
+      useWorkspaceStore.getState().createProject("/work", "notes"),
+    ).rejects.toMatchObject({ kind: "alreadyExists" });
+    expect(useWorkspaceStore.getState().repos).toEqual([]);
   });
 });
 
@@ -264,5 +306,81 @@ describe("repo sections and the dialog", () => {
     });
     useWorkspaceStore.getState().closeNewWorktree();
     expect(useWorkspaceStore.getState().draft).toBeNull();
+  });
+});
+
+describe("folders", () => {
+  const work = { id: "work", name: "Work", parentId: null, collapsed: false };
+  const repoInWork = {
+    id: "a",
+    name: "api",
+    path: "/work/api",
+    folderId: "work",
+  };
+
+  it("loads folders together with repos", async () => {
+    api.listRepos.mockResolvedValue(ok([repoA]));
+    api.listFolders.mockResolvedValue(ok([work]));
+    listsByRepo({ a: [mainA] });
+
+    await useWorkspaceStore.getState().load();
+
+    expect(useWorkspaceStore.getState().folders).toEqual([work]);
+  });
+
+  it("opens the parent when a folder is created inside a collapsed one", async () => {
+    const collapsed = { ...work, collapsed: true };
+    useWorkspaceStore.setState({ folders: [collapsed] });
+    api.createFolder.mockResolvedValue(
+      ok({ id: "x", name: "X", parentId: "work", collapsed: false }),
+    );
+    api.setFolderCollapsed.mockResolvedValue(ok(null));
+    api.listFolders.mockResolvedValue(ok([{ ...work, collapsed: false }]));
+    api.listRepos.mockResolvedValue(ok([]));
+
+    await useWorkspaceStore.getState().createFolder("X", "work");
+
+    expect(api.setFolderCollapsed).toHaveBeenCalledWith("work", false);
+  });
+
+  it("collapses a folder at once and re-reads the truth when the backend refuses", async () => {
+    useWorkspaceStore.setState({ folders: [work] });
+    api.setFolderCollapsed.mockResolvedValue(
+      failure("folderNotFound", "folder not found: work"),
+    );
+    api.listFolders.mockResolvedValue(ok([work]));
+    api.listRepos.mockResolvedValue(ok([]));
+
+    await expect(
+      useWorkspaceStore.getState().setFolderCollapsed("work", true),
+    ).rejects.toMatchObject({
+      kind: "folderNotFound",
+    });
+
+    expect(useWorkspaceStore.getState().folders[0].collapsed).toBe(false);
+  });
+
+  it("moves a repo and reloads the structure so the tree reflects it", async () => {
+    useWorkspaceStore.setState({ folders: [work], repos: [repoA] });
+    api.moveRepo.mockResolvedValue(ok(null));
+    api.listRepos.mockResolvedValue(ok([repoInWork]));
+    api.listFolders.mockResolvedValue(ok([work]));
+
+    await useWorkspaceStore.getState().moveRepo("a", "work");
+
+    expect(api.moveRepo).toHaveBeenCalledWith("a", "work");
+    expect(useWorkspaceStore.getState().repos[0].folderId).toBe("work");
+  });
+
+  it("deleting a folder reloads what moved up out of it", async () => {
+    useWorkspaceStore.setState({ folders: [work], repos: [repoInWork] });
+    api.deleteFolder.mockResolvedValue(ok(null));
+    api.listFolders.mockResolvedValue(ok([]));
+    api.listRepos.mockResolvedValue(ok([{ ...repoInWork, folderId: null }]));
+
+    await useWorkspaceStore.getState().deleteFolder("work");
+
+    expect(useWorkspaceStore.getState().folders).toEqual([]);
+    expect(useWorkspaceStore.getState().repos[0].folderId).toBeNull();
   });
 });

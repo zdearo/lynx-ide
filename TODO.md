@@ -51,7 +51,7 @@ Legenda: `[ ]` pendente · `[x]` feito · **(?)** decisão em aberto (ver seçã
 
 ### 1.4 Estado dos agentes (básico)
 
-- [ ] Marcar a sessão como "trabalhando" ou "ocioso" pela atividade de saída
+- [ ] Marcar a sessão como "trabalhando" ou "ocioso" pela atividade de saída. A linha do agente na sidebar (`AgentRow`) já existe e só precisa dos novos estados
 - [ ] Ler o título OSC do terminal quando o agente o envia
 - [ ] Guardar o estado num único store no Rust e exibi-lo na sidebar, por worktree
 - [ ] Indicar quando uma sessão termina (trabalhando → ocioso)
@@ -62,13 +62,28 @@ Legenda: `[ ]` pendente · `[x]` feito · **(?)** decisão em aberto (ver seçã
 - [x] Componentes shadcn: Button, Dialog, AlertDialog, Input, Select, ScrollArea, Sheet, Sonner, DropdownMenu e Tooltip
 - [x] Diálogo "Novo worktree" (nome e base). Fecha na hora, mostra uma linha em progresso na sidebar e reabre com o motivo se o Git recusar
 - [x] Atalhos básicos: novo terminal, fechar aba, novo worktree e alternar sidebar (Cmd no macOS; Ctrl+Shift nos demais, para não roubar teclas do shell). Falta aba anterior/próxima e trocar de worktree
-- [ ] Tema claro e escuro (hoje só escuro, por decisão do shape)
+- [x] Adicionar projeto ("Add project"): abrir um repositório existente ou criar um vazio (`git init`) numa pasta escolhida
+- [x] Foco do terminal: clicar na área do shell focaliza o xterm (sessões ocultas saem do layout, então não recebem o clique)
+- [x] Agrupamento de agentes por worktree: cabeçalho "Agents" recolhível, com até 3 badges de status e `+X` para o resto
+- [x] Temas do terminal: 14 temas (Lynx dark, Light, Solarized, Dracula, Nord, Catppuccin, Gruvbox, One Dark, Tokyo Night, Monokai). O tema dá o fundo; o texto segue o tema ou usa a paleta de outro
+- [ ] Tema claro e escuro da interface (hoje só escuro, por decisão do shape)
 
 ### Critério de pronto da Fase 1
 
 Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois estados na sidebar. Fechar e reabrir o app sem perder a lista de repos e worktrees.
 
 ---
+
+### Pastas de projetos
+
+- [x] Pastas aninhadas no painel Projects (ex.: Work > Client X > projeto): criar (no topo ou dentro de outra), renomear, mover, excluir (o conteúdo sobe um nível) e recolher; o recolhido fica salvo
+- [x] Mover repo ou pasta pelo menu, num diálogo com a árvore; uma pasta não entra em si mesma nem em descendente (checado na interface e no backend)
+- [ ] Arrastar e soltar repos e pastas na sidebar (hoje só pelo menu "Mover para pasta")
+- [ ] Abrir um repositório já dentro de uma pasta, e criar worktree a partir da pasta
+- [ ] Ordenação manual dentro de uma pasta (hoje: pastas por nome, repos pela ordem em que foram adicionados)
+- [ ] Lembrar o recolhido de cada repo (hoje só o das pastas é salvo)
+- [x] Pasta ou repo recolhido mostra um resumo à direita: projetos ou worktrees escondidos e quantos agentes estão rodando dentro (ponto verde + número)
+- [ ] Resumo com o estado do agente mais urgente (precisa de você, pendente) quando o item 1.4 existir
 
 ### Pendências da Fase 1
 
@@ -79,13 +94,11 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 - [ ] Exportar um JSON Schema do `config.json` para autocompletar no editor
 - [ ] Renomear o repositório, o crate e o identificador do bundle de `agent-ade` para Lynx. Mudar o identificador muda a pasta de dados do app, então vale fazer junto com a assinatura
 
-- [ ] Decidir com o dono do projeto o que entra nas configurações (o modal já existe, vazio) e quais views entram na barra primária depois de "Projects"
+- [ ] Decidir com o dono do projeto quais views entram na barra primária depois de "Projects"
 
-- [x] Configuração do terminal (fonte, tamanho, shell, scrollback) e da pasta dos worktrees em `~/.lynx/config.json`, com tela de settings
+- [x] Configurações em `~/.lynx/config.json`, com tela de settings em duas seções: Terminal (abas Text, Appearance e Behavior: fonte, tamanho, scrollback, tema e cores do texto, shell instalado, cópia ao soltar, sino, fechamento de abas) e Worktrees (pasta dos worktrees, com seletor)
 
 - [ ] Verificar a interface na janela real do Tauri (hoje só foi exercitada no Chrome headless com o backend simulado, mais os testes do backend em Rust)
-- [ ] Atalhos de aba anterior/próxima e de troca de worktree
-- [ ] Estado dos agentes (1.4): trabalhando/ocioso, título OSC e indicador na sidebar
 - [ ] Terminais ocultos continuam montados (mantêm tela e rolagem). Medir memória com 8 a 10 agentes e decidir se vale desmontar os inativos
 - [ ] Windows e macOS: testar PTY, atalhos e seletor de pasta
 
@@ -133,6 +146,7 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 
 - **Daemon de PTY:** entra só na Fase 4. Proposta: na Fase 1 as sessões encerram ao fechar o app.
 - **Local dos worktrees:** `<pasta-do-repo>/../<repo>-worktrees/<nome>` ou outro caminho gerenciado pelo app.
+- **Projeto vazio sem commit:** o worktree precisa de uma base, e um repositório recém-criado não tem nenhuma. Opções: commit inicial vazio (exige identidade git configurada), aceitar o HEAD sem commit, ou desabilitar a criação de worktree nesse caso.
 - **Pastas que não são git:** entram em qual fase?
 - **Idioma da interface:** só inglês ou também pt-BR?
 - **Identidade do projeto:** nome do pacote e identificador do Tauri, e licença.

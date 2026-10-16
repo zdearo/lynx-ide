@@ -16,20 +16,83 @@ export const copy = {
     reset: "Reset to default",
     terminal: {
       title: "Terminal",
+      tabs: {
+        label: "Terminal settings",
+        text: "Text",
+        appearance: "Appearance",
+        behavior: "Behavior",
+      },
+      colorScheme: {
+        label: "Theme",
+        hint: "The terminal's background. Its colours also become the text colours, unless you pick others below.",
+      },
+      themes: {
+        default: "Lynx dark (default)",
+        light: "Light",
+        solarizedDark: "Solarized dark",
+        solarizedLight: "Solarized light",
+        dracula: "Dracula",
+        nord: "Nord",
+        catppuccinLatte: "Catppuccin Latte",
+        catppuccinFrappe: "Catppuccin Frappé",
+        catppuccinMacchiato: "Catppuccin Macchiato",
+        catppuccinMocha: "Catppuccin Mocha",
+        gruvboxDark: "Gruvbox dark",
+        oneDark: "One Dark",
+        tokyoNight: "Tokyo Night",
+        monokai: "Monokai",
+      },
+      textColours: {
+        label: "Text colours",
+        hint: "The text colour and the normal and bright ANSI colours programs print with. Follows the theme unless you pick another one.",
+        sameAsTheme: "Same as the theme",
+      },
       fontFamily: {
         label: "Font",
-        hint: "Comma-separated, like CSS. Tried before the bundled JetBrains Mono, so a Nerd Font here keeps your prompt icons.",
-        placeholder: "JetBrains Mono (bundled)",
+        hint: "Tried before the bundled JetBrains Mono, so a Nerd Font here keeps your prompt icons.",
+        bundled: "JetBrains Mono (bundled)",
+        sfMono: "SF Mono (macOS)",
+        cascadia: "Cascadia Mono (Windows)",
+        fira: "Fira Code",
+        custom: "Custom…",
+        placeholder: "Comma-separated, like CSS",
       },
-      fontSize: { label: "Font size", hint: "From 8 to 32." },
-      shell: {
-        label: "Shell",
-        hint: "Program for new terminals. Leave empty to use your login shell. Open terminals keep theirs.",
-        placeholder: "Login shell",
+      fontSize: {
+        label: "Font size",
+        hint: "From 8 to 32.",
       },
       scrollback: {
         label: "Scrollback",
-        hint: "Lines of history kept per terminal, up to 100000.",
+        hint: "Lines of history kept per terminal.",
+      },
+      shell: {
+        label: "Shell",
+        hint: "Program for new terminals. Open terminals keep theirs.",
+        login: "Login shell",
+        custom: "Custom path…",
+        placeholder: "/path/to/shell",
+      },
+      copyOnSelect: {
+        label: "Copy selection on release",
+        hint: "Copies text to the clipboard as soon as the mouse is released over it.",
+      },
+      bell: {
+        label: "Bell",
+        hint: "What happens when a program rings the terminal bell.",
+        none: "Nothing",
+        visual: "Flash the terminal",
+      },
+      optionAsMeta: {
+        label: "Option key as Meta",
+        hint: "macOS only. Makes Option act as Alt, which Emacs and readline shortcuts use.",
+      },
+      closeOnExit: {
+        label: "Close tab when the program exits",
+        hint: "Off keeps the last output on screen, so you can see why it stopped.",
+      },
+      confirmClose: {
+        label: "Confirm before closing a running tab",
+        hint: "Asks before closing a tab whose process is still alive, even an idle shell.",
       },
     },
     worktrees: {
@@ -38,8 +101,11 @@ export const copy = {
         label: "Worktrees folder",
         hint: "New worktrees are created in <folder>/<repository>/<name>. Leave empty to create them next to each repository. Existing worktrees do not move.",
         placeholder: "Next to each repository",
+        browse: "Choose folder…",
       },
     },
+    decrease: "Decrease",
+    increase: "Increase",
     file: {
       label: "Config file",
       open: "Open config file",
@@ -50,7 +116,6 @@ export const copy = {
       issuesTitle: "Some values in the config file were ignored",
       usingDefault: "using the default",
     },
-    invalidNumber: "Enter a whole number",
   },
 
   rightPanel: {
@@ -81,16 +146,80 @@ export const copy = {
     link: "link",
   },
 
+  summary: {
+    projects: (n: number) => (n === 1 ? "1 project" : `${n} projects`),
+    worktrees: (n: number) => (n === 1 ? "1 worktree" : `${n} worktrees`),
+    running: (n: number) =>
+      n === 1 ? "1 agent running" : `${n} agents running`,
+    empty: "Nothing inside",
+  },
+
+  folders: {
+    newFolder: "New folder",
+    rename: "Rename…",
+    moveTo: "Move to folder…",
+    delete: "Delete folder…",
+    actions: (name: string) => `Actions for folder ${name}`,
+    collapse: (name: string) => `Collapse ${name}`,
+    expand: (name: string) => `Expand ${name}`,
+    empty: "Empty folder",
+    createTitle: "New folder",
+    renameTitle: "Rename folder",
+    formDescription:
+      "Folders group projects and other folders. They only change how the sidebar looks.",
+    nameLabel: "Name",
+    namePlaceholder: "Work",
+    create: "Create folder",
+    save: "Save",
+    cancel: "Cancel",
+    deleteTitle: (name: string) => `Delete ${name}?`,
+    deleteBody:
+      "Its folders and projects move up one level. Nothing is removed from disk.",
+    deleteConfirm: "Delete folder",
+    failed: "Could not save the folder",
+  },
+
+  move: {
+    title: (name: string) => `Move ${name}`,
+    description: "Choose where it goes in the sidebar.",
+    topLevel: "Top level",
+    current: "current",
+    cannotMoveInside: "inside itself",
+    confirm: "Move here",
+    failed: "Could not move it",
+  },
+
   sidebar: {
     title: "Projects",
-    openRepository: "Open repository",
+    addProject: "Add project",
     toggle: "Toggle sidebar",
-    emptyTitle: "No repository open",
-    emptyBody: "Open a git repository to see its worktrees.",
+    emptyTitle: "No projects yet",
+    emptyBody: "Add a project to see its worktrees.",
     loadError: "Could not load your repositories",
   },
 
+  addProject: {
+    title: "Add project",
+    description:
+      "Start from a git repository already on this computer, or create an empty one.",
+    browse: "Browse project",
+    browseDescription:
+      "Pick a git repository that already exists on this computer.",
+    create: "Create new project",
+    createDescription: "Start an empty git repository in a folder you choose.",
+    createSummary: "Name the project and choose the folder it is created in.",
+    nameLabel: "Project name",
+    namePlaceholder: "my-project",
+    locationLabel: "Location",
+    noLocation: "No folder chosen",
+    chooseLocation: "Choose folder…",
+    locationHint: "The project folder is created inside this location.",
+    back: "Back",
+    submit: "Create project",
+  },
+
   repo: {
+    moveToFolder: "Move to folder…",
     newWorktree: "New worktree",
     refresh: "Refresh worktrees",
     removeFromList: "Remove from list",
@@ -99,11 +228,23 @@ export const copy = {
     expand: (name: string) => `Expand ${name}`,
   },
 
+  agent: {
+    title: "Agents",
+    running: "running",
+    group: (count: number, running: number) => {
+      const agents = count === 1 ? "1 agent" : `${count} agents`;
+      return running > 0 ? `${agents}, ${running} running` : agents;
+    },
+    exited: (code: number | null) =>
+      code === null ? "exited" : `exited with code ${code}`,
+    label: (title: string, status: string) => `${title}, ${status}`,
+    close: (title: string) => `Close ${title}`,
+  },
+
   worktree: {
     primary: "primary",
     detached: "detached",
     creating: (name: string) => `Creating ${name}…`,
-    from: (base: string) => `from ${base}`,
     missingDirectory: "Folder is missing",
     locked: "Locked",
     newTerminal: "New terminal",
@@ -154,6 +295,12 @@ export const copy = {
     exited: (code: number | null) =>
       code === null ? "exited" : `exited ${code}`,
     createFailed: "Could not start the terminal",
+    closeDialog: {
+      title: "Close this terminal?",
+      body: "Whatever is running in it will be stopped.",
+      keep: "Keep it open",
+      confirm: "Close terminal",
+    },
   },
 
   customCommand: {
@@ -171,7 +318,7 @@ export const copy = {
   },
 
   welcome: {
-    title: "Open a repository to get started",
+    title: "Add a project to get started",
     body: "Each task gets its own git worktree, with its agents and terminals next to it.",
   },
 

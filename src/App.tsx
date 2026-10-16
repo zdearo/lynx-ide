@@ -11,12 +11,18 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { errorMessage } from "@/lib/error-message";
+import { CloseTerminalDialog } from "@/terminal/CloseTerminalDialog";
 import { CustomCommandDialog } from "@/terminal/CustomCommandDialog";
+import { handleTerminalExit } from "@/terminal/terminal-actions";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalWorkspace } from "@/terminal/TerminalWorkspace";
 import { copy } from "@/ui-copy";
 import { useAppShortcuts } from "@/use-app-shortcuts";
+import { AddProjectDialog } from "@/workspace/AddProjectDialog";
 import { NewWorktreeDialog } from "@/workspace/NewWorktreeDialog";
+import { DeleteFolderDialog } from "@/workspace/DeleteFolderDialog";
+import { FolderDialog } from "@/workspace/FolderDialog";
+import { MoveDialog } from "@/workspace/MoveDialog";
 import { RemoveRepoDialog } from "@/workspace/RemoveRepoDialog";
 import { RemoveWorktreeDialog } from "@/workspace/RemoveWorktreeDialog";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
@@ -68,7 +74,7 @@ function App() {
     });
 
     const unlistenExit = events.terminalExit.listen(({ payload }) => {
-      useTerminalStore.getState().markExited(payload.id, payload.exitCode);
+      handleTerminalExit(payload.id, payload.exitCode);
     });
 
     // The config file is meant to be edited by hand, so changes can arrive at any time.
@@ -167,6 +173,11 @@ function App() {
       )}
 
       <SettingsDialog />
+      <AddProjectDialog />
+      <CloseTerminalDialog />
+      <FolderDialog />
+      <MoveDialog />
+      <DeleteFolderDialog />
       <NewWorktreeDialog />
       <RemoveWorktreeDialog />
       <RemoveRepoDialog />

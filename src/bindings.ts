@@ -8,11 +8,19 @@ export const commands = {
 	appInfo: () => __TAURI_INVOKE<AppInfo>("app_info"),
 	listRepos: () => typedError<Repo[], IpcError>(__TAURI_INVOKE("list_repos")),
 	addRepo: (path: string) => typedError<Repo, IpcError>(__TAURI_INVOKE("add_repo", { path })),
+	createProject: (parentPath: string, name: string) => typedError<Repo, IpcError>(__TAURI_INVOKE("create_project", { parentPath, name })),
 	removeRepo: (repoId: string) => typedError<null, IpcError>(__TAURI_INVOKE("remove_repo", { repoId })),
 	listWorktrees: (repoId: string) => typedError<WorktreeInfo[], IpcError>(__TAURI_INVOKE("list_worktrees", { repoId })),
 	createWorktree: (repoId: string, name: string, baseRef: string | null) => typedError<WorktreeInfo, IpcError>(__TAURI_INVOKE("create_worktree", { repoId, name, baseRef })),
 	removeWorktree: (repoId: string, worktreePath: string, force: boolean) => typedError<RemoveWorktreeResult, IpcError>(__TAURI_INVOKE("remove_worktree", { repoId, worktreePath, force })),
 	repoRefs: (repoId: string) => typedError<RepoRefs, IpcError>(__TAURI_INVOKE("repo_refs", { repoId })),
+	listFolders: () => typedError<Folder[], IpcError>(__TAURI_INVOKE("list_folders")),
+	createFolder: (name: string, parentId: string | null) => typedError<Folder, IpcError>(__TAURI_INVOKE("create_folder", { name, parentId })),
+	renameFolder: (folderId: string, name: string) => typedError<Folder, IpcError>(__TAURI_INVOKE("rename_folder", { folderId, name })),
+	moveFolder: (folderId: string, parentId: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("move_folder", { folderId, parentId })),
+	deleteFolder: (folderId: string) => typedError<null, IpcError>(__TAURI_INVOKE("delete_folder", { folderId })),
+	setFolderCollapsed: (folderId: string, collapsed: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("set_folder_collapsed", { folderId, collapsed })),
+	moveRepo: (repoId: string, folderId: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("move_repo", { repoId, folderId })),
 	createTerminal: (worktreePath: string, command: string | null, cols: number, rows: number) => typedError<TerminalInfo, IpcError>(__TAURI_INVOKE("create_terminal", { worktreePath, command, cols, rows })),
 	listTerminals: () => typedError<TerminalInfo[], IpcError>(__TAURI_INVOKE("list_terminals")),
 	terminalSnapshot: (id: string) => typedError<TerminalSnapshot, IpcError>(__TAURI_INVOKE("terminal_snapshot", { id })),
@@ -21,6 +29,8 @@ export const commands = {
 	closeTerminal: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("close_terminal", { id })),
 	getConfig: () => typedError<ConfigSnapshot, IpcError>(__TAURI_INVOKE("get_config")),
 	updateConfig: (config: AppConfig) => typedError<ConfigSnapshot, IpcError>(__TAURI_INVOKE("update_config", { config })),
+	/**  Shells the settings can offer for new terminals. */
+	listShells: () => typedError<string[], IpcError>(__TAURI_INVOKE("list_shells")),
 	/**  Opens the config file in the user's default editor, creating it first if needed. */
 	openConfigFile: () => typedError<null, IpcError>(__TAURI_INVOKE("open_config_file")),
 	/**  One folder of a worktree. `relative_path` is empty for the root and uses `/`. */
@@ -47,6 +57,15 @@ export type AppInfo = {
 	name: string,
 	version: string,
 };
+
+/**  What a bell from a program does. Sound is left out: the terminal engine only reports the bell. */
+export type BellStyle = "none" | "visual";
+
+/**
+ *  Themes the terminal can use. `Default` is the look the app has always had. A theme
+ *  gives the background; its text palette can also be used for the text.
+ */
+export type ColorScheme = "default" | "light" | "solarizedDark" | "solarizedLight" | "dracula" | "nord" | "catppuccinLatte" | "catppuccinFrappe" | "catppuccinMacchiato" | "catppuccinMocha" | "gruvboxDark" | "oneDark" | "tokyoNight" | "monokai";
 
 /**  The config file changed outside the app (an editor, a dotfiles sync, a script). */
 export type ConfigChanged = {
@@ -85,13 +104,22 @@ export type FileEntry = {
 
 export type FileKind = "directory" | "file";
 
+/**  A user-made folder that groups repositories and other folders in the sidebar. */
+export type Folder = {
+	id: string,
+	name: string,
+	/**  `None` for a folder at the top level. */
+	parentId: string | null,
+	collapsed: boolean,
+};
+
 /**  Error as the frontend sees it: a stable `kind` to branch on and a message to show. */
 export type IpcError = {
 	kind: IpcErrorKind,
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "internal";
 
 export type RemoveWorktreeResult = {
 	branch: string | null,
@@ -105,6 +133,8 @@ export type Repo = {
 	name: string,
 	/**  Path of the repository's main worktree. */
 	path: string,
+	/**  The folder the repo sits in; `None` at the top level. */
+	folderId: string | null,
 };
 
 export type RepoRefs = {
@@ -122,6 +152,19 @@ export type TerminalConfig = {
 	shell: string | null,
 	/**  Lines of history kept per terminal. */
 	scrollback: number,
+	/**  Copies a selection to the clipboard as soon as the mouse is released. */
+	copyOnSelect: boolean,
+	bell: BellStyle,
+	/**  macOS only: the Option key sends Meta, which Emacs and readline shortcuts expect. */
+	macOptionIsMeta: boolean,
+	/**  Closes the tab when its program exits, instead of keeping the last output. */
+	closeOnExit: boolean,
+	/**  Asks before closing a tab whose process is alive, an idle shell included. */
+	confirmClose: boolean,
+	/**  The theme: its background is the terminal's background. */
+	colorScheme: ColorScheme,
+	/**  Theme whose text palette (text colour and ANSI colours) the text uses; `None` uses `color_scheme`'s. */
+	textColorScheme: ColorScheme | null,
 };
 
 export type TerminalExit = {
@@ -136,6 +179,8 @@ export type TerminalInfo = {
 	shell: string,
 	running: boolean,
 	exitCode: number | null,
+	/**  Unix seconds when the session started. `u32` because the contract has no 64-bit integers. */
+	startedAt: number,
 };
 
 /**

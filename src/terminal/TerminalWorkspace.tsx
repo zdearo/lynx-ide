@@ -1,4 +1,4 @@
-import { FolderOpen } from "lucide-react";
+import { FolderGit2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useDialogStore } from "@/dialog-store";
@@ -9,8 +9,8 @@ import { startTerminal } from "@/terminal/terminal-actions";
 import { TerminalTabs } from "@/terminal/TerminalTabs";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalView } from "@/terminal/TerminalView";
+import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
-import { openRepositoryFromPicker } from "@/workspace/open-repository";
 import {
   useSelectedWorktree,
   type SelectedWorktree,
@@ -52,7 +52,14 @@ export function TerminalWorkspace({
       <div className="relative min-h-0 flex-1">
         {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. */}
         {sessions.map((session) => (
-          <div key={session.id} className="absolute inset-0">
+          // A hidden session must leave the layout too: its box would still take the clicks meant for the visible one.
+          <div
+            key={session.id}
+            className={cn(
+              "absolute inset-0",
+              session.id !== activeId && "hidden",
+            )}
+          >
             <TerminalView
               terminalId={session.id}
               active={session.id === activeId}
@@ -69,6 +76,8 @@ export function TerminalWorkspace({
 }
 
 function Welcome() {
+  const askAddProject = useDialogStore((state) => state.askAddProject);
+
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
       <div className="max-w-sm">
@@ -77,9 +86,9 @@ function Welcome() {
           {copy.welcome.body}
         </p>
       </div>
-      <Button onClick={() => void openRepositoryFromPicker()}>
-        <FolderOpen />
-        {copy.sidebar.openRepository}
+      <Button onClick={() => askAddProject(true)}>
+        <FolderGit2 />
+        {copy.sidebar.addProject}
       </Button>
     </div>
   );

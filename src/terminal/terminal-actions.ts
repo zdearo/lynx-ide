@@ -1,5 +1,7 @@
 import { toast } from "sonner";
 
+import { useConfigStore } from "@/config/config-store";
+import { useDialogStore } from "@/dialog-store";
 import { copy } from "@/ui-copy";
 import { errorMessage } from "@/lib/error-message";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
@@ -25,9 +27,35 @@ export async function startShellInSelectedWorktree(): Promise<void> {
   if (path) await startTerminal(path, null);
 }
 
+/**
+ * Every user-initiated close goes through here, so the confirm setting applies
+ * to the tab button, the shortcut and an agent's close button alike.
+ */
+export function requestCloseTerminal(id: string): void {
+  const session = useTerminalStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === id);
+  const askFirst =
+    useConfigStore.getState().snapshot?.config.terminal.confirmClose ?? false;
+  if (session?.running && askFirst) {
+    useDialogStore.getState().askCloseTerminal(id);
+  } else {
+    void useTerminalStore.getState().close(id);
+  }
+}
+
 export async function closeActiveTerminal(): Promise<void> {
   const path = useWorkspaceStore.getState().selectedWorktreePath;
-  const { sessions, activeByWorktree, close } = useTerminalStore.getState();
+  const { sessions, activeByWorktree } = useTerminalStore.getState();
   const id = activeSessionId(sessions, activeByWorktree, path);
-  if (id) await close(id);
+  if (id) requestCloseTerminal(id);
+}
+
+/** A program ended: keep its last output, or close the tab when the setting says so. */
+export function handleTerminalExit(id: string, exitCode: number | null): void {
+  const store = useTerminalStore.getState();
+  store.markExited(id, exitCode);
+  const closeOnExit =
+    useConfigStore.getState().snapshot?.config.terminal.closeOnExit ?? false;
+  if (closeOnExit) void store.close(id);
 }

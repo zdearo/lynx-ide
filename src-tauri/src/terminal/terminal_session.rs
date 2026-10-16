@@ -39,6 +39,8 @@ pub struct TerminalInfo {
     pub shell: String,
     pub running: bool,
     pub exit_code: Option<i32>,
+    /// Unix seconds when the session started. `u32` because the contract has no 64-bit integers.
+    pub started_at: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -56,6 +58,7 @@ pub struct TerminalSession {
     worktree_path: String,
     command: Option<String>,
     shell_name: String,
+    started_at: u32,
     shared: Arc<SessionShared>,
     pty: Mutex<PtyHandles>,
     #[cfg(unix)]
@@ -175,6 +178,7 @@ impl TerminalSession {
             worktree_path: request.cwd.to_string_lossy().into_owned(),
             command: request.command.map(str::to_owned),
             shell_name: request.shell.display_name(),
+            started_at: unix_seconds_now(),
             shared,
             pty: Mutex::new(PtyHandles {
                 writer,
@@ -196,6 +200,7 @@ impl TerminalSession {
             shell: self.shell_name.clone(),
             running: exit.is_none(),
             exit_code: exit.flatten(),
+            started_at: self.started_at,
         }
     }
 
@@ -364,4 +369,12 @@ fn spawn_waiter(
         })
         .map(|_| ())
         .map_err(TerminalError::Io)
+}
+
+fn unix_seconds_now() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u32::try_from(elapsed.as_secs()).unwrap_or(u32::MAX)
+        })
 }

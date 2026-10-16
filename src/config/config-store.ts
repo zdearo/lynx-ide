@@ -14,6 +14,13 @@ export const DEFAULT_TERMINAL_CONFIG: TerminalConfig = {
   fontSize: 13,
   shell: null,
   scrollback: 5000,
+  copyOnSelect: false,
+  bell: "visual",
+  macOptionIsMeta: false,
+  closeOnExit: false,
+  confirmClose: false,
+  colorScheme: "default",
+  textColorScheme: null,
 };
 
 interface ConfigState {

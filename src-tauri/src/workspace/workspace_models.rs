@@ -8,6 +8,19 @@ pub struct Repo {
     pub name: String,
     /// Path of the repository's main worktree.
     pub path: String,
+    /// The folder the repo sits in; `None` at the top level.
+    pub folder_id: Option<String>,
+}
+
+/// A user-made folder that groups repositories and other folders in the sidebar.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    pub id: String,
+    pub name: String,
+    /// `None` for a folder at the top level.
+    pub parent_id: Option<String>,
+    pub collapsed: bool,
 }
 
 /// What the app remembers about a worktree that Git itself does not.

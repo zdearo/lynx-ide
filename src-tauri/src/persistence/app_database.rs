@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 
-use crate::workspace::workspace_models::{Repo, WorktreeMeta};
+use crate::workspace::workspace_models::{Folder, Repo, WorktreeMeta};
 
 use super::schema_migrations::{self, MigrationError};
 
@@ -56,8 +56,8 @@ impl AppDatabase {
 
     pub fn list_repos(&self) -> Result<Vec<Repo>, DatabaseError> {
         let connection = self.lock();
-        let mut statement =
-            connection.prepare("SELECT id, name, path FROM repos ORDER BY created_at, rowid")?;
+        let mut statement = connection
+            .prepare("SELECT id, name, path, folder_id FROM repos ORDER BY created_at, rowid")?;
         let repos = statement
             .query_map([], repo_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -68,7 +68,7 @@ impl AppDatabase {
         Ok(self
             .lock()
             .query_row(
-                "SELECT id, name, path FROM repos WHERE id = ?1",
+                "SELECT id, name, path, folder_id FROM repos WHERE id = ?1",
                 [repo_id],
                 repo_from_row,
             )
@@ -86,12 +86,118 @@ impl AppDatabase {
             params![candidate.id, candidate.name, candidate.path, now_seconds()],
         )?;
         let repo = transaction.query_row(
-            "SELECT id, name, path FROM repos WHERE path = ?1",
+            "SELECT id, name, path, folder_id FROM repos WHERE path = ?1",
             [&candidate.path],
             repo_from_row,
         )?;
         transaction.commit()?;
         Ok(repo)
+    }
+
+    pub fn list_folders(&self) -> Result<Vec<Folder>, DatabaseError> {
+        let connection = self.lock();
+        let mut statement = connection.prepare(
+            "SELECT id, name, parent_id, collapsed FROM folders ORDER BY created_at, rowid",
+        )?;
+        let folders = statement
+            .query_map([], folder_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(folders)
+    }
+
+    pub fn find_folder(&self, folder_id: &str) -> Result<Option<Folder>, DatabaseError> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT id, name, parent_id, collapsed FROM folders WHERE id = ?1",
+                [folder_id],
+                folder_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn insert_folder(&self, folder: &Folder) -> Result<(), DatabaseError> {
+        self.lock().execute(
+            "INSERT INTO folders (id, name, parent_id, collapsed, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                folder.id,
+                folder.name,
+                folder.parent_id,
+                i64::from(folder.collapsed),
+                now_seconds()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Returns whether a folder was found and renamed.
+    pub fn rename_folder(&self, folder_id: &str, name: &str) -> Result<bool, DatabaseError> {
+        let changed = self.lock().execute(
+            "UPDATE folders SET name = ?2 WHERE id = ?1",
+            params![folder_id, name],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn move_folder(
+        &self,
+        folder_id: &str,
+        parent_id: Option<&str>,
+    ) -> Result<bool, DatabaseError> {
+        let changed = self.lock().execute(
+            "UPDATE folders SET parent_id = ?2 WHERE id = ?1",
+            params![folder_id, parent_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn set_folder_collapsed(
+        &self,
+        folder_id: &str,
+        collapsed: bool,
+    ) -> Result<bool, DatabaseError> {
+        let changed = self.lock().execute(
+            "UPDATE folders SET collapsed = ?2 WHERE id = ?1",
+            params![folder_id, i64::from(collapsed)],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Deletes a folder and moves what was inside it one level up, so nothing
+    /// is lost. Returns whether the folder existed. All in one transaction.
+    pub fn delete_folder(&self, folder_id: &str) -> Result<bool, DatabaseError> {
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        let parent: Option<Option<String>> = transaction
+            .query_row(
+                "SELECT parent_id FROM folders WHERE id = ?1",
+                [folder_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(parent) = parent else {
+            return Ok(false);
+        };
+        transaction.execute(
+            "UPDATE folders SET parent_id = ?2 WHERE parent_id = ?1",
+            params![folder_id, parent],
+        )?;
+        transaction.execute(
+            "UPDATE repos SET folder_id = ?2 WHERE folder_id = ?1",
+            params![folder_id, parent],
+        )?;
+        transaction.execute("DELETE FROM folders WHERE id = ?1", [folder_id])?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    /// Returns whether a repo was found and moved.
+    pub fn move_repo(&self, repo_id: &str, folder_id: Option<&str>) -> Result<bool, DatabaseError> {
+        let changed = self.lock().execute(
+            "UPDATE repos SET folder_id = ?2 WHERE id = ?1",
+            params![repo_id, folder_id],
+        )?;
+        Ok(changed > 0)
     }
 
     /// Returns whether a repo was removed. Its worktree metadata goes with it.
@@ -196,6 +302,16 @@ fn repo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
         id: row.get(0)?,
         name: row.get(1)?,
         path: row.get(2)?,
+        folder_id: row.get(3)?,
+    })
+}
+
+fn folder_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Folder> {
+    Ok(Folder {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        parent_id: row.get(2)?,
+        collapsed: row.get::<_, i64>(3)? != 0,
     })
 }
 
@@ -222,6 +338,16 @@ mod tests {
             id: id.to_owned(),
             name: id.to_owned(),
             path: path.to_owned(),
+            folder_id: None,
+        }
+    }
+
+    fn folder(id: &str, parent: Option<&str>) -> Folder {
+        Folder {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            parent_id: parent.map(str::to_owned),
+            collapsed: false,
         }
     }
 
@@ -397,5 +523,136 @@ mod tests {
             }))
         ));
         assert!(path.exists());
+    }
+
+    #[test]
+    fn folders_round_trip_with_their_parent_and_collapsed_state() {
+        let (database, _dir) = database();
+        database.insert_folder(&folder("work", None)).expect("work");
+        database
+            .insert_folder(&folder("client", Some("work")))
+            .expect("client");
+        database
+            .set_folder_collapsed("work", true)
+            .expect("collapse");
+
+        let listed = database.list_folders().expect("list");
+
+        assert_eq!(
+            listed.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(),
+            ["work", "client"]
+        );
+        assert_eq!(listed[1].parent_id.as_deref(), Some("work"));
+        assert!(listed[0].collapsed);
+    }
+
+    #[test]
+    fn a_repo_can_be_moved_into_a_folder_and_back_to_the_top() {
+        let (database, _dir) = database();
+        database
+            .get_or_insert_repo(&repo("a", "/work/a"))
+            .expect("repo");
+        database
+            .insert_folder(&folder("work", None))
+            .expect("folder");
+
+        assert!(database.move_repo("a", Some("work")).expect("move in"));
+        assert_eq!(
+            database
+                .find_repo("a")
+                .expect("find")
+                .expect("repo")
+                .folder_id
+                .as_deref(),
+            Some("work")
+        );
+
+        assert!(database.move_repo("a", None).expect("move out"));
+        assert_eq!(
+            database
+                .find_repo("a")
+                .expect("find")
+                .expect("repo")
+                .folder_id,
+            None
+        );
+    }
+
+    #[test]
+    fn a_repo_cannot_be_placed_in_a_folder_that_does_not_exist() {
+        let (database, _dir) = database();
+        database
+            .get_or_insert_repo(&repo("a", "/work/a"))
+            .expect("repo");
+
+        assert!(
+            database.move_repo("a", Some("ghost")).is_err(),
+            "foreign keys must be enforced"
+        );
+    }
+
+    #[test]
+    fn deleting_a_folder_moves_its_folders_and_repos_up_one_level() {
+        let (database, _dir) = database();
+        database.insert_folder(&folder("work", None)).expect("work");
+        database
+            .insert_folder(&folder("client", Some("work")))
+            .expect("client");
+        database
+            .insert_folder(&folder("deep", Some("client")))
+            .expect("deep");
+        database
+            .get_or_insert_repo(&repo("a", "/work/a"))
+            .expect("repo a");
+        database.move_repo("a", Some("client")).expect("place a");
+
+        assert!(database.delete_folder("client").expect("delete"));
+
+        let folders = database.list_folders().expect("list");
+        assert_eq!(
+            folders.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(),
+            ["work", "deep"]
+        );
+        assert_eq!(folders[1].parent_id.as_deref(), Some("work"));
+        assert_eq!(
+            database
+                .find_repo("a")
+                .expect("find")
+                .expect("repo")
+                .folder_id
+                .as_deref(),
+            Some("work")
+        );
+    }
+
+    #[test]
+    fn deleting_a_top_level_folder_moves_its_contents_to_the_top() {
+        let (database, _dir) = database();
+        database.insert_folder(&folder("work", None)).expect("work");
+        database
+            .insert_folder(&folder("client", Some("work")))
+            .expect("client");
+        database
+            .get_or_insert_repo(&repo("a", "/work/a"))
+            .expect("repo");
+        database.move_repo("a", Some("work")).expect("place");
+
+        database.delete_folder("work").expect("delete");
+
+        assert_eq!(database.list_folders().expect("list")[0].parent_id, None);
+        assert_eq!(
+            database
+                .find_repo("a")
+                .expect("find")
+                .expect("repo")
+                .folder_id,
+            None
+        );
+    }
+
+    #[test]
+    fn deleting_a_missing_folder_reports_it() {
+        let (database, _dir) = database();
+        assert!(!database.delete_folder("nope").expect("delete"));
     }
 }

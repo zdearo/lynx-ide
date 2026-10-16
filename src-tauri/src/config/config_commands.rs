@@ -7,11 +7,19 @@ use crate::error::{AppError, IpcError};
 
 use super::app_config::AppConfig;
 use super::config_store::{ConfigError, ConfigSnapshot, ConfigStore};
+use super::installed_shells::installed_shells;
 
 #[tauri::command]
 #[specta::specta]
 pub async fn get_config(store: State<'_, Arc<ConfigStore>>) -> Result<ConfigSnapshot, IpcError> {
     Ok(store.snapshot())
+}
+
+/// Shells the settings can offer for new terminals.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_shells() -> Result<Vec<String>, IpcError> {
+    run_blocking(|| Ok(installed_shells())).await
 }
 
 #[tauri::command]

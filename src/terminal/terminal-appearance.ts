@@ -13,16 +13,6 @@ export function terminalFontFamily(userFonts: string | null): string {
     : BUNDLED_FONT_FAMILY;
 }
 
-// xterm paints on a canvas and cannot read the oklch CSS tokens, so these mirror
-// the dark theme's --background and --foreground.
-export const TERMINAL_THEME = {
-  background: "#0a0a0a",
-  foreground: "#fafafa",
-  scrollbarSliderBackground: "rgba(255, 255, 255, 0.10)",
-  scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
-  scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.26)",
-};
-
 let fontsReady: Promise<void> | null = null;
 
 /**

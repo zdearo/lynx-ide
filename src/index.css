@@ -11,6 +11,9 @@
   --text-ui--line-height: 1.125rem;
   --text-meta: 0.6875rem;
   --text-meta--line-height: 1rem;
+  /* One step under text-ui: the rows nested under a worktree (its agents). */
+  --text-nested: 0.75rem;
+  --text-nested--line-height: 1rem;
 }
 
 @theme inline {
@@ -177,6 +180,20 @@
     outline: 2px solid color-mix(in oklch, var(--ring) 70%, transparent);
     outline-offset: -2px;
   }
+}
+
+/* A bell outlines the terminal once; the terminal view removes the class when this ends. */
+@keyframes terminal-bell {
+  from {
+    box-shadow: inset 0 0 0 2px var(--ring);
+  }
+  to {
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+}
+
+.terminal-bell {
+  animation: terminal-bell 400ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {

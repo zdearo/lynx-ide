@@ -378,3 +378,23 @@ fn closing_a_session_that_already_exited_signals_nothing_and_forgets_it() {
 
     assert!(manager.list().is_empty());
 }
+
+#[test]
+fn a_session_records_when_it_started_and_keeps_that_time() {
+    let (manager, _sink, dir) = setup();
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs() as u32;
+
+    let info = manager
+        .create(&path_of(&dir), None, 80, 24)
+        .expect("create");
+
+    let after = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs() as u32;
+    assert!(info.started_at >= before && info.started_at <= after);
+    assert_eq!(manager.list()[0].started_at, info.started_at);
+}

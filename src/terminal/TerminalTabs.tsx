@@ -8,6 +8,7 @@ import { isAgentCommand } from "@/terminal/agent-presets";
 import { NewTerminalMenu } from "@/terminal/NewTerminalMenu";
 import { PresetIcon } from "@/terminal/PresetIcon";
 import { tabTitles } from "@/terminal/terminal-tab-title";
+import { requestCloseTerminal } from "@/terminal/terminal-actions";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
 import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
@@ -31,7 +32,6 @@ export function TerminalTabs({
   const allSessions = useTerminalStore((state) => state.sessions);
   const activeByWorktree = useTerminalStore((state) => state.activeByWorktree);
   const setActive = useTerminalStore((state) => state.setActive);
-  const close = useTerminalStore((state) => state.close);
 
   const path = selected?.worktree.path ?? null;
   const sessions = allSessions.filter(
@@ -97,7 +97,7 @@ export function TerminalTabs({
                   event.target instanceof Element &&
                   event.target.closest("[data-close]")
                 ) {
-                  void close(session.id);
+                  requestCloseTerminal(session.id);
                 } else if (path) {
                   setActive(path, session.id);
                 }
@@ -105,7 +105,7 @@ export function TerminalTabs({
               onKeyDown={(event) => {
                 if (event.key === "Delete") {
                   event.preventDefault();
-                  void close(session.id);
+                  requestCloseTerminal(session.id);
                 }
               }}
               className={cn(

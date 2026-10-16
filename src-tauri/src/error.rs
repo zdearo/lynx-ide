@@ -1,3 +1,5 @@
+use std::io;
+
 use serde::Serialize;
 use specta::Type;
 
@@ -25,6 +27,20 @@ pub enum AppError {
     WorktreeHasChanges,
     #[error("the main worktree cannot be removed")]
     CannotRemoveMainWorktree,
+    #[error("folder not found: {0}")]
+    FolderNotFound(String),
+    #[error("a folder cannot be moved into itself or into one of its own folders")]
+    FolderCycle,
+    #[error("location not found: {0}")]
+    LocationNotFound(String),
+    #[error("location is not a folder: {0}")]
+    LocationNotADirectory(String),
+    #[error("could not create {path}: {source}")]
+    CreateDirectory {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
     #[error(transparent)]
     Git(#[from] GitError),
     #[error(transparent)]
@@ -57,6 +73,8 @@ pub enum IpcErrorKind {
     AlreadyExists,
     WorktreeHasChanges,
     CannotRemoveMainWorktree,
+    FolderNotFound,
+    FolderCycle,
     Git,
     Storage,
     InvalidConfig,
@@ -82,6 +100,11 @@ impl From<AppError> for IpcError {
             AppError::AlreadyExists(_) => IpcErrorKind::AlreadyExists,
             AppError::WorktreeHasChanges => IpcErrorKind::WorktreeHasChanges,
             AppError::CannotRemoveMainWorktree => IpcErrorKind::CannotRemoveMainWorktree,
+            AppError::FolderNotFound(_) => IpcErrorKind::FolderNotFound,
+            AppError::FolderCycle => IpcErrorKind::FolderCycle,
+            AppError::LocationNotFound(_) => IpcErrorKind::PathNotFound,
+            AppError::LocationNotADirectory(_) => IpcErrorKind::NotADirectory,
+            AppError::CreateDirectory { .. } => IpcErrorKind::FileSystem,
             AppError::Git(_) => IpcErrorKind::Git,
             AppError::Database(_) => IpcErrorKind::Storage,
             AppError::Config(ConfigError::InvalidValues(_)) => IpcErrorKind::InvalidConfig,

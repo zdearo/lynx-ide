@@ -18,6 +18,15 @@ const MIGRATIONS: &[&str] = &[
          created_at INTEGER NOT NULL,
          PRIMARY KEY (repo_id, path)
      );",
+    // 2: folders that group repos and other folders. A repo without a folder is at the top level.
+    "CREATE TABLE folders (
+         id         TEXT PRIMARY KEY,
+         name       TEXT NOT NULL,
+         parent_id  TEXT REFERENCES folders(id),
+         collapsed  INTEGER NOT NULL DEFAULT 0,
+         created_at INTEGER NOT NULL
+     );
+     ALTER TABLE repos ADD COLUMN folder_id TEXT REFERENCES folders(id);",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -90,7 +99,10 @@ mod tests {
         let mut connection = Connection::open_in_memory().expect("open");
         migrate(&mut connection).expect("first");
         connection
-            .execute("INSERT INTO repos VALUES ('a', 'a', '/a', 0)", [])
+            .execute(
+                "INSERT INTO repos (id, name, path, created_at) VALUES ('a', 'a', '/a', 0)",
+                [],
+            )
             .expect("insert");
 
         migrate(&mut connection).expect("second");

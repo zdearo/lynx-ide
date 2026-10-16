@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import {
   commands,
+  type Folder,
   type RemoveWorktreeResult,
   type Repo,
   type WorktreeInfo,
@@ -29,19 +30,32 @@ export interface WorktreeDraft {
 interface WorkspaceState {
   loaded: boolean;
   repos: Repo[];
+  folders: Folder[];
   worktrees: Record<string, WorktreeInfo[]>;
   collapsedRepoIds: Record<string, boolean>;
+  /** Worktrees whose agent list is open. Missing means collapsed, which is the default. */
+  expandedAgentGroups: Record<string, boolean>;
   selectedWorktreePath: string | null;
   pending: PendingWorktree[];
   draft: WorktreeDraft | null;
 
   load: () => Promise<void>;
+  /** Reloads repos and folders together, since a move changes both. */
+  refreshStructure: () => Promise<void>;
   refreshAll: () => Promise<void>;
+  createFolder: (name: string, parentId: string | null) => Promise<Folder>;
+  renameFolder: (folderId: string, name: string) => Promise<Folder>;
+  moveFolder: (folderId: string, parentId: string | null) => Promise<void>;
+  deleteFolder: (folderId: string) => Promise<void>;
+  setFolderCollapsed: (folderId: string, collapsed: boolean) => Promise<void>;
+  moveRepo: (repoId: string, folderId: string | null) => Promise<void>;
   refreshWorktrees: (repoId: string) => Promise<void>;
   addRepo: (path: string) => Promise<Repo>;
+  createProject: (parentPath: string, name: string) => Promise<Repo>;
   removeRepo: (repoId: string) => Promise<void>;
   selectWorktree: (path: string) => void;
   toggleRepo: (repoId: string) => void;
+  toggleAgentGroup: (worktreePath: string) => void;
   openNewWorktree: (repoId: string) => void;
   closeNewWorktree: () => void;
   createWorktree: (draft: WorktreeDraft) => Promise<void>;
@@ -73,20 +87,89 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     select(firstMain?.path ?? null);
   };
 
+  /** Shows a repo the backend just registered, and selects its main worktree. */
+  const registerRepo = async (repo: Repo) => {
+    set((state) => ({
+      repos: state.repos.some((r) => r.id === repo.id)
+        ? state.repos
+        : [...state.repos, repo],
+      collapsedRepoIds: { ...state.collapsedRepoIds, [repo.id]: false },
+    }));
+    await get().refreshWorktrees(repo.id);
+    const main = get().worktrees[repo.id]?.[0];
+    if (main) select(main.path);
+    return repo;
+  };
+
   return {
     loaded: false,
     repos: [],
+    folders: [],
     worktrees: {},
     collapsedRepoIds: {},
+    expandedAgentGroups: {},
     selectedWorktreePath: readRememberedSelection(),
     pending: [],
     draft: null,
 
     async load() {
-      const repos = await unwrap(commands.listRepos());
-      set({ repos });
+      await get().refreshStructure();
       await get().refreshAll();
       set({ loaded: true });
+    },
+
+    async refreshStructure() {
+      const [repos, folders] = await Promise.all([
+        unwrap(commands.listRepos()),
+        unwrap(commands.listFolders()),
+      ]);
+      set({ repos, folders });
+    },
+
+    async createFolder(name, parentId) {
+      const folder = await unwrap(commands.createFolder(name, parentId));
+      // A folder made inside a collapsed one would be hidden, so open its parent.
+      if (parentId && get().folders.find((f) => f.id === parentId)?.collapsed) {
+        await get().setFolderCollapsed(parentId, false);
+      }
+      await get().refreshStructure();
+      return folder;
+    },
+
+    async renameFolder(folderId, name) {
+      const folder = await unwrap(commands.renameFolder(folderId, name));
+      await get().refreshStructure();
+      return folder;
+    },
+
+    async moveFolder(folderId, parentId) {
+      await unwrap(commands.moveFolder(folderId, parentId));
+      await get().refreshStructure();
+    },
+
+    async deleteFolder(folderId) {
+      await unwrap(commands.deleteFolder(folderId));
+      await get().refreshStructure();
+    },
+
+    /** Optimistic: the sidebar toggles at once and is re-read if the backend refuses. */
+    async setFolderCollapsed(folderId, collapsed) {
+      set((state) => ({
+        folders: state.folders.map((f) =>
+          f.id === folderId ? { ...f, collapsed } : f,
+        ),
+      }));
+      try {
+        await unwrap(commands.setFolderCollapsed(folderId, collapsed));
+      } catch (error) {
+        await get().refreshStructure();
+        throw error;
+      }
+    },
+
+    async moveRepo(repoId, folderId) {
+      await unwrap(commands.moveRepo(repoId, folderId));
+      await get().refreshStructure();
     },
 
     async refreshAll() {
@@ -107,17 +190,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     async addRepo(path) {
-      const repo = await unwrap(commands.addRepo(path));
-      set((state) => ({
-        repos: state.repos.some((r) => r.id === repo.id)
-          ? state.repos
-          : [...state.repos, repo],
-        collapsedRepoIds: { ...state.collapsedRepoIds, [repo.id]: false },
-      }));
-      await get().refreshWorktrees(repo.id);
-      const main = get().worktrees[repo.id]?.[0];
-      if (main) select(main.path);
-      return repo;
+      return registerRepo(await unwrap(commands.addRepo(path)));
+    },
+
+    async createProject(parentPath, name) {
+      return registerRepo(
+        await unwrap(commands.createProject(parentPath, name)),
+      );
     },
 
     async removeRepo(repoId) {
@@ -134,6 +213,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     selectWorktree: select,
+
+    toggleAgentGroup(worktreePath) {
+      set((state) => ({
+        expandedAgentGroups: {
+          ...state.expandedAgentGroups,
+          [worktreePath]: !state.expandedAgentGroups[worktreePath],
+        },
+      }));
+    },
 
     toggleRepo(repoId) {
       set((state) => ({

@@ -37,6 +37,7 @@ export function session(
     shell: "zsh",
     running: true,
     exitCode: null,
+    startedAt: 1_800_000_000,
     ...overrides,
   };
 }

@@ -1,14 +1,17 @@
-import type { KeyboardEvent } from "react";
-import { FolderPlus } from "lucide-react";
+import { useMemo, type KeyboardEvent } from "react";
+import { FolderGit2, FolderPlus } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useDialogStore } from "@/dialog-store";
+import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
-import { openRepositoryFromPicker } from "@/workspace/open-repository";
-import { RepoSection } from "@/workspace/RepoSection";
+import { runningAgentsByWorktree } from "@/workspace/collapsed-summary";
+import { buildProjectTree } from "@/workspace/project-tree";
+import { ProjectTree } from "@/workspace/ProjectTree";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
-/** Moves focus between repo headers and worktree rows with the arrow keys. */
+/** Moves focus between folder headers, repo headers and worktree rows with the arrow keys. */
 function moveFocus(event: KeyboardEvent<HTMLElement>) {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
   const items = Array.from(
@@ -24,11 +27,21 @@ function moveFocus(event: KeyboardEvent<HTMLElement>) {
 
 export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
   const repos = useWorkspaceStore((state) => state.repos);
+  const folders = useWorkspaceStore((state) => state.folders);
   const worktrees = useWorkspaceStore((state) => state.worktrees);
   const pending = useWorkspaceStore((state) => state.pending);
   const collapsedRepoIds = useWorkspaceStore((state) => state.collapsedRepoIds);
   const selectedPath = useWorkspaceStore((state) => state.selectedWorktreePath);
   const selectWorktree = useWorkspaceStore((state) => state.selectWorktree);
+  const askFolderDialog = useDialogStore((state) => state.askFolderDialog);
+  const askAddProject = useDialogStore((state) => state.askAddProject);
+  const sessions = useTerminalStore((state) => state.sessions);
+  const runningAgents = useMemo(
+    () => runningAgentsByWorktree(sessions),
+    [sessions],
+  );
+
+  const empty = repos.length === 0 && folders.length === 0;
 
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
@@ -36,15 +49,23 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
         <h2 className="text-xs font-medium text-muted-foreground">
           {copy.sidebar.title}
         </h2>
-        <TooltipIconButton
-          label={copy.sidebar.openRepository}
-          onClick={() => void openRepositoryFromPicker()}
-        >
-          <FolderPlus />
-        </TooltipIconButton>
+        <div className="flex items-center">
+          <TooltipIconButton
+            label={copy.folders.newFolder}
+            onClick={() => askFolderDialog({ mode: "create", parentId: null })}
+          >
+            <FolderPlus />
+          </TooltipIconButton>
+          <TooltipIconButton
+            label={copy.sidebar.addProject}
+            onClick={() => askAddProject(true)}
+          >
+            <FolderGit2 />
+          </TooltipIconButton>
+        </div>
       </div>
 
-      {repos.length === 0 ? (
+      {empty ? (
         <div className="px-3 pt-1">
           <p className="text-ui text-sidebar-foreground">
             {copy.sidebar.emptyTitle}
@@ -56,20 +77,20 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <ul className="px-2 pb-2" onKeyDown={moveFocus}>
-            {repos.map((repo) => (
-              <RepoSection
-                key={repo.id}
-                repo={repo}
-                worktrees={worktrees[repo.id] ?? []}
-                pending={pending.filter((item) => item.repoId === repo.id)}
-                collapsed={collapsedRepoIds[repo.id] ?? false}
-                selectedPath={selectedPath}
-                onSelectWorktree={(path) => {
+            <ProjectTree
+              nodes={buildProjectTree(folders, repos)}
+              context={{
+                worktrees,
+                pending,
+                collapsedRepoIds,
+                runningAgents,
+                selectedPath,
+                onSelectWorktree: (path) => {
                   selectWorktree(path);
                   onNavigate?.();
-                }}
-              />
-            ))}
+                },
+              }}
+            />
           </ul>
         </ScrollArea>
       )}

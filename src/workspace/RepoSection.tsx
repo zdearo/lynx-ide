@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { ChevronRight, MoreHorizontal, Plus } from "lucide-react";
+import { ChevronRight, GitBranch, MoreHorizontal, Plus } from "lucide-react";
 
 import type { Repo, WorktreeInfo } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
@@ -12,10 +12,16 @@ import {
 import { useDialogStore } from "@/dialog-store";
 import { cn } from "@/lib/utils";
 import { shortcutLabel } from "@/platform-shortcuts";
-import { useTerminalStore } from "@/terminal/terminal-store";
+import { isAgentCommand } from "@/terminal/agent-presets";
+import { requestCloseTerminal } from "@/terminal/terminal-actions";
+import { tabTitles } from "@/terminal/terminal-tab-title";
+import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
+import type { AgentItem } from "@/workspace/AgentRow";
 import { copy } from "@/ui-copy";
 import { StateDot } from "@/workspace/StateDot";
-import { WorktreeRow } from "@/workspace/WorktreeRow";
+import { CollapsedSummary } from "@/workspace/CollapsedSummary";
+import type { GroupSummary } from "@/workspace/collapsed-summary";
+import { WorktreeGroup } from "@/workspace/WorktreeGroup";
 import {
   useWorkspaceStore,
   type PendingWorktree,
@@ -23,6 +29,7 @@ import {
 
 interface RepoSectionProps {
   repo: Repo;
+  summary: GroupSummary;
   worktrees: WorktreeInfo[];
   pending: PendingWorktree[];
   collapsed: boolean;
@@ -32,6 +39,7 @@ interface RepoSectionProps {
 
 export function RepoSection({
   repo,
+  summary,
   worktrees,
   pending,
   collapsed,
@@ -39,10 +47,18 @@ export function RepoSection({
   onSelectWorktree,
 }: RepoSectionProps) {
   const toggleRepo = useWorkspaceStore((state) => state.toggleRepo);
+  const expandedAgentGroups = useWorkspaceStore(
+    (state) => state.expandedAgentGroups,
+  );
+  const toggleAgentGroup = useWorkspaceStore((state) => state.toggleAgentGroup);
   const openNewWorktree = useWorkspaceStore((state) => state.openNewWorktree);
   const refreshWorktrees = useWorkspaceStore((state) => state.refreshWorktrees);
   const askRemoveRepo = useDialogStore((state) => state.askRemoveRepo);
+  const askMove = useDialogStore((state) => state.askMove);
   const sessions = useTerminalStore((state) => state.sessions);
+  const activeByWorktree = useTerminalStore((state) => state.activeByWorktree);
+  const setActiveTerminal = useTerminalStore((state) => state.setActive);
+  const requestFocus = useTerminalStore((state) => state.requestFocus);
 
   const runningByPath = useMemo(() => {
     const counts = new Map<string, number>();
@@ -57,6 +73,35 @@ export function RepoSection({
     return counts;
   }, [sessions]);
 
+  // Agents are the sessions started from a known agent; plain shells stay in the tab bar.
+  const agentsByPath = useMemo(() => {
+    const grouped = new Map<string, AgentItem[]>();
+    const byPath = new Map<string, typeof sessions>();
+    for (const session of sessions) {
+      byPath.set(session.worktreePath, [
+        ...(byPath.get(session.worktreePath) ?? []),
+        session,
+      ]);
+    }
+    for (const [path, own] of byPath) {
+      // Titles are numbered across all of the worktree's tabs, so they match the tab bar.
+      const titles = tabTitles(own);
+      grouped.set(
+        path,
+        own
+          .filter((session) => isAgentCommand(session.command))
+          .map((session) => ({
+            id: session.id,
+            title: titles.get(session.id) ?? session.shell,
+            running: session.running,
+            exitCode: session.exitCode,
+            startedAt: session.startedAt,
+          })),
+      );
+    }
+    return grouped;
+  }, [sessions]);
+
   return (
     <li>
       <div className="group/repo relative">
@@ -69,22 +114,29 @@ export function RepoSection({
               ? copy.repo.expand(repo.name)
               : copy.repo.collapse(repo.name)
           }
+          data-project-id={repo.id}
+          aria-describedby={collapsed ? `repo-summary-${repo.id}` : undefined}
           onClick={() => toggleRepo(repo.id)}
           className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-ui font-medium text-sidebar-foreground hover:bg-sidebar-accent/50"
         >
-          <ChevronRight
+          <GitBranch
             aria-hidden
-            className={cn(
-              "size-3.5 shrink-0 text-muted-foreground transition-transform",
-              !collapsed && "rotate-90",
-            )}
+            className="size-3.5 shrink-0 text-muted-foreground"
           />
           <span className="min-w-0 flex-1 truncate" title={repo.path}>
             {repo.name}
           </span>
+          {collapsed && (
+            <CollapsedSummary
+              id={`repo-summary-${repo.id}`}
+              kind="repo"
+              summary={summary}
+            />
+          )}
         </button>
-        <div className="absolute top-0.5 right-1 flex items-center gap-0.5 rounded-md bg-sidebar opacity-0 transition-opacity group-focus-within/repo:opacity-100 group-hover/repo:opacity-100">
+        <div className="pointer-events-none absolute top-0.5 right-1 flex items-center gap-0.5 rounded-md bg-sidebar opacity-0 transition-opacity group-has-[:focus-visible]/repo:opacity-100 group-hover/repo:opacity-100">
           <TooltipIconButton
+            className="pointer-events-auto"
             label={copy.repo.newWorktree}
             shortcut={shortcutLabel("newWorktree")}
             onClick={() => openNewWorktree(repo.id)}
@@ -93,11 +145,19 @@ export function RepoSection({
           </TooltipIconButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <TooltipIconButton label={copy.repo.actions(repo.name)}>
+              <TooltipIconButton
+                label={copy.repo.actions(repo.name)}
+                className="pointer-events-auto"
+              >
                 <MoreHorizontal />
               </TooltipIconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-44">
+              <DropdownMenuItem
+                onSelect={() => askMove({ kind: "repo", repo })}
+              >
+                {copy.repo.moveToFolder}
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void refreshWorktrees(repo.id)}>
                 {copy.repo.refresh}
               </DropdownMenuItem>
@@ -109,19 +169,43 @@ export function RepoSection({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <span
+            aria-hidden
+            className="pointer-events-none grid size-6 place-items-center text-muted-foreground"
+          >
+            <ChevronRight
+              className={cn(
+                "size-3.5 transition-transform",
+                !collapsed && "rotate-90",
+              )}
+            />
+          </span>
         </div>
       </div>
 
       {!collapsed && (
-        <ul>
+        <ul className="grid grid-cols-1 gap-1">
           {worktrees.map((worktree) => (
-            <WorktreeRow
+            <WorktreeGroup
               key={worktree.path}
               repoId={repo.id}
               worktree={worktree}
               selected={worktree.path === selectedPath}
               runningCount={runningByPath.get(worktree.path) ?? 0}
+              agents={agentsByPath.get(worktree.path) ?? []}
+              activeAgentId={activeSessionId(
+                sessions,
+                activeByWorktree,
+                worktree.path,
+              )}
+              agentsExpanded={expandedAgentGroups[worktree.path] ?? false}
+              onToggleAgents={() => toggleAgentGroup(worktree.path)}
               onSelect={() => onSelectWorktree(worktree.path)}
+              onOpenAgent={(id) => {
+                setActiveTerminal(worktree.path, id);
+                requestFocus(id);
+              }}
+              onCloseAgent={requestCloseTerminal}
             />
           ))}
           {pending.map((item) => (

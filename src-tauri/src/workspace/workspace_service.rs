@@ -8,9 +8,11 @@ use crate::git::PorcelainWorktree;
 use crate::git::worktree_manager::{self, BranchDeletion, RepoRefs};
 use crate::persistence::AppDatabase;
 
-use super::workspace_models::{RemoveWorktreeResult, Repo, WorktreeInfo, WorktreeMeta};
+use super::empty_project::create_empty_project;
+use super::folder_hierarchy::would_create_cycle;
+use super::workspace_models::{Folder, RemoveWorktreeResult, Repo, WorktreeInfo, WorktreeMeta};
 
-const MAX_NAME_LENGTH: usize = 100;
+pub(super) const MAX_NAME_LENGTH: usize = 100;
 
 /// The user's configured worktrees folder, read when a worktree is created so a
 /// changed setting applies at once. `None` means next to each repository.
@@ -66,8 +68,15 @@ impl WorkspaceService {
             id: uuid::Uuid::new_v4().to_string(),
             name: directory_name(&main.path),
             path: path_to_string(&main.path),
+            folder_id: None,
         };
         Ok(self.database.get_or_insert_repo(&candidate)?)
+    }
+
+    /// Creates an empty repository in `parent` and registers it like any other repo.
+    pub fn create_project(&self, parent: &str, name: &str) -> Result<Repo, AppError> {
+        let created = create_empty_project(Path::new(parent), name)?;
+        self.add_repo(&path_to_string(&created))
     }
 
     /// Forgets the repo; nothing on disk is touched.
@@ -220,6 +229,78 @@ impl WorkspaceService {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    pub fn list_folders(&self) -> Result<Vec<Folder>, AppError> {
+        Ok(self.database.list_folders()?)
+    }
+
+    pub fn create_folder(&self, name: &str, parent_id: Option<&str>) -> Result<Folder, AppError> {
+        let name = validate_folder_name(name)?;
+        if let Some(parent) = parent_id {
+            self.find_folder(parent)?;
+        }
+        let folder = Folder {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            parent_id: parent_id.map(str::to_owned),
+            collapsed: false,
+        };
+        self.database.insert_folder(&folder)?;
+        Ok(folder)
+    }
+
+    pub fn rename_folder(&self, folder_id: &str, name: &str) -> Result<Folder, AppError> {
+        let name = validate_folder_name(name)?;
+        self.find_folder(folder_id)?;
+        self.database.rename_folder(folder_id, &name)?;
+        self.find_folder(folder_id)
+    }
+
+    /// Refuses a move that would put a folder inside itself or one of its folders.
+    pub fn move_folder(&self, folder_id: &str, parent_id: Option<&str>) -> Result<(), AppError> {
+        self.find_folder(folder_id)?;
+        if let Some(parent) = parent_id {
+            self.find_folder(parent)?;
+        }
+        let folders = self.database.list_folders()?;
+        if would_create_cycle(&folders, folder_id, parent_id) {
+            return Err(AppError::FolderCycle);
+        }
+        self.database.move_folder(folder_id, parent_id)?;
+        Ok(())
+    }
+
+    /// Projects and folders inside move up one level. Nothing is removed from disk.
+    pub fn delete_folder(&self, folder_id: &str) -> Result<(), AppError> {
+        if self.database.delete_folder(folder_id)? {
+            Ok(())
+        } else {
+            Err(AppError::FolderNotFound(folder_id.to_owned()))
+        }
+    }
+
+    pub fn set_folder_collapsed(&self, folder_id: &str, collapsed: bool) -> Result<(), AppError> {
+        if self.database.set_folder_collapsed(folder_id, collapsed)? {
+            Ok(())
+        } else {
+            Err(AppError::FolderNotFound(folder_id.to_owned()))
+        }
+    }
+
+    pub fn move_repo(&self, repo_id: &str, folder_id: Option<&str>) -> Result<(), AppError> {
+        self.find_repo(repo_id)?;
+        if let Some(folder) = folder_id {
+            self.find_folder(folder)?;
+        }
+        self.database.move_repo(repo_id, folder_id)?;
+        Ok(())
+    }
+
+    fn find_folder(&self, folder_id: &str) -> Result<Folder, AppError> {
+        self.database
+            .find_folder(folder_id)?
+            .ok_or_else(|| AppError::FolderNotFound(folder_id.to_owned()))
+    }
+
     fn find_repo(&self, repo_id: &str) -> Result<Repo, AppError> {
         self.database
             .find_repo(repo_id)?
@@ -293,6 +374,20 @@ fn validate_name(repo_path: &Path, name: &str) -> Result<String, AppError> {
     if !valid {
         return Err(AppError::InvalidName(format!(
             "{name} is not a valid branch name"
+        )));
+    }
+    Ok(name.to_owned())
+}
+
+/// Folder names are only labels, so the rules are just: not blank, not absurdly long.
+fn validate_folder_name(raw: &str) -> Result<String, AppError> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Err(AppError::InvalidName("the folder name is empty".to_owned()));
+    }
+    if name.chars().count() > MAX_NAME_LENGTH {
+        return Err(AppError::InvalidName(format!(
+            "the folder name is longer than {MAX_NAME_LENGTH} characters"
         )));
     }
     Ok(name.to_owned())

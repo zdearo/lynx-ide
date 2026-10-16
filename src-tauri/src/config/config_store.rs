@@ -9,7 +9,8 @@ use serde_json::{Map, Value, json};
 use specta::Type;
 
 use super::app_config::{
-    AppConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, expand_home, parse_config,
+    AppConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, TerminalConfig, expand_home,
+    parse_config,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -279,6 +280,51 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
         "scrollback",
         (terminal.scrollback != DEFAULT_SCROLLBACK).then(|| json!(terminal.scrollback)),
     );
+    let defaults = TerminalConfig::default();
+    put(
+        root,
+        "terminal",
+        "copyOnSelect",
+        (terminal.copy_on_select != defaults.copy_on_select)
+            .then(|| json!(terminal.copy_on_select)),
+    );
+    put(
+        root,
+        "terminal",
+        "bell",
+        (terminal.bell != defaults.bell).then(|| json!(terminal.bell)),
+    );
+    put(
+        root,
+        "terminal",
+        "macOptionIsMeta",
+        (terminal.mac_option_is_meta != defaults.mac_option_is_meta)
+            .then(|| json!(terminal.mac_option_is_meta)),
+    );
+    put(
+        root,
+        "terminal",
+        "closeOnExit",
+        (terminal.close_on_exit != defaults.close_on_exit).then(|| json!(terminal.close_on_exit)),
+    );
+    put(
+        root,
+        "terminal",
+        "confirmClose",
+        (terminal.confirm_close != defaults.confirm_close).then(|| json!(terminal.confirm_close)),
+    );
+    put(
+        root,
+        "terminal",
+        "colorScheme",
+        (terminal.color_scheme != defaults.color_scheme).then(|| json!(terminal.color_scheme)),
+    );
+    put(
+        root,
+        "terminal",
+        "textColorScheme",
+        terminal.text_color_scheme.map(|scheme| json!(scheme)),
+    );
     put(
         root,
         "worktrees",
@@ -319,7 +365,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::config::app_config::{TerminalConfig, WorktreesConfig};
+    use crate::config::app_config::{BellStyle, ColorScheme, TerminalConfig, WorktreesConfig};
 
     fn setup() -> (ConfigStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -377,6 +423,51 @@ mod tests {
             .update(with_font_size(DEFAULT_FONT_SIZE))
             .expect("reset");
 
+        assert_eq!(file_json(&store), json!({}));
+    }
+
+    #[test]
+    fn terminal_behaviour_options_are_written_only_when_they_differ_from_defaults() {
+        let (store, _dir) = setup();
+        let changed = AppConfig {
+            terminal: TerminalConfig {
+                copy_on_select: true,
+                bell: BellStyle::None,
+                confirm_close: true,
+                ..TerminalConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        store.update(changed).expect("set");
+        assert_eq!(
+            file_json(&store),
+            json!({ "terminal": { "copyOnSelect": true, "bell": "none", "confirmClose": true } })
+        );
+
+        store.update(AppConfig::default()).expect("reset");
+        assert_eq!(file_json(&store), json!({}));
+    }
+
+    #[test]
+    fn theme_settings_are_written_only_when_set() {
+        let (store, _dir) = setup();
+        let themed = AppConfig {
+            terminal: TerminalConfig {
+                color_scheme: ColorScheme::Nord,
+                text_color_scheme: Some(ColorScheme::Dracula),
+                ..TerminalConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        store.update(themed).expect("set");
+        assert_eq!(
+            file_json(&store),
+            json!({ "terminal": { "colorScheme": "nord", "textColorScheme": "dracula" } })
+        );
+
+        store.update(AppConfig::default()).expect("reset");
         assert_eq!(file_json(&store), json!({}));
     }
 

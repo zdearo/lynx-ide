@@ -5,7 +5,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@theme {
+  /* The app is dense: 13px for UI text and 11px for secondary metadata. */
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.125rem;
+  --text-meta: 0.6875rem;
+  --text-meta--line-height: 1rem;
+}
+
 @theme inline {
+  --color-live: var(--live);
+  --color-agent: var(--agent);
+  --font-mono:
+    ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
@@ -73,6 +85,10 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
+  /* Running terminal: the one color that means "alive". */
+  --live: oklch(0.74 0.17 152);
+  /* Reserved for agent glyphs. */
+  --agent: oklch(0.76 0.14 55);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -126,5 +142,48 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+/* Browser surfaces: the parts the design system would otherwise leave to defaults. */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    overflow: hidden;
+    font-size: var(--text-ui);
+    line-height: var(--text-ui--line-height);
+    /* Chrome is an app, not a document; inputs and the terminal opt back in. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input,
+  textarea,
+  [data-selectable] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--ring) 45%, transparent);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  :focus-visible {
+    outline: 2px solid color-mix(in oklch, var(--ring) 70%, transparent);
+    outline-offset: -2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }

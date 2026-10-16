@@ -33,7 +33,7 @@ Legenda: `[ ]` pendente · `[x]` feito · **(?)** decisão em aberto (ver seçã
 
 - [x] Listar worktrees com `git worktree list --porcelain`
 - [x] Criar worktree com branch nova a partir de uma base (branch local, SHA ou branch remota), sem rastrear a branch remota
-- [ ] Criar em segundo plano, com status visível (`fetch` e `worktree add`). O comando já roda fora da thread da UI; falta a linha de progresso na sidebar (1.5)
+- [x] Criar em segundo plano, com status visível (`fetch` e `worktree add`)
 - [x] Colocar os worktrees fora da pasta do repo, em `<repo>-worktrees/<nome>` **(?)**
 - [x] Remover worktree e branch; recusa alterações não commitadas, a menos que seja forçado (a confirmação na interface vem na 1.5)
 - [x] Preservar a branch quando tiver commits não mergeados (`git branch -d` e motivo devolvido ao frontend)
@@ -45,8 +45,8 @@ Legenda: `[ ]` pendente · `[x]` feito · **(?)** decisão em aberto (ver seçã
 - [x] Comandos IPC: criar, listar, snapshot, enviar input, redimensionar e fechar
 - [x] Enviar ao frontend os eventos de saída e de término (tipados, com scrollback de 1 MiB no Rust para reanexar a view sem perder nem duplicar saída)
 - [x] Suportar várias sessões por worktree
-- [x] Renderizar no frontend com xterm.js e o addon de fit (`TerminalView`; ainda não montado na janela, isso vem na 1.5)
-- [ ] Escolher o comando ao criar a sessão: shell, `claude`, `codex`, `opencode` ou comando livre. O backend já aceita qualquer comando; falta o seletor na interface (1.5)
+- [x] Renderizar no frontend com xterm.js e o addon de fit (`TerminalView`, montado na janela)
+- [x] Escolher o comando ao criar a sessão: shell, `claude`, `codex`, `opencode` ou comando livre
 - [x] Encerrar todos os PTYs ao fechar o app, sem deixar processo órfão (SIGHUP no grupo em primeiro plano, SIGKILL após 3 s para quem ignora)
 
 ### 1.4 Estado dos agentes (básico)
@@ -58,15 +58,25 @@ Legenda: `[ ]` pendente · `[x]` feito · **(?)** decisão em aberto (ver seçã
 
 ### 1.5 Interface base
 
-- [ ] Layout com sidebar (repos → worktrees) e área principal com abas de terminal
-- [ ] Componentes shadcn: Button, Dialog, Input, Tabs, ScrollArea, Badge, Sonner, DropdownMenu e Tooltip
-- [ ] Diálogo "Novo worktree" (nome e base)
-- [ ] Atalhos básicos: nova sessão, aba anterior e próxima, trocar de worktree
-- [ ] Tema claro e escuro
+- [x] Layout com sidebar (repos → worktrees) e área principal com abas de terminal. Em janelas com menos de 900 px a sidebar vira um drawer
+- [x] Componentes shadcn: Button, Dialog, AlertDialog, Input, Select, ScrollArea, Sheet, Sonner, DropdownMenu e Tooltip
+- [x] Diálogo "Novo worktree" (nome e base). Fecha na hora, mostra uma linha em progresso na sidebar e reabre com o motivo se o Git recusar
+- [x] Atalhos básicos: novo terminal, fechar aba, novo worktree e alternar sidebar (Cmd no macOS; Ctrl+Shift nos demais, para não roubar teclas do shell). Falta aba anterior/próxima e trocar de worktree
+- [ ] Tema claro e escuro (hoje só escuro, por decisão do shape)
 
 ### Critério de pronto da Fase 1
 
 Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois estados na sidebar. Fechar e reabrir o app sem perder a lista de repos e worktrees.
+
+---
+
+### Pendências da Fase 1
+
+- [ ] Verificar a interface na janela real do Tauri (hoje só foi exercitada no Chrome headless com o backend simulado, mais os testes do backend em Rust)
+- [ ] Atalhos de aba anterior/próxima e de troca de worktree
+- [ ] Estado dos agentes (1.4): trabalhando/ocioso, título OSC e indicador na sidebar
+- [ ] Terminais ocultos continuam montados (mantêm tela e rolagem). Medir memória com 8 a 10 agentes e decidir se vale desmontar os inativos
+- [ ] Windows e macOS: testar PTY, atalhos e seletor de pasta
 
 ---
 

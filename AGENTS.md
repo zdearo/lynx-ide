@@ -30,7 +30,11 @@ Versões atuais: Tauri 2.12, tauri-specta 2.0.0-rc.25, React 19, Vite 8, TypeScr
 
 ## Estrutura
 
-- `src/`: frontend React. Primitivos shadcn em `src/components/ui/`, utilitários de UI em `src/lib/`. O alias `@/` aponta para `src/`.
+- `src/`: frontend React. Primitivos shadcn em `src/components/ui/`; o alias `@/` aponta para `src/`.
+  - `workspace/`: sidebar, seções de repo, linhas de worktree, diálogos de worktree e `workspace-store.ts` (estado de repos e worktrees).
+  - `terminal/`: abas, `TerminalView` (xterm), `TerminalStreamGate`, presets de agente e `terminal-store.ts`.
+  - `ui-copy.ts`: todos os textos da interface (inglês). `dialog-store.ts`: qual diálogo está aberto. `platform-shortcuts.ts` e `use-app-shortcuts.ts`: atalhos.
+  - `dev/mock-tauri.ts`: backend simulado, só em desenvolvimento (`?mock=full` ou `?mock=empty` na URL).
 - `src-tauri/`: backend Rust. `src/lib.rs` monta o app; `src/ipc.rs` é o registro único de comandos e eventos; `src/main.rs` só chama `agent_ade_lib::run()`.
 - `src/bindings.ts`: contrato IPC gerado pelo Rust. Fica versionado, mas é ignorado pelo ESLint e pelo Prettier.
 - `src-tauri/capabilities/`: permissões do Tauri por janela. Adicione só o que o código usa.
@@ -45,6 +49,17 @@ Versões atuais: Tauri 2.12, tauri-specta 2.0.0-rc.25, React 19, Vite 8, TypeScr
 4. **Git pelo binário do usuário.** Operações de worktree e branch chamam o `git` instalado, via subprocesso, como o Orca faz. Assim valem a config, os hooks e as credenciais do próprio usuário. Baseline: Git 2.25.
 5. **Multiplataforma desde o início.** Monte caminhos com `PathBuf` e `Path::join`, nunca com `/` ou `\` fixos. Atalhos de teclado usam `Cmd` no macOS e `Ctrl` nos demais.
 6. **Escopo enxuto.** Não adiante funções de fases posteriores dentro do núcleo.
+
+## Interface
+
+A direção visual é a família do Orca, com acabamento no nível de Orca, Linear e Raycast (ver `PRODUCT.md`). O contrato da direção está em `.impeccable/surfaces/`. Diferenças em relação ao Orca foram adiadas de propósito: faça o básico bem feito antes de divergir.
+
+- Todo texto visível vem de `ui-copy.ts`. Não escreva strings soltas em componentes.
+- Cores e tamanhos vêm dos tokens de `src/index.css`: `bg-live` (terminal rodando), `text-agent` (glifos de agente), `text-ui` (13px) e `text-meta` (11px). Nada de valores fixos. A única exceção é o tema do xterm, que desenha em canvas e não lê tokens oklch.
+- O estado nunca depende só de cor: ponto cheio significa que há terminal rodando, ponto vazado que não há.
+- Atalhos: Cmd no macOS e Ctrl+Shift nos demais, porque Ctrl+T/W/N/B pertencem ao shell. Eles são capturados na fase de captura da janela, antes do terminal.
+- Toda ação por ícone usa `TooltipIconButton` (nome acessível e dica). Listas dentro de `ScrollArea` já têm `[&>div]:block!` para truncar com reticências.
+- O contrato visual é verificado com `pnpm e2e` (Chrome headless contra o backend simulado, inclui axe WCAG A/AA). Rode-o ao mexer na interface. Não capture a tela do monitor: a captura pode pegar outras janelas do usuário.
 
 ## Persistência
 
@@ -82,7 +97,7 @@ O estado do app fica em SQLite (`rusqlite` com SQLite embutido), no arquivo `app
 
 ## Estado atual
 
-- Fase 0 concluída (ver TODO.md). O app abre uma janela com sidebar vazia e um comando IPC de exemplo (`app_info`). Ainda não há lógica de worktree nem de terminal: a Fase 1 começa daqui.
+- Fase 0 concluída. Fase 1: backend de worktrees, persistência e terminais prontos; interface mínima pronta (sidebar por repositório, abas de terminal, diálogos). Faltam o estado dos agentes (1.4) e a verificação na janela real do Tauri. Ver TODO.md.
 - Ambiente de desenvolvimento: Arch Linux (Hyprland), Node 24 e pnpm. O Rust padrão da máquina é nightly, mas o projeto usa a estável via `rust-toolchain.toml`. As bibliotecas GTK e WebKit 4.1 já estão instaladas.
 
 ## Comandos
@@ -91,6 +106,7 @@ Gerenciador de pacotes: pnpm.
 
 - `pnpm tauri dev`: sobe o Vite e o app desktop com hot reload.
 - `pnpm tauri build`: gera o pacote de release. `pnpm tauri build --no-bundle` só compila o binário.
+- `pnpm e2e`: sobe o Vite numa porta própria e roda `e2e/ui-smoke.mjs` no Chrome headless (precisa de Chrome; use `CHROME_PATH` se não estiver no caminho padrão).
 - `pnpm check`: typecheck, ESLint, Prettier (verificação) e Vitest do frontend. Rode antes de concluir uma tarefa no frontend.
 - `pnpm rust:check`: `cargo fmt --check` e `cargo clippy -D warnings`.
 - `pnpm rust:test`: testes do backend (inclui a checagem de sincronia dos bindings).

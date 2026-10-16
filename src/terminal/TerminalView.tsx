@@ -11,7 +11,13 @@ import { TerminalStreamGate } from "@/terminal/terminal-stream-gate";
 
 // xterm paints on a canvas and cannot read the oklch CSS tokens, so these mirror
 // the dark theme's --background and --foreground.
-const TERMINAL_THEME = { background: "#0a0a0a", foreground: "#fafafa" };
+const TERMINAL_THEME = {
+  background: "#0a0a0a",
+  foreground: "#fafafa",
+  scrollbarSliderBackground: "rgba(255, 255, 255, 0.10)",
+  scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
+  scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.26)",
+};
 
 interface TerminalViewProps {
   terminalId: string;

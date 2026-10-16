@@ -1,0 +1,144 @@
+import type { KeyboardEvent } from "react";
+import { PanelLeft, Plus, X } from "lucide-react";
+
+import { TooltipIconButton } from "@/components/TooltipIconButton";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { shortcutLabel } from "@/platform-shortcuts";
+import { isAgentCommand } from "@/terminal/agent-presets";
+import { NewTerminalMenu } from "@/terminal/NewTerminalMenu";
+import { PresetIcon } from "@/terminal/PresetIcon";
+import { tabTitles } from "@/terminal/terminal-tab-title";
+import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
+import { copy } from "@/ui-copy";
+import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
+import { worktreeLabel } from "@/workspace/worktree-label";
+
+interface TerminalTabsProps {
+  /** When the sidebar is hidden the bar says which worktree this is. */
+  showLocation: boolean;
+  onToggleSidebar: () => void;
+}
+
+export function TerminalTabs({
+  showLocation,
+  onToggleSidebar,
+}: TerminalTabsProps) {
+  const selected = useSelectedWorktree();
+  const allSessions = useTerminalStore((state) => state.sessions);
+  const activeByWorktree = useTerminalStore((state) => state.activeByWorktree);
+  const setActive = useTerminalStore((state) => state.setActive);
+  const close = useTerminalStore((state) => state.close);
+
+  const path = selected?.worktree.path ?? null;
+  const sessions = allSessions.filter(
+    (session) => session.worktreePath === path,
+  );
+  const activeId = activeSessionId(allSessions, activeByWorktree, path);
+  const titles = tabTitles(sessions);
+
+  function moveTab(event: KeyboardEvent<HTMLDivElement>) {
+    if (!path || (event.key !== "ArrowRight" && event.key !== "ArrowLeft"))
+      return;
+    const index = sessions.findIndex((session) => session.id === activeId);
+    const step = event.key === "ArrowRight" ? 1 : -1;
+    const next = sessions[(index + step + sessions.length) % sessions.length];
+    if (!next) return;
+    event.preventDefault();
+    setActive(path, next.id);
+    document.getElementById(`tab-${next.id}`)?.focus();
+  }
+
+  return (
+    <div className="flex h-9 shrink-0 items-stretch bg-sidebar">
+      <div className="flex items-center px-1.5">
+        <TooltipIconButton
+          label={copy.sidebar.toggle}
+          shortcut={shortcutLabel("toggleSidebar")}
+          onClick={onToggleSidebar}
+        >
+          <PanelLeft />
+        </TooltipIconButton>
+      </div>
+
+      {showLocation && selected && (
+        <span
+          className="flex max-w-40 min-w-0 shrink items-center truncate pr-2 text-meta text-muted-foreground"
+          title={`${selected.repo.name} / ${worktreeLabel(selected.worktree).text}`}
+        >
+          {selected.repo.name} / {worktreeLabel(selected.worktree).text}
+        </span>
+      )}
+
+      <div
+        role="tablist"
+        aria-label="Terminals"
+        onKeyDown={moveTab}
+        className="flex min-w-0 items-stretch overflow-x-auto"
+      >
+        {sessions.map((session) => {
+          const active = session.id === activeId;
+          return (
+            <div
+              key={session.id}
+              role="presentation"
+              className={cn(
+                "group/tab flex shrink-0 items-center border-r border-border",
+                active
+                  ? "bg-background text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <button
+                type="button"
+                role="tab"
+                id={`tab-${session.id}`}
+                aria-selected={active}
+                tabIndex={active ? 0 : -1}
+                onClick={() => path && setActive(path, session.id)}
+                className="flex h-full max-w-44 items-center gap-1.5 pr-1.5 pl-3 text-ui [&_svg]:size-3.5"
+              >
+                <PresetIcon
+                  kind={isAgentCommand(session.command) ? "agent" : "shell"}
+                />
+                <span className="truncate">{titles.get(session.id)}</span>
+                {!session.running && (
+                  <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
+                    {copy.terminal.exited(session.exitCode)}
+                  </span>
+                )}
+              </button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={copy.terminal.close}
+                onClick={() => void close(session.id)}
+                className={cn(
+                  "mr-1",
+                  !active &&
+                    "opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100",
+                )}
+              >
+                <X />
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+
+      {selected && (
+        <div className="flex items-center px-1.5">
+          <NewTerminalMenu worktreePath={selected.worktree.path}>
+            <TooltipIconButton
+              label={copy.terminal.newTerminal}
+              shortcut={shortcutLabel("newTerminal")}
+            >
+              <Plus />
+            </TooltipIconButton>
+          </NewTerminalMenu>
+        </div>
+      )}
+    </div>
+  );
+}

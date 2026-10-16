@@ -26,7 +26,7 @@ Legenda: `[ ]` pendente · `[x]` feito · **(?)** decisão em aberto (ver seçã
 
 - [x] Modelo `Repo` (id, nome, caminho) e `WorktreeInfo` (caminho, branch, base ref, principal, bloqueado, órfão)
 - [x] Validar que o caminho é um repositório git antes de registrá-lo (resolve para o worktree principal e recusa repositórios bare)
-- [x] Persistir repos e a base ref de cada worktree em JSON no diretório de dados do app, com escrita atômica. A lista de worktrees vem sempre do Git, que é a fonte da verdade **(?)**
+- [x] Persistir repos e a base ref de cada worktree em SQLite (`app.db` no diretório de dados do app), com migrações versionadas por `user_version`. A lista de worktrees vem sempre do Git, que é a fonte da verdade
 - [x] Restaurar a lista de repos e worktrees ao abrir o app (backend; a interface vem na 1.5)
 
 ### 1.2 Worktrees (Git)
@@ -111,7 +111,6 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 ## Decisões em aberto
 
 - **Daemon de PTY:** entra só na Fase 4. Proposta: na Fase 1 as sessões encerram ao fechar o app.
-- **Persistência:** JSON basta até quando? Critério para migrar para SQLite.
 - **Local dos worktrees:** `<pasta-do-repo>/../<repo>-worktrees/<nome>` ou outro caminho gerenciado pelo app.
 - **Pastas que não são git:** entram em qual fase?
 - **Idioma da interface:** só inglês ou também pt-BR?

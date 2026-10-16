@@ -6,7 +6,7 @@ use tempfile::TempDir;
 use crate::error::AppError;
 use crate::git::git_command::git;
 use crate::git::test_repository::{TestRepository, commit_file_in};
-use crate::persistence::AppStateStore;
+use crate::persistence::AppDatabase;
 
 use super::workspace_models::Repo;
 use super::workspace_service::WorkspaceService;
@@ -19,8 +19,8 @@ struct Fixture {
 }
 
 fn service_in(state_dir: &TempDir) -> WorkspaceService {
-    let store = AppStateStore::open(state_dir.path().join("state.json")).expect("open store");
-    WorkspaceService::new(store)
+    let database = AppDatabase::open(&state_dir.path().join("app.db")).expect("open database");
+    WorkspaceService::new(database)
 }
 
 fn fixture(git_repo: TestRepository) -> Fixture {
@@ -76,7 +76,7 @@ fn add_repo_resolves_a_linked_worktree_to_its_main_repo() {
     let again = fixture.service.add_repo(&worktree.path).expect("add again");
 
     assert_eq!(again, fixture.repo);
-    assert_eq!(fixture.service.list_repos().len(), 1);
+    assert_eq!(fixture.service.list_repos().expect("repos").len(), 1);
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn add_repo_rejects_a_directory_that_is_not_a_repository() {
     let result = service.add_repo(&plain.path().to_string_lossy());
 
     assert!(matches!(result, Err(AppError::NotAGitRepo(_))));
-    assert!(service.list_repos().is_empty());
+    assert!(service.list_repos().expect("repos").is_empty());
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn repos_survive_reopening_the_store() {
 
     let reopened = service_in(&state_dir);
 
-    assert_eq!(reopened.list_repos(), vec![repo]);
+    assert_eq!(reopened.list_repos().expect("repos"), vec![repo]);
 }
 
 #[test]
@@ -488,7 +488,7 @@ fn remove_repo_forgets_it_but_leaves_the_disk_alone() {
         .remove_repo(&fixture.repo.id)
         .expect("remove repo");
 
-    assert!(fixture.service.list_repos().is_empty());
+    assert!(fixture.service.list_repos().expect("repos").is_empty());
     assert!(Path::new(&created.path).is_dir());
     assert!(matches!(
         fixture.service.remove_repo(&fixture.repo.id),

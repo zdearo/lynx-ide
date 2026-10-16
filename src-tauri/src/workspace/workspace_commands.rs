@@ -11,7 +11,7 @@ use super::workspace_service::WorkspaceService;
 #[specta::specta]
 pub async fn list_repos(service: State<'_, WorkspaceService>) -> Result<Vec<Repo>, IpcError> {
     let service = service.inner().clone();
-    run_blocking(move || Ok(service.list_repos())).await
+    run_blocking(move || service.list_repos()).await
 }
 
 #[tauri::command]

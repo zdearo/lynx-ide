@@ -1,0 +1,129 @@
+//! Forward-only schema migrations, tracked with SQLite's `user_version`.
+//! Never edit a released migration: append a new one.
+
+use rusqlite::Connection;
+
+const MIGRATIONS: &[&str] = &[
+    // 1: repos and what the app remembers about their worktrees
+    "CREATE TABLE repos (
+         id         TEXT PRIMARY KEY,
+         name       TEXT NOT NULL,
+         path       TEXT NOT NULL UNIQUE,
+         created_at INTEGER NOT NULL
+     );
+     CREATE TABLE worktree_meta (
+         repo_id    TEXT NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+         path       TEXT NOT NULL,
+         base_ref   TEXT NOT NULL,
+         created_at INTEGER NOT NULL,
+         PRIMARY KEY (repo_id, path)
+     );",
+];
+
+#[derive(Debug, thiserror::Error)]
+pub enum MigrationError {
+    #[error(
+        "the app database was created by a newer version (schema {found}, this build supports {supported})"
+    )]
+    SchemaTooNew { found: u32, supported: u32 },
+    #[error("migration to schema {version} failed: {source}")]
+    Failed {
+        version: u32,
+        #[source]
+        source: rusqlite::Error,
+    },
+    #[error("could not read the schema version: {0}")]
+    ReadVersion(#[source] rusqlite::Error),
+}
+
+pub fn migrate(connection: &mut Connection) -> Result<(), MigrationError> {
+    let current: u32 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(MigrationError::ReadVersion)?;
+    let supported = u32::try_from(MIGRATIONS.len()).unwrap_or(u32::MAX);
+    if current > supported {
+        // Downgrading would silently drop data the newer build relies on.
+        return Err(MigrationError::SchemaTooNew {
+            found: current,
+            supported,
+        });
+    }
+
+    for version in current + 1..=supported {
+        let sql = MIGRATIONS[version as usize - 1];
+        apply(connection, version, sql)
+            .map_err(|source| MigrationError::Failed { version, source })?;
+    }
+    Ok(())
+}
+
+/// Each migration and its version bump commit together, so a crash mid-way
+/// leaves the previous version intact.
+fn apply(connection: &mut Connection, version: u32, sql: &str) -> rusqlite::Result<()> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(sql)?;
+    transaction.pragma_update(None, "user_version", version)?;
+    transaction.commit()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn version(connection: &Connection) -> u32 {
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("read version")
+    }
+
+    #[test]
+    fn fresh_database_reaches_the_latest_version() {
+        let mut connection = Connection::open_in_memory().expect("open");
+
+        migrate(&mut connection).expect("migrate");
+
+        assert_eq!(version(&connection) as usize, MIGRATIONS.len());
+    }
+
+    #[test]
+    fn migrating_twice_is_a_no_op() {
+        let mut connection = Connection::open_in_memory().expect("open");
+        migrate(&mut connection).expect("first");
+        connection
+            .execute("INSERT INTO repos VALUES ('a', 'a', '/a', 0)", [])
+            .expect("insert");
+
+        migrate(&mut connection).expect("second");
+
+        let count: u32 = connection
+            .query_row("SELECT COUNT(*) FROM repos", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn every_migration_applies_cleanly_in_order() {
+        // Guards against a migration that only works on top of a populated schema.
+        let mut connection = Connection::open_in_memory().expect("open");
+        for (index, sql) in MIGRATIONS.iter().enumerate() {
+            apply(&mut connection, index as u32 + 1, sql).expect("apply");
+            assert_eq!(version(&connection) as usize, index + 1);
+        }
+    }
+
+    #[test]
+    fn a_failing_migration_leaves_the_previous_version() {
+        let mut connection = Connection::open_in_memory().expect("open");
+        migrate(&mut connection).expect("migrate");
+        let before = version(&connection);
+
+        let result = apply(
+            &mut connection,
+            before + 1,
+            "CREATE TABLE repos (x); -- already exists",
+        );
+
+        assert!(result.is_err());
+        assert_eq!(version(&connection), before);
+    }
+}

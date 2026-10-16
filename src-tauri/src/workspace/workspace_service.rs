@@ -6,29 +6,29 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::git::PorcelainWorktree;
 use crate::git::worktree_manager::{self, BranchDeletion, RepoRefs};
-use crate::persistence::AppStateStore;
+use crate::persistence::AppDatabase;
 
 use super::workspace_models::{RemoveWorktreeResult, Repo, WorktreeInfo, WorktreeMeta};
 
 const MAX_NAME_LENGTH: usize = 100;
 
 /// Repos and worktrees. Git is the source of truth for which worktrees exist;
-/// the store only adds what Git cannot tell us (which repos are open, what
+/// the database only adds what Git cannot tell us (which repos are open, what
 /// each worktree was branched from).
 #[derive(Clone)]
 pub struct WorkspaceService {
-    store: Arc<AppStateStore>,
+    database: Arc<AppDatabase>,
 }
 
 impl WorkspaceService {
-    pub fn new(store: AppStateStore) -> Self {
+    pub fn new(database: AppDatabase) -> Self {
         Self {
-            store: Arc::new(store),
+            database: Arc::new(database),
         }
     }
 
-    pub fn list_repos(&self) -> Vec<Repo> {
-        self.store.read(|state| state.repos.clone())
+    pub fn list_repos(&self) -> Result<Vec<Repo>, AppError> {
+        Ok(self.database.list_repos()?)
     }
 
     pub fn add_repo(&self, path: &str) -> Result<Repo, AppError> {
@@ -51,35 +51,22 @@ impl WorkspaceService {
             return Err(AppError::BareRepo);
         }
 
-        let main_path = path_to_string(&main.path);
-        let existing = self.store.read(|state| {
-            state
-                .repos
-                .iter()
-                .find(|repo| repo.path == main_path)
-                .cloned()
-        });
-        if let Some(repo) = existing {
-            return Ok(repo);
-        }
-
-        let repo = Repo {
+        // The database keeps the first repo registered for this path.
+        let candidate = Repo {
             id: uuid::Uuid::new_v4().to_string(),
             name: directory_name(&main.path),
-            path: main_path,
+            path: path_to_string(&main.path),
         };
-        self.store.update(|state| state.repos.push(repo.clone()))?;
-        Ok(repo)
+        Ok(self.database.get_or_insert_repo(&candidate)?)
     }
 
     /// Forgets the repo; nothing on disk is touched.
     pub fn remove_repo(&self, repo_id: &str) -> Result<(), AppError> {
-        self.find_repo(repo_id)?;
-        self.store.update(|state| {
-            state.repos.retain(|repo| repo.id != repo_id);
-            state.worktrees.remove(repo_id);
-        })?;
-        Ok(())
+        if self.database.delete_repo(repo_id)? {
+            Ok(())
+        } else {
+            Err(AppError::RepoNotFound(repo_id.to_owned()))
+        }
     }
 
     pub fn repo_refs(&self, repo_id: &str) -> Result<RepoRefs, AppError> {
@@ -90,7 +77,7 @@ impl WorkspaceService {
     pub fn list_worktrees(&self, repo_id: &str) -> Result<Vec<WorktreeInfo>, AppError> {
         let repo = self.find_repo(repo_id)?;
         let entries = worktree_manager::list_worktrees(Path::new(&repo.path))?;
-        let meta = self.worktree_meta(repo_id);
+        let meta = self.database.worktree_meta(repo_id)?;
 
         Ok(entries
             .iter()
@@ -140,16 +127,13 @@ impl WorkspaceService {
             .ok_or_else(|| AppError::WorktreeNotFound(path_to_string(&destination)))?;
         let created_path = path_to_string(&created.path);
 
-        self.store.update(|state| {
-            state.worktrees.entry(repo.id.clone()).or_default().insert(
-                created_path.clone(),
-                WorktreeMeta {
-                    base_ref: base.clone(),
-                },
-            );
-        })?;
+        self.database.set_worktree_meta(
+            &repo.id,
+            &created_path,
+            &WorktreeMeta { base_ref: base },
+        )?;
 
-        let meta = self.worktree_meta(repo_id);
+        let meta = self.database.worktree_meta(repo_id)?;
         Ok(to_worktree_info(&created, false, &meta))
     }
 
@@ -186,24 +170,15 @@ impl WorkspaceService {
         }
 
         let removed_path = path_to_string(&entry.path);
-        self.store.update(|state| {
-            if let Some(meta) = state.worktrees.get_mut(repo_id) {
-                meta.remove(&removed_path);
-            }
-        })?;
+        self.database.delete_worktree_meta(repo_id, &removed_path)?;
 
         Ok(delete_worktree_branch(repo_path, entry.branch.as_deref()))
     }
 
     fn find_repo(&self, repo_id: &str) -> Result<Repo, AppError> {
-        self.store
-            .read(|state| state.repos.iter().find(|repo| repo.id == repo_id).cloned())
+        self.database
+            .find_repo(repo_id)?
             .ok_or_else(|| AppError::RepoNotFound(repo_id.to_owned()))
-    }
-
-    fn worktree_meta(&self, repo_id: &str) -> BTreeMap<String, WorktreeMeta> {
-        self.store
-            .read(|state| state.worktrees.get(repo_id).cloned().unwrap_or_default())
     }
 }
 

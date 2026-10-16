@@ -46,6 +46,14 @@ Versões atuais: Tauri 2.12, tauri-specta 2.0.0-rc.25, React 19, Vite 8, TypeScr
 5. **Multiplataforma desde o início.** Monte caminhos com `PathBuf` e `Path::join`, nunca com `/` ou `\` fixos. Atalhos de teclado usam `Cmd` no macOS e `Ctrl` nos demais.
 6. **Escopo enxuto.** Não adiante funções de fases posteriores dentro do núcleo.
 
+## Persistência
+
+O estado do app fica em SQLite (`rusqlite` com SQLite embutido), no arquivo `app.db` do diretório de dados. O acesso passa por `src-tauri/src/persistence/`.
+
+- Mudança de schema é uma nova entrada no fim de `MIGRATIONS` em `schema_migrations.rs`. Nunca edite uma migração já lançada.
+- Um banco criado por versão mais nova é recusado sem alteração; um arquivo que não é SQLite é guardado como `app.db.corrupt-<timestamp>`.
+- O Git continua sendo a fonte da verdade sobre worktrees: o banco só guarda o que o Git não sabe (repos abertos, base ref de cada worktree).
+
 ## Convenções
 
 - **Idioma:** documentação e comunicação com o dono do projeto em português (pt-BR). Código, identificadores, nomes de arquivo, logs e mensagens de commit em inglês.

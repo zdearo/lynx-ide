@@ -1,3 +1,4 @@
-mod app_state_store;
+mod app_database;
+mod schema_migrations;
 
-pub use app_state_store::{AppStateStore, StoreError};
+pub use app_database::{AppDatabase, DatabaseError};

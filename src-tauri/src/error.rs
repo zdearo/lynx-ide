@@ -2,7 +2,7 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::git::GitError;
-use crate::persistence::StoreError;
+use crate::persistence::DatabaseError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -25,7 +25,7 @@ pub enum AppError {
     #[error(transparent)]
     Git(#[from] GitError),
     #[error(transparent)]
-    Store(#[from] StoreError),
+    Database(#[from] DatabaseError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
 }
@@ -65,7 +65,7 @@ impl From<AppError> for IpcError {
             AppError::WorktreeHasChanges => IpcErrorKind::WorktreeHasChanges,
             AppError::CannotRemoveMainWorktree => IpcErrorKind::CannotRemoveMainWorktree,
             AppError::Git(_) => IpcErrorKind::Git,
-            AppError::Store(_) => IpcErrorKind::Storage,
+            AppError::Database(_) => IpcErrorKind::Storage,
             AppError::TaskFailed(_) => IpcErrorKind::Internal,
         };
         Self {

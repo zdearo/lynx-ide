@@ -8,7 +8,7 @@ mod workspace;
 
 use tauri::Manager;
 
-use persistence::AppStateStore;
+use persistence::AppDatabase;
 use workspace::workspace_service::WorkspaceService;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -21,8 +21,8 @@ pub fn run() {
         .setup(move |app| {
             builder.mount_events(app);
 
-            let state_file = app.path().app_data_dir()?.join("state.json");
-            app.manage(WorkspaceService::new(AppStateStore::open(state_file)?));
+            let database_file = app.path().app_data_dir()?.join("app.db");
+            app.manage(WorkspaceService::new(AppDatabase::open(&database_file)?));
             Ok(())
         })
         .run(tauri::generate_context!())

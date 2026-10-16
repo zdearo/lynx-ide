@@ -1,0 +1,413 @@
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use specta::Type;
+
+pub const DEFAULT_FONT_SIZE: u8 = 13;
+pub const MIN_FONT_SIZE: u8 = 8;
+pub const MAX_FONT_SIZE: u8 = 32;
+pub const DEFAULT_SCROLLBACK: u32 = 5_000;
+pub const MAX_SCROLLBACK: u32 = 100_000;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalConfig {
+    /// CSS font list tried before the bundled fonts; `None` uses the bundled ones.
+    pub font_family: Option<String>,
+    pub font_size: u8,
+    /// Program for new terminals; `None` uses the user's login shell.
+    pub shell: Option<String>,
+    /// Lines of history kept per terminal.
+    pub scrollback: u32,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            font_family: None,
+            font_size: DEFAULT_FONT_SIZE,
+            shell: None,
+            scrollback: DEFAULT_SCROLLBACK,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreesConfig {
+    /// Folder that holds new worktrees, grouped by repository; `None` puts them
+    /// next to each repository. A leading `~` means the home folder.
+    pub directory: Option<String>,
+}
+
+/// The effective settings: what `~/.lynx/config.json` says, with defaults for the rest.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AppConfig {
+    pub terminal: TerminalConfig,
+    pub worktrees: WorktreesConfig,
+}
+
+/// One thing wrong with the config, addressed by its dotted key (`terminal.fontSize`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ConfigIssue {
+    pub key: String,
+    pub message: String,
+}
+
+impl ConfigIssue {
+    fn new(key: &str, message: impl Into<String>) -> Self {
+        Self {
+            key: key.to_owned(),
+            message: message.into(),
+        }
+    }
+}
+
+/// `~` and `~/rest` mean the home folder; anything else is taken as written.
+pub fn expand_home(raw: &str, home: &Path) -> PathBuf {
+    if raw == "~" {
+        return home.to_owned();
+    }
+    match raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        Some(rest) => home.join(rest),
+        None => PathBuf::from(raw),
+    }
+}
+
+impl AppConfig {
+    /// Trims text and turns blank text into "unset", so an emptied field means default.
+    pub fn normalized(mut self) -> Self {
+        for field in [
+            &mut self.terminal.font_family,
+            &mut self.terminal.shell,
+            &mut self.worktrees.directory,
+        ] {
+            if let Some(text) = field.as_deref().map(str::trim) {
+                *field = (!text.is_empty()).then(|| text.to_owned());
+            }
+        }
+        self
+    }
+
+    pub fn validate(&self, home: &Path) -> Vec<ConfigIssue> {
+        let mut issues = Vec::new();
+        let terminal = &self.terminal;
+
+        if let Some(family) = &terminal.font_family
+            && family
+                .chars()
+                .any(|c| c.is_control() || matches!(c, ';' | '{' | '}'))
+        {
+            issues.push(ConfigIssue::new(
+                "terminal.fontFamily",
+                "use a comma-separated list of font names, like in CSS",
+            ));
+        }
+        if !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&terminal.font_size) {
+            issues.push(ConfigIssue::new(
+                "terminal.fontSize",
+                format!("must be between {MIN_FONT_SIZE} and {MAX_FONT_SIZE}"),
+            ));
+        }
+        if let Some(shell) = &terminal.shell
+            && shell.chars().any(char::is_control)
+        {
+            issues.push(ConfigIssue::new(
+                "terminal.shell",
+                "must be a single program path or name",
+            ));
+        }
+        if terminal.scrollback > MAX_SCROLLBACK {
+            issues.push(ConfigIssue::new(
+                "terminal.scrollback",
+                format!("must be at most {MAX_SCROLLBACK}"),
+            ));
+        }
+        if let Some(directory) = &self.worktrees.directory
+            && !expand_home(directory, home).is_absolute()
+        {
+            issues.push(ConfigIssue::new(
+                "worktrees.directory",
+                "must be an absolute path, or start with ~",
+            ));
+        }
+        issues
+    }
+
+    /// Puts one field back to its default, by the key an issue names.
+    fn reset(&mut self, key: &str) {
+        let defaults = AppConfig::default();
+        match key {
+            "terminal.fontFamily" => self.terminal.font_family = defaults.terminal.font_family,
+            "terminal.fontSize" => self.terminal.font_size = defaults.terminal.font_size,
+            "terminal.shell" => self.terminal.shell = defaults.terminal.shell,
+            "terminal.scrollback" => self.terminal.scrollback = defaults.terminal.scrollback,
+            "worktrees.directory" => self.worktrees.directory = defaults.worktrees.directory,
+            _ => {}
+        }
+    }
+}
+
+/// Reads the config leniently: a bad field is reported and replaced by its default
+/// instead of failing the whole file. Unknown keys are ignored here (and kept on write).
+pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>) {
+    let mut issues = Vec::new();
+    let mut config = AppConfig::default();
+
+    let Some(root) = value.as_object() else {
+        issues.push(ConfigIssue::new("", "the top level must be a JSON object"));
+        return (config, issues);
+    };
+
+    if let Some(terminal) = section(root, "terminal", &mut issues) {
+        config.terminal.font_family =
+            optional_text(terminal, "fontFamily", "terminal", &mut issues);
+        config.terminal.shell = optional_text(terminal, "shell", "terminal", &mut issues);
+        if let Some(size) = number(terminal, "fontSize", "terminal", &mut issues) {
+            config.terminal.font_size = u8::try_from(size).unwrap_or(u8::MAX);
+        }
+        if let Some(lines) = number(terminal, "scrollback", "terminal", &mut issues) {
+            config.terminal.scrollback = u32::try_from(lines).unwrap_or(u32::MAX);
+        }
+    }
+    if let Some(worktrees) = section(root, "worktrees", &mut issues) {
+        config.worktrees.directory =
+            optional_text(worktrees, "directory", "worktrees", &mut issues);
+    }
+
+    finish(config.normalized(), issues, home)
+}
+
+/// Resets invalid fields one at a time until the config validates.
+fn finish(
+    mut config: AppConfig,
+    mut issues: Vec<ConfigIssue>,
+    home: &Path,
+) -> (AppConfig, Vec<ConfigIssue>) {
+    loop {
+        let remaining = config.validate(home);
+        let Some(issue) = remaining.into_iter().next() else {
+            return (config, issues);
+        };
+        config.reset(&issue.key);
+        issues.push(issue);
+    }
+}
+
+fn section<'a>(
+    root: &'a Map<String, Value>,
+    name: &str,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<&'a Map<String, Value>> {
+    match root.get(name)? {
+        Value::Object(map) => Some(map),
+        _ => {
+            issues.push(ConfigIssue::new(name, "must be an object"));
+            None
+        }
+    }
+}
+
+fn optional_text(
+    object: &Map<String, Value>,
+    key: &str,
+    section: &str,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<String> {
+    match object.get(key)? {
+        Value::String(text) => Some(text.clone()),
+        Value::Null => None,
+        _ => {
+            issues.push(ConfigIssue::new(
+                &format!("{section}.{key}"),
+                "must be text",
+            ));
+            None
+        }
+    }
+}
+
+fn number(
+    object: &Map<String, Value>,
+    key: &str,
+    section: &str,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<u64> {
+    match object.get(key)? {
+        Value::Number(number) => match number.as_u64() {
+            Some(value) => Some(value),
+            None => {
+                issues.push(ConfigIssue::new(
+                    &format!("{section}.{key}"),
+                    "must be a whole number, zero or more",
+                ));
+                None
+            }
+        },
+        Value::Null => None,
+        _ => {
+            issues.push(ConfigIssue::new(
+                &format!("{section}.{key}"),
+                "must be a number",
+            ));
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    const HOME: &str = "/home/dev";
+
+    fn parse(value: Value) -> (AppConfig, Vec<ConfigIssue>) {
+        parse_config(&value, Path::new(HOME))
+    }
+
+    fn keys(issues: &[ConfigIssue]) -> Vec<&str> {
+        issues.iter().map(|issue| issue.key.as_str()).collect()
+    }
+
+    #[test]
+    fn an_empty_object_means_all_defaults_and_no_complaints() {
+        let (config, issues) = parse(json!({}));
+        assert_eq!(config, AppConfig::default());
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn reads_every_known_field() {
+        let (config, issues) = parse(json!({
+            "terminal": { "fontFamily": "Fira Code", "fontSize": 16, "shell": "/usr/bin/fish", "scrollback": 20000 },
+            "worktrees": { "directory": "~/trees" }
+        }));
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(config.terminal.font_family.as_deref(), Some("Fira Code"));
+        assert_eq!(config.terminal.font_size, 16);
+        assert_eq!(config.terminal.shell.as_deref(), Some("/usr/bin/fish"));
+        assert_eq!(config.terminal.scrollback, 20000);
+        assert_eq!(config.worktrees.directory.as_deref(), Some("~/trees"));
+    }
+
+    #[test]
+    fn unknown_keys_are_ignored_without_complaint() {
+        let (config, issues) =
+            parse(json!({ "futureThing": 1, "terminal": { "newOption": true } }));
+        assert_eq!(config, AppConfig::default());
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn a_bad_field_is_reported_and_defaulted_while_the_rest_still_applies() {
+        let (config, issues) = parse(json!({
+            "terminal": { "fontSize": 99, "scrollback": 1000, "shell": "/bin/zsh" }
+        }));
+        assert_eq!(keys(&issues), ["terminal.fontSize"]);
+        assert_eq!(config.terminal.font_size, DEFAULT_FONT_SIZE);
+        assert_eq!(config.terminal.scrollback, 1000);
+        assert_eq!(config.terminal.shell.as_deref(), Some("/bin/zsh"));
+    }
+
+    #[test]
+    fn wrong_types_are_reported_per_field() {
+        let (config, issues) = parse(json!({
+            "terminal": { "fontSize": "big", "shell": 5, "scrollback": -1, "fontFamily": ["a"] },
+            "worktrees": { "directory": 7 }
+        }));
+        assert_eq!(
+            keys(&issues),
+            [
+                "terminal.fontFamily",
+                "terminal.shell",
+                "terminal.fontSize",
+                "terminal.scrollback",
+                "worktrees.directory"
+            ]
+        );
+        assert_eq!(config, AppConfig::default());
+    }
+
+    #[test]
+    fn a_section_that_is_not_an_object_is_reported() {
+        let (config, issues) = parse(json!({ "terminal": 3, "worktrees": [] }));
+        assert_eq!(keys(&issues), ["terminal", "worktrees"]);
+        assert_eq!(config, AppConfig::default());
+    }
+
+    #[test]
+    fn a_top_level_that_is_not_an_object_is_reported() {
+        let (config, issues) = parse(json!([1, 2]));
+        assert_eq!(keys(&issues), [""]);
+        assert_eq!(config, AppConfig::default());
+    }
+
+    #[test]
+    fn several_invalid_values_are_all_reset_and_reported() {
+        let (config, issues) = parse(json!({
+            "terminal": { "fontSize": 1, "scrollback": 999999999 },
+            "worktrees": { "directory": "relative/path" }
+        }));
+        assert_eq!(
+            keys(&issues),
+            [
+                "terminal.fontSize",
+                "terminal.scrollback",
+                "worktrees.directory"
+            ]
+        );
+        assert_eq!(config, AppConfig::default());
+    }
+
+    #[test]
+    fn blank_text_means_unset() {
+        let (config, issues) = parse(json!({ "terminal": { "shell": "   ", "fontFamily": "" } }));
+        assert!(issues.is_empty());
+        assert_eq!(config.terminal.shell, None);
+        assert_eq!(config.terminal.font_family, None);
+    }
+
+    #[test]
+    fn font_lists_cannot_smuggle_css() {
+        let config = AppConfig {
+            terminal: TerminalConfig {
+                font_family: Some("Fira Code; color: red".to_owned()),
+                ..TerminalConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            keys(&config.validate(Path::new(HOME))),
+            ["terminal.fontFamily"]
+        );
+    }
+
+    #[test]
+    fn directories_accept_absolute_paths_and_a_home_prefix() {
+        for ok in ["/srv/trees", "~", "~/trees"] {
+            let config = AppConfig {
+                worktrees: WorktreesConfig {
+                    directory: Some(ok.to_owned()),
+                },
+                ..AppConfig::default()
+            };
+            assert!(config.validate(Path::new(HOME)).is_empty(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn expands_the_home_prefix_only_at_the_start() {
+        let home = Path::new(HOME);
+        assert_eq!(expand_home("~", home), PathBuf::from("/home/dev"));
+        assert_eq!(
+            expand_home("~/trees", home),
+            PathBuf::from("/home/dev/trees")
+        );
+        assert_eq!(expand_home("/a/~/b", home), PathBuf::from("/a/~/b"));
+        assert_eq!(expand_home("~user/x", home), PathBuf::from("~user/x"));
+    }
+}

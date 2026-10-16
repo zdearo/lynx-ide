@@ -19,19 +19,71 @@ export const commands = {
 	writeTerminal: (id: string, data: string) => typedError<null, IpcError>(__TAURI_INVOKE("write_terminal", { id, data })),
 	resizeTerminal: (id: string, cols: number, rows: number) => typedError<null, IpcError>(__TAURI_INVOKE("resize_terminal", { id, cols, rows })),
 	closeTerminal: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("close_terminal", { id })),
+	getConfig: () => typedError<ConfigSnapshot, IpcError>(__TAURI_INVOKE("get_config")),
+	updateConfig: (config: AppConfig) => typedError<ConfigSnapshot, IpcError>(__TAURI_INVOKE("update_config", { config })),
+	/**  Opens the config file in the user's default editor, creating it first if needed. */
+	openConfigFile: () => typedError<null, IpcError>(__TAURI_INVOKE("open_config_file")),
+	/**  One folder of a worktree. `relative_path` is empty for the root and uses `/`. */
+	listDirectory: (worktreePath: string, relativePath: string) => typedError<DirectoryListing, IpcError>(__TAURI_INVOKE("list_directory", { worktreePath, relativePath })),
+	/**  Opens the folder that holds the item in the system file manager. */
+	revealInFileManager: (worktreePath: string, relativePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("reveal_in_file_manager", { worktreePath, relativePath })),
 };
 
 /** Events */
 export const events = {
+	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
 	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
 };
 
 /* Types */
+/**  The effective settings: what `~/.lynx/config.json` says, with defaults for the rest. */
+export type AppConfig = {
+	terminal: TerminalConfig,
+	worktrees: WorktreesConfig,
+};
+
 export type AppInfo = {
 	name: string,
 	version: string,
 };
+
+/**  The config file changed outside the app (an editor, a dotfiles sync, a script). */
+export type ConfigChanged = {
+	snapshot: ConfigSnapshot,
+};
+
+/**  One thing wrong with the config, addressed by its dotted key (`terminal.fontSize`). */
+export type ConfigIssue = {
+	key: string,
+	message: string,
+};
+
+/**  What the interface sees: the effective settings plus everything it should warn about. */
+export type ConfigSnapshot = {
+	config: AppConfig,
+	issues: ConfigIssue[],
+	path: string,
+	fileExists: boolean,
+	/**  The file exists but is not valid JSON, so settings cannot be saved over it. */
+	fileBroken: boolean,
+};
+
+export type DirectoryListing = {
+	entries: FileEntry[],
+	/**  There were more than the panel shows. */
+	truncated: boolean,
+};
+
+export type FileEntry = {
+	name: string,
+	kind: FileKind,
+	symlink: boolean,
+	/**  Git ignores it; shown, but quieter. */
+	ignored: boolean,
+};
+
+export type FileKind = "directory" | "file";
 
 /**  Error as the frontend sees it: a stable `kind` to branch on and a message to show. */
 export type IpcError = {
@@ -39,7 +91,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "git" | "storage" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "internal";
 
 export type RemoveWorktreeResult = {
 	branch: string | null,
@@ -60,6 +112,16 @@ export type RepoRefs = {
 	defaultBase: string,
 	/**  Local branches and remote-tracking branches, e.g. `main`, `origin/main`. */
 	refs: string[],
+};
+
+export type TerminalConfig = {
+	/**  CSS font list tried before the bundled fonts; `None` uses the bundled ones. */
+	fontFamily: string | null,
+	fontSize: number,
+	/**  Program for new terminals; `None` uses the user's login shell. */
+	shell: string | null,
+	/**  Lines of history kept per terminal. */
+	scrollback: number,
 };
 
 export type TerminalExit = {
@@ -107,6 +169,14 @@ export type WorktreeInfo = {
 	locked: boolean,
 	/**  The worktree directory is gone; `git worktree prune` would drop the entry. */
 	prunable: boolean,
+};
+
+export type WorktreesConfig = {
+	/**
+	 *  Folder that holds new worktrees, grouped by repository; `None` puts them
+	 *  next to each repository. A leading `~` means the home folder.
+	 */
+	directory: string | null,
 };
 
 /* Tauri Specta runtime */

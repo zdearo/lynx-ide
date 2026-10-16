@@ -14,14 +14,17 @@ pub struct TerminalManager {
     inner: Arc<Inner>,
 }
 
+/// Resolved on every new terminal, so a changed setting applies without a restart.
+pub type ShellProvider = Arc<dyn Fn() -> Shell + Send + Sync>;
+
 struct Inner {
-    shell: Shell,
+    shell: ShellProvider,
     sink: Arc<dyn TerminalEventSink>,
     sessions: Mutex<BTreeMap<String, Arc<TerminalSession>>>,
 }
 
 impl TerminalManager {
-    pub fn new(shell: Shell, sink: Arc<dyn TerminalEventSink>) -> Self {
+    pub fn new(shell: ShellProvider, sink: Arc<dyn TerminalEventSink>) -> Self {
         Self {
             inner: Arc::new(Inner {
                 shell,
@@ -38,12 +41,13 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
     ) -> Result<TerminalInfo, TerminalError> {
+        let shell = (self.inner.shell)();
         let command = command.map(str::trim).filter(|command| !command.is_empty());
         let session = TerminalSession::spawn(
             uuid::Uuid::new_v4().to_string(),
             &SpawnRequest {
                 cwd: Path::new(worktree_path),
-                shell: &self.inner.shell,
+                shell: &shell,
                 command,
                 cols,
                 rows,

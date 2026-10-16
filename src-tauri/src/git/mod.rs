@@ -1,4 +1,5 @@
 pub mod git_command;
+pub mod ignored_paths;
 pub mod worktree_manager;
 mod worktree_porcelain;
 

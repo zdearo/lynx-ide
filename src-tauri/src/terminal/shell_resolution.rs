@@ -28,6 +28,17 @@ impl Shell {
         }
     }
 
+    /// The program the user configured, or their own shell when none is set.
+    pub fn from_config(program: Option<&str>) -> Self {
+        match program {
+            Some(program) => Self {
+                program: program.to_owned(),
+                args: Self::system_default().args,
+            },
+            None => Self::system_default(),
+        }
+    }
+
     /// Short name for tab titles, e.g. `zsh`.
     pub fn display_name(&self) -> String {
         std::path::Path::new(&self.program).file_stem().map_or_else(

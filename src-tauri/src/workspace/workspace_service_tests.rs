@@ -1,5 +1,6 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tempfile::TempDir;
 
@@ -19,8 +20,12 @@ struct Fixture {
 }
 
 fn service_in(state_dir: &TempDir) -> WorkspaceService {
+    service_with_root(state_dir, None)
+}
+
+fn service_with_root(state_dir: &TempDir, root: Option<PathBuf>) -> WorkspaceService {
     let database = AppDatabase::open(&state_dir.path().join("app.db")).expect("open database");
-    WorkspaceService::new(database)
+    WorkspaceService::new(database, Arc::new(move || root.clone()))
 }
 
 fn fixture(git_repo: TestRepository) -> Fixture {
@@ -522,4 +527,110 @@ fn repo_refs_falls_back_to_the_current_branch_without_a_remote() {
     let refs = fixture.service.repo_refs(&fixture.repo.id).expect("refs");
 
     assert_eq!(refs.default_base, "main");
+}
+
+#[test]
+fn a_configured_root_holds_worktrees_grouped_by_repository() {
+    let git_repo = TestRepository::new();
+    let state_dir = tempfile::tempdir().expect("state dir");
+    let root = tempfile::tempdir().expect("root dir");
+    let root_path = fs::canonicalize(root.path()).expect("canonical");
+    let service = service_with_root(&state_dir, Some(root_path.clone()));
+    let repo = service
+        .add_repo(&git_repo.path.to_string_lossy())
+        .expect("add repo");
+
+    let created = service
+        .create_worktree(&repo.id, "feature/login", None)
+        .expect("create worktree");
+
+    assert_eq!(
+        created.path,
+        root_path
+            .join("repo")
+            .join("feature-login")
+            .to_string_lossy()
+    );
+    assert!(Path::new(&created.path).join("README.md").is_file());
+    assert!(
+        !git_repo.path.with_file_name("repo-worktrees").exists(),
+        "nothing is created next to the repository"
+    );
+}
+
+#[test]
+fn worktrees_made_before_the_setting_changed_stay_where_they_are() {
+    let git_repo = TestRepository::new();
+    let state_dir = tempfile::tempdir().expect("state dir");
+    let before = service_in(&state_dir);
+    let repo = before
+        .add_repo(&git_repo.path.to_string_lossy())
+        .expect("add repo");
+    let old = before
+        .create_worktree(&repo.id, "old", None)
+        .expect("create old");
+
+    let root = tempfile::tempdir().expect("root dir");
+    let after = service_with_root(&state_dir, Some(root.path().to_owned()));
+    let listed = after.list_worktrees(&repo.id).expect("list");
+
+    assert!(listed.iter().any(|w| w.path == old.path));
+}
+
+#[test]
+fn only_worktrees_reported_by_git_can_be_resolved() {
+    let fixture = plain_fixture();
+    let created = fixture
+        .service
+        .create_worktree(&fixture.repo.id, "task", None)
+        .expect("create");
+    let main = fixture.git_repo.path.to_string_lossy().into_owned();
+
+    // Nothing is known until the repo's worktrees have been listed or created.
+    fixture
+        .service
+        .list_worktrees(&fixture.repo.id)
+        .expect("list");
+
+    assert_eq!(
+        fixture.service.resolve_worktree(&main).expect("main"),
+        fixture.git_repo.path
+    );
+    assert!(fixture.service.resolve_worktree(&created.path).is_ok());
+    assert!(matches!(
+        fixture.service.resolve_worktree("/etc"),
+        Err(AppError::WorktreeNotFound(_))
+    ));
+    assert!(matches!(
+        fixture.service.resolve_worktree(&format!("{main}/src")),
+        Err(AppError::WorktreeNotFound(_))
+    ));
+}
+
+#[test]
+fn a_removed_worktree_or_repo_can_no_longer_be_resolved() {
+    let fixture = plain_fixture();
+    let created = fixture
+        .service
+        .create_worktree(&fixture.repo.id, "task", None)
+        .expect("create");
+    assert!(fixture.service.resolve_worktree(&created.path).is_ok());
+
+    fixture
+        .service
+        .remove_worktree(&fixture.repo.id, &created.path, false)
+        .expect("remove");
+    assert!(fixture.service.resolve_worktree(&created.path).is_err());
+
+    let main = fixture.git_repo.path.to_string_lossy().into_owned();
+    fixture
+        .service
+        .list_worktrees(&fixture.repo.id)
+        .expect("list");
+    assert!(fixture.service.resolve_worktree(&main).is_ok());
+    fixture
+        .service
+        .remove_repo(&fixture.repo.id)
+        .expect("remove repo");
+    assert!(fixture.service.resolve_worktree(&main).is_err());
 }

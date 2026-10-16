@@ -1,6 +1,8 @@
 use serde::Serialize;
 use specta::Type;
 
+use crate::config::config_store::ConfigError;
+use crate::files::files_error::FilesError;
 use crate::git::GitError;
 use crate::persistence::DatabaseError;
 use crate::terminal::TerminalError;
@@ -29,6 +31,10 @@ pub enum AppError {
     Database(#[from] DatabaseError),
     #[error(transparent)]
     Terminal(#[from] TerminalError),
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error(transparent)]
+    Files(#[from] FilesError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
 }
@@ -53,6 +59,12 @@ pub enum IpcErrorKind {
     CannotRemoveMainWorktree,
     Git,
     Storage,
+    InvalidConfig,
+    InvalidPath,
+    PathNotFound,
+    NotADirectory,
+    FileSystem,
+    BrokenConfigFile,
     TerminalNotFound,
     TerminalNotRunning,
     Terminal,
@@ -72,6 +84,15 @@ impl From<AppError> for IpcError {
             AppError::CannotRemoveMainWorktree => IpcErrorKind::CannotRemoveMainWorktree,
             AppError::Git(_) => IpcErrorKind::Git,
             AppError::Database(_) => IpcErrorKind::Storage,
+            AppError::Config(ConfigError::InvalidValues(_)) => IpcErrorKind::InvalidConfig,
+            AppError::Config(ConfigError::BrokenFile(_)) => IpcErrorKind::BrokenConfigFile,
+            AppError::Config(ConfigError::Io { .. }) => IpcErrorKind::Storage,
+            AppError::Files(FilesError::InvalidPath(_) | FilesError::OutsideWorktree(_)) => {
+                IpcErrorKind::InvalidPath
+            }
+            AppError::Files(FilesError::NotFound(_)) => IpcErrorKind::PathNotFound,
+            AppError::Files(FilesError::NotADirectory(_)) => IpcErrorKind::NotADirectory,
+            AppError::Files(FilesError::Io { .. }) => IpcErrorKind::FileSystem,
             AppError::Terminal(TerminalError::NotFound(_)) => IpcErrorKind::TerminalNotFound,
             AppError::Terminal(TerminalError::NotRunning) => IpcErrorKind::TerminalNotRunning,
             AppError::Terminal(_) => IpcErrorKind::Terminal,

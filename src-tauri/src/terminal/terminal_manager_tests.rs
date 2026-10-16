@@ -99,10 +99,10 @@ fn output_of(events: &Events, id: &str) -> String {
 fn setup() -> (TerminalManager, Arc<RecordingSink>, tempfile::TempDir) {
     let sink = Arc::new(RecordingSink::default());
     // A bare `sh` keeps prompts and rc files out of the way.
-    let shell = Shell {
+    let shell = Arc::new(|| Shell {
         program: "/bin/sh".to_owned(),
         args: Vec::new(),
-    };
+    });
     let manager = TerminalManager::new(shell, Arc::clone(&sink) as Arc<dyn TerminalEventSink>);
     (manager, sink, tempfile::tempdir().expect("temp dir"))
 }

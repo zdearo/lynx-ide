@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::error::AppError;
 use crate::git::PorcelainWorktree;
@@ -12,18 +12,28 @@ use super::workspace_models::{RemoveWorktreeResult, Repo, WorktreeInfo, Worktree
 
 const MAX_NAME_LENGTH: usize = 100;
 
+/// The user's configured worktrees folder, read when a worktree is created so a
+/// changed setting applies at once. `None` means next to each repository.
+pub type WorktreesRoot = Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>;
+
 /// Repos and worktrees. Git is the source of truth for which worktrees exist;
 /// the database only adds what Git cannot tell us (which repos are open, what
 /// each worktree was branched from).
 #[derive(Clone)]
 pub struct WorkspaceService {
     database: Arc<AppDatabase>,
+    worktrees_root: WorktreesRoot,
+    /// Worktree paths per repo as Git last reported them: the only folders the
+    /// file explorer may read, so the frontend cannot ask for arbitrary paths.
+    known_worktrees: Arc<Mutex<HashMap<String, HashSet<PathBuf>>>>,
 }
 
 impl WorkspaceService {
-    pub fn new(database: AppDatabase) -> Self {
+    pub fn new(database: AppDatabase, worktrees_root: WorktreesRoot) -> Self {
         Self {
             database: Arc::new(database),
+            worktrees_root,
+            known_worktrees: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -63,6 +73,7 @@ impl WorkspaceService {
     /// Forgets the repo; nothing on disk is touched.
     pub fn remove_repo(&self, repo_id: &str) -> Result<(), AppError> {
         if self.database.delete_repo(repo_id)? {
+            self.known_worktrees().remove(repo_id);
             Ok(())
         } else {
             Err(AppError::RepoNotFound(repo_id.to_owned()))
@@ -78,6 +89,10 @@ impl WorkspaceService {
         let repo = self.find_repo(repo_id)?;
         let entries = worktree_manager::list_worktrees(Path::new(&repo.path))?;
         let meta = self.database.worktree_meta(repo_id)?;
+        self.remember_worktrees(
+            repo_id,
+            entries.iter().map(|entry| entry.path.clone()).collect(),
+        );
 
         Ok(entries
             .iter()
@@ -96,7 +111,9 @@ impl WorkspaceService {
         let repo_path = Path::new(&repo.path);
 
         let branch = validate_name(repo_path, name)?;
-        let destination = worktrees_directory(repo_path).join(directory_slug(&branch)?);
+        let configured_root = (self.worktrees_root)();
+        let destination = worktrees_directory(repo_path, configured_root.as_deref())
+            .join(directory_slug(&branch)?);
         if destination.exists() {
             return Err(AppError::AlreadyExists(path_to_string(&destination)));
         }
@@ -126,6 +143,10 @@ impl WorkspaceService {
             .find(|entry| same_location(&entry.path, &destination))
             .ok_or_else(|| AppError::WorktreeNotFound(path_to_string(&destination)))?;
         let created_path = path_to_string(&created.path);
+        self.known_worktrees()
+            .entry(repo.id.clone())
+            .or_default()
+            .insert(created.path.clone());
 
         self.database.set_worktree_meta(
             &repo.id,
@@ -170,9 +191,33 @@ impl WorkspaceService {
         }
 
         let removed_path = path_to_string(&entry.path);
+        if let Some(known) = self.known_worktrees().get_mut(repo_id) {
+            known.remove(&entry.path);
+        }
         self.database.delete_worktree_meta(repo_id, &removed_path)?;
 
         Ok(delete_worktree_branch(repo_path, entry.branch.as_deref()))
+    }
+
+    /// The folder of a worktree this app knows about; anything else is refused.
+    pub fn resolve_worktree(&self, path: &str) -> Result<PathBuf, AppError> {
+        let wanted = Path::new(path);
+        self.known_worktrees()
+            .values()
+            .any(|paths| paths.contains(wanted))
+            .then(|| wanted.to_owned())
+            .ok_or_else(|| AppError::WorktreeNotFound(path.to_owned()))
+    }
+
+    fn remember_worktrees(&self, repo_id: &str, paths: HashSet<PathBuf>) {
+        self.known_worktrees().insert(repo_id.to_owned(), paths);
+    }
+
+    fn known_worktrees(&self) -> std::sync::MutexGuard<'_, HashMap<String, HashSet<PathBuf>>> {
+        // Only whole-set inserts and removals happen, so a poisoned lock is still consistent.
+        self.known_worktrees
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     fn find_repo(&self, repo_id: &str) -> Result<Repo, AppError> {
@@ -273,10 +318,16 @@ fn directory_slug(name: &str) -> Result<String, AppError> {
     Ok(slug)
 }
 
-/// Worktrees live next to the repository, never inside it.
-fn worktrees_directory(repo_path: &Path) -> PathBuf {
-    let parent = repo_path.parent().unwrap_or(repo_path);
-    parent.join(format!("{}-worktrees", directory_name(repo_path)))
+/// By default worktrees live next to the repository, never inside it. A configured
+/// root groups them by repository name instead.
+fn worktrees_directory(repo_path: &Path, configured_root: Option<&Path>) -> PathBuf {
+    match configured_root {
+        Some(root) => root.join(directory_name(repo_path)),
+        None => {
+            let parent = repo_path.parent().unwrap_or(repo_path);
+            parent.join(format!("{}-worktrees", directory_name(repo_path)))
+        }
+    }
 }
 
 fn same_location(a: &Path, b: &Path) -> bool {

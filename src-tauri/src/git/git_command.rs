@@ -1,7 +1,8 @@
 use std::ffi::{OsStr, OsString};
 use std::io;
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
@@ -25,12 +26,14 @@ impl GitError {
 pub struct GitCommand<'a> {
     cwd: &'a Path,
     args: Vec<OsString>,
+    stdin: Option<Vec<u8>>,
 }
 
 pub fn git(cwd: &Path) -> GitCommand<'_> {
     GitCommand {
         cwd,
         args: Vec::new(),
+        stdin: None,
     }
 }
 
@@ -47,6 +50,12 @@ impl GitCommand<'_> {
     {
         self.args
             .extend(args.into_iter().map(|a| a.as_ref().to_owned()));
+        self
+    }
+
+    /// Bytes fed to git's standard input.
+    pub fn stdin(mut self, input: Vec<u8>) -> Self {
+        self.stdin = Some(input);
         self
     }
 
@@ -67,10 +76,31 @@ impl GitCommand<'_> {
             .env("LC_ALL", "C");
         hide_console_window(&mut command);
 
-        let output = command.output().map_err(|error| match error.kind() {
+        let to_git_error = |error: io::Error| match error.kind() {
             io::ErrorKind::NotFound => GitError::NotInstalled,
             _ => GitError::Io(error),
-        })?;
+        };
+        let output = match self.stdin.clone() {
+            None => command.output().map_err(to_git_error)?,
+            Some(input) => {
+                command
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                let mut child = command.spawn().map_err(to_git_error)?;
+                let mut stdin = child.stdin.take();
+                // Written on its own thread: git may start answering before it has read
+                // everything, and a full output pipe would otherwise block us both.
+                let writer = std::thread::spawn(move || {
+                    if let Some(stdin) = stdin.as_mut() {
+                        let _ = stdin.write_all(&input);
+                    }
+                });
+                let output = child.wait_with_output().map_err(to_git_error)?;
+                let _ = writer.join();
+                output
+            }
+        };
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);

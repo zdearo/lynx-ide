@@ -10,6 +10,7 @@ import type {
   AppConfig,
   ConfigSnapshot,
   Folder,
+  HarnessId,
   Repo,
   TerminalInfo,
   WorktreeInfo,
@@ -301,6 +302,111 @@ export function installMockTauri(scenario: string): void {
   const transcripts = new Map<string, string>();
   const seq = new Map<string, number>();
 
+  // The program each agent's CLI runs as, which is how a typed command names its agent.
+  const programs: Record<string, HarnessId> = {
+    claude: "claude",
+    codex: "codex",
+    opencode: "opencode",
+    agy: "antigravity",
+    "cursor-agent": "cursor",
+    copilot: "copilot",
+    grok: "grok",
+    droid: "droid",
+    "kiro-cli": "kiro",
+    qwen: "qwen",
+    pi: "pi",
+    omp: "omp",
+  };
+  // Which agent a typed command starts, as the backend decides it.
+  function harnessOf(command: string | null) {
+    const program = command?.trim().split(/\s+/)[0];
+    return program ? (programs[program] ?? null) : null;
+  }
+
+  // Mirrors the backend's hook state per harness so the Agents settings can be exercised in dev.
+  const hookStates: Record<string, "notInstalled" | "installed"> = {};
+  const hookFiles: Record<string, { path: string; events: string[] }> = {
+    claude: {
+      path: "/home/dev/.claude/settings.json",
+      events: ["SessionStart", "UserPromptSubmit", "Stop"],
+    },
+    codex: {
+      path: "/home/dev/.codex/hooks.json",
+      events: ["SessionStart", "SessionEnd", "UserPromptSubmit", "Stop"],
+    },
+    opencode: {
+      path: "/home/dev/.config/opencode/plugins/lynx-agent-status.js",
+      events: ["session.created", "session.idle", "permission.asked"],
+    },
+    antigravity: {
+      path: "/home/dev/.gemini/config/hooks.json",
+      events: ["PreInvocation", "PreToolUse", "Stop"],
+    },
+    cursor: {
+      path: "/home/dev/.cursor/hooks.json",
+      events: ["beforeSubmitPrompt", "preToolUse", "stop"],
+    },
+    copilot: {
+      path: "/home/dev/.copilot/hooks/lynx.json",
+      events: ["SessionStart", "UserPromptSubmit", "Stop"],
+    },
+    grok: {
+      path: "/home/dev/.grok/hooks/lynx-status.json",
+      events: ["SessionStart", "UserPromptSubmit", "Stop"],
+    },
+    droid: {
+      path: "/home/dev/.factory/settings.json",
+      events: ["SessionStart", "UserPromptSubmit", "Stop"],
+    },
+    kiro: {
+      path: "/home/dev/.kiro/agents",
+      events: ["agentSpawn", "userPromptSubmit", "stop"],
+    },
+    qwen: {
+      path: "/home/dev/.qwen/settings.json",
+      events: ["SessionStart", "UserPromptSubmit", "Stop"],
+    },
+    pi: {
+      path: "/home/dev/.pi/agent/extensions/lynx-agent-status.ts",
+      events: ["session_start", "agent_start", "agent_end"],
+    },
+    omp: {
+      path: "/home/dev/.omp/agent/extensions/lynx-agent-status.ts",
+      events: ["session_start", "agent_start", "agent_end"],
+    },
+  };
+  // Every agent Lynx lists, and the ones whose CLI this mock machine has on its PATH.
+  const catalogHarnesses = [
+    "claude",
+    "codex",
+    "opencode",
+    "antigravity",
+    "cursor",
+    "copilot",
+    "grok",
+    "droid",
+    "kiro",
+    "qwen",
+    "pi",
+    "omp",
+  ] as const;
+  const onThisMachine = new Set([
+    "claude",
+    "codex",
+    "antigravity",
+    "grok",
+    "omp",
+  ]);
+  function hookStatusOf(harness: string) {
+    const file = hookFiles[harness] ?? hookFiles.claude;
+    return {
+      state: hookStates[harness] ?? "notInstalled",
+      configPath: file.path,
+      events: file.events,
+      detail: null,
+    };
+  }
+
   function addSession(
     path: string,
     command: string | null,
@@ -317,6 +423,8 @@ export function installMockTauri(scenario: string): void {
       running,
       exitCode: running ? null : 0,
       startedAt: Math.floor(Date.now() / 1000) - startedSecondsAgo,
+      harness: harnessOf(command),
+      agentStatus: harnessOf(command) && running ? "idle" : null,
     });
     transcripts.set(id, text);
     seq.set(id, 1);
@@ -554,6 +662,23 @@ export function installMockTauri(scenario: string): void {
         }
         case "list_terminals":
           return structuredClone(sessions);
+        case "mark_agent_seen":
+          return null;
+        case "agent_catalog":
+          // Agents whose CLI is missing show under "Other supported agents".
+          return catalogHarnesses.map((harness) => ({
+            harness,
+            found: onThisMachine.has(harness),
+            hooks: hookStatusOf(harness),
+          }));
+        case "hook_status":
+          return hookStatusOf(String(args.harness));
+        case "install_hooks":
+          hookStates[String(args.harness)] = "installed";
+          return hookStatusOf(String(args.harness));
+        case "remove_hooks":
+          hookStates[String(args.harness)] = "notInstalled";
+          return hookStatusOf(String(args.harness));
         case "create_terminal": {
           const id = addSession(
             String(args.worktreePath),

@@ -46,27 +46,26 @@ Legenda: `[ ]` pendente · `[x]` feito · **(?)** decisão em aberto (ver seçã
 - [x] Enviar ao frontend os eventos de saída e de término (tipados, com scrollback de 1 MiB no Rust para reanexar a view sem perder nem duplicar saída)
 - [x] Suportar várias sessões por worktree
 - [x] Renderizar no frontend com xterm.js e o addon de fit (`TerminalView`, montado na janela)
-- [x] Escolher o comando ao criar a sessão: shell, `claude`, `codex`, `opencode` ou comando livre
+- [x] Escolher o comando ao criar a sessão: shell, um agente ligado em Agents (Claude Code, Codex, OpenCode e os outros nove, cada um com o comando do seu CLI) ou comando livre
 - [x] Encerrar todos os PTYs ao fechar o app, sem deixar processo órfão (SIGHUP no grupo em primeiro plano, SIGKILL após 3 s para quem ignora)
 
 ### 1.4 Estado dos agentes (básico)
 
-- [ ] Marcar a sessão como "trabalhando" ou "ocioso" pela atividade de saída. A linha do agente na sidebar (`AgentRow`) já existe e só precisa dos novos estados
-- [ ] Ler o título OSC do terminal quando o agente o envia
-- [ ] Guardar o estado num único store no Rust e exibi-lo na sidebar, por worktree
-- [ ] Indicar quando uma sessão termina (trabalhando → ocioso)
+- [x] Marcar a sessão como "trabalhando" ou "ocioso" pela atividade de saída. A linha do agente na sidebar (`AgentRow`) já existe e só precisa dos novos estados
+- [x] Ler o título OSC do terminal quando o agente o envia
+- [x] Guardar o estado num único store no Rust e exibi-lo na sidebar, por worktree. Hoje o estado fica no backend, por sessão (`agents/agent_monitor.rs`), vai em `TerminalInfo` e a sidebar agrupa por worktree
+- [x] Indicar quando uma sessão termina (trabalhando → ocioso). Com sinal do agente (hook ou título de repouso) vira "concluído" até alguém olhar a sessão; sem sinal, volta a "ocioso"
 
 ### 1.5 Interface base
 
 - [x] Layout com sidebar (repos → worktrees) e área principal com abas de terminal. Em janelas com menos de 900 px a sidebar vira um drawer
 - [x] Componentes shadcn: Button, Dialog, AlertDialog, Input, Select, ScrollArea, Sheet, Sonner, DropdownMenu e Tooltip
 - [x] Diálogo "Novo worktree" (nome e base). Fecha na hora, mostra uma linha em progresso na sidebar e reabre com o motivo se o Git recusar
-- [x] Atalhos básicos: novo terminal, fechar aba, novo worktree e alternar sidebar (Cmd no macOS; Ctrl+Shift nos demais, para não roubar teclas do shell). Falta aba anterior/próxima e trocar de worktree
+- [x] Atalhos básicos: novo terminal, fechar aba, novo worktree e alternar sidebar (Cmd no macOS; Ctrl+Shift nos demais, para não roubar teclas do shell)
 - [x] Adicionar projeto ("Add project"): abrir um repositório existente ou criar um vazio (`git init`) numa pasta escolhida
 - [x] Foco do terminal: clicar na área do shell focaliza o xterm (sessões ocultas saem do layout, então não recebem o clique)
 - [x] Agrupamento de agentes por worktree: cabeçalho "Agents" recolhível, com até 3 badges de status e `+X` para o resto
 - [x] Temas do terminal: 14 temas (Lynx dark, Light, Solarized, Dracula, Nord, Catppuccin, Gruvbox, One Dark, Tokyo Night, Monokai). O tema dá o fundo; o texto segue o tema ou usa a paleta de outro
-- [ ] Tema claro e escuro da interface (hoje só escuro, por decisão do shape)
 
 ### Critério de pronto da Fase 1
 
@@ -83,16 +82,14 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 - [ ] Ordenação manual dentro de uma pasta (hoje: pastas por nome, repos pela ordem em que foram adicionados)
 - [ ] Lembrar o recolhido de cada repo (hoje só o das pastas é salvo)
 - [x] Pasta ou repo recolhido mostra um resumo à direita: projetos ou worktrees escondidos e quantos agentes estão rodando dentro (ponto verde + número)
-- [ ] Resumo com o estado do agente mais urgente (precisa de você, pendente) quando o item 1.4 existir
 
 ### Pendências da Fase 1
 
 - [ ] Explorador de arquivos: abrir o arquivo (viewer/editor, Fase 3), arrastar um item para o terminal, decorar com o status do Git (M/U) e atualizar sozinho com um vigia de arquivos (hoje atualiza ao voltar para a janela e no botão)
 - [ ] Painel da direita: largura ajustável e novas abas (busca, source control)
 
-- [ ] Seção de agents na configuração (lista editável e padrão). Adiada de propósito no primeiro corte
 - [ ] Exportar um JSON Schema do `config.json` para autocompletar no editor
-- [ ] Renomear o repositório, o crate e o identificador do bundle de `agent-ade` para Lynx. Mudar o identificador muda a pasta de dados do app, então vale fazer junto com a assinatura
+- [ ] Renomear o repositório, o crate e o identificador do bundle de `agent-ade` para Lynx. O nome do produto (`productName`) já é Lynx; falta o crate (`Cargo.toml`) e o identificador `dev.zdearo.agentade`. Mudar o identificador muda a pasta de dados do app, então vale fazer junto com a assinatura
 
 - [ ] Decidir com o dono do projeto quais views entram na barra primária depois de "Projects"
 
@@ -101,6 +98,30 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 - [ ] Verificar a interface na janela real do Tauri (hoje só foi exercitada no Chrome headless com o backend simulado, mais os testes do backend em Rust)
 - [ ] Terminais ocultos continuam montados (mantêm tela e rolagem). Medir memória com 8 a 10 agentes e decidir se vale desmontar os inativos
 - [ ] Windows e macOS: testar PTY, atalhos e seletor de pasta
+
+---
+
+## Fase 1b — Agentes
+
+Depois da Fase 1. A Fase 1 entrega os estados genéricos (trabalhando, ocioso e encerrado), detectados pela saída e pelo título OSC. Esta fase traz o que depende de conhecer o agente: "precisa de você" e a configuração dos agentes.
+
+- [ ] Registro de harnesses: os 12 são reconhecidos pelo comando de lançamento (`agents/harness.rs`). Falta: o padrão de título de cada um, para sessões sem hook (hoje só o título OSC genérico é lido)
+- [x] Hooks dos agentes para o estado preciso e para "precisa de você". Instalar só com confirmação do usuário; nunca alterar a configuração do agente sem pedir (movido da Fase 4). Implementados para os 12: Claude Code (`claude_hooks.rs`), Codex (`codex_hooks.rs`) e OpenCode (`opencode_hooks.rs`); os demais pela camada genérica (`json_hook_file.rs`, `hook_layouts.rs`, `kiro_hooks.rs`, `plugin_file.rs`, `pi_hooks.rs`)
+  - Validados: Claude Code (usado pelo dono) e Codex (`hooks/list` do app-server 0.160.1). OpenCode só com relé falso, sem a CLI
+  - [ ] Validar com uma sessão real Antigravity (`agy` 1.3.5), Grok (1.0.41) e OMP (18.8.2): estão instalados nesta máquina, mas a sessão pede um modelo autenticado
+  - [ ] Validar Cursor, GitHub Copilot, Droid, Kiro, Qwen Code e Pi quando forem instalados. Hoje valem só pela documentação e pelo código do Orca
+  - [ ] Cursor: confirmar se `{"permission":"ask"}` é a resposta certa em `preToolUse`. O Orca responde `allow`; o Lynx escolheu `ask` para não aprovar ferramentas sozinho
+  - [ ] Antigravity: confirmar que `{"decision":"ask"}` no `PreToolUse` é necessário (silêncio é negação)
+  - [ ] Qwen Code e Droid: o mapeamento de `SessionStart` usa o campo `source` do Claude, que ainda não confirmei que esses CLIs enviam
+  - [ ] Pi e OMP: confirmar que a extensão carrega e envia os eventos (`pi.on`)
+  - [ ] Kiro: ligar falha sem arquivo de agente, e o agente padrão não é coberto. Decidir o comportamento
+  - [ ] Antigravity, Cursor e Kiro não têm evento de fim, então a sessão continua como agente até o terminal fechar. Decidir se o Lynx volta a shell por outro sinal
+- [ ] Estado "precisa de você" pelos hooks, exibido na sidebar e no resumo das pastas (movido da seção Pastas). Feito na sidebar (ícone de pergunta em `AgentRow`). Falta o resumo das pastas: `collapsed-summary.ts` conta só os agentes rodando, sem os que precisam de você
+- [ ] Detectar agente digitado à mão pelo processo em primeiro plano (Unix), para Codex e OpenCode e para sessões sem hooks. Hoje o hook identifica um agente digitado à mão nos três harnesses; falta para sessões sem hooks
+- [ ] Seção de agentes na configuração: lista editável e padrão de argumentos de lançamento (movido das Pendências da Fase 1). Feita a lista: os agentes encontrados no PATH com uma alavanca (ligada = hooks instalados, aparece no menu de novo terminal) e os suportados não encontrados, só informativos. Falta o padrão de argumentos de lançamento, editável por agente: `AppConfig` ainda não tem esse campo
+- [x] Ícones de marca dos 12 agentes, na lista de Agents, na sidebar e no menu de novo terminal (`AgentBrandIcon.tsx`). Cores originais, sem placa; o OMP usa o `icon.svg` do próprio repositório
+
+Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 
 ---
 
@@ -131,7 +152,6 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 ## Fase 4 — Avançado
 
 - [ ] Daemon de PTY separado, para as sessões sobreviverem a fechar a janela
-- [ ] Hooks de agentes (Claude Code, Codex) para estado mais preciso
 - [ ] Orquestração multi-agente: runs, tarefas com dependências e mensagens
 - [ ] CLI própria para o agente controlar o app
 - [ ] Automações agendadas
@@ -147,6 +167,7 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 - **Daemon de PTY:** entra só na Fase 4. Proposta: na Fase 1 as sessões encerram ao fechar o app.
 - **Local dos worktrees:** `<pasta-do-repo>/../<repo>-worktrees/<nome>` ou outro caminho gerenciado pelo app.
 - **Projeto vazio sem commit:** o worktree precisa de uma base, e um repositório recém-criado não tem nenhuma. Opções: commit inicial vazio (exige identidade git configurada), aceitar o HEAD sem commit, ou desabilitar a criação de worktree nesse caso.
+- **Tema claro da interface:** adiado, fora da Fase 1 (hoje só escuro, por decisão do shape).
 - **Pastas que não são git:** entram em qual fase?
 - **Idioma da interface:** só inglês ou também pt-BR?
 - **Identidade do projeto:** nome do pacote e identificador do Tauri, e licença.

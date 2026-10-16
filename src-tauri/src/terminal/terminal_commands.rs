@@ -65,6 +65,17 @@ pub async fn resize_terminal(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn mark_agent_seen(
+    manager: State<'_, TerminalManager>,
+    id: String,
+) -> Result<(), IpcError> {
+    manager
+        .mark_seen(&id)
+        .map_err(|error| AppError::from(error).into())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn close_terminal(
     manager: State<'_, TerminalManager>,
     id: String,

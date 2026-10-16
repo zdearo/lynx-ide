@@ -1,6 +1,8 @@
 import type { TerminalInfo } from "@/bindings";
 
 function baseTitle(session: TerminalInfo): string {
+  // The harness names a session that became an agent by hand, which has no command of its own.
+  if (session.harness) return session.harness;
   if (!session.command) return session.shell;
   return session.command.trim().split(/\s+/)[0] ?? session.shell;
 }

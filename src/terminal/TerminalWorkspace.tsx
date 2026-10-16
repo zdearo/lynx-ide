@@ -1,9 +1,11 @@
+import { useEffect } from "react";
+
 import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
 
 import { Button } from "@/components/ui/button";
 import { useDialogStore } from "@/dialog-store";
 import { shortcutLabel } from "@/platform-shortcuts";
-import { TERMINAL_PRESETS } from "@/terminal/agent-presets";
+import { useVisiblePresets } from "@/agents/agent-catalog-store";
 import { PresetIcon } from "@/terminal/PresetIcon";
 import { startTerminal } from "@/terminal/terminal-actions";
 import { TerminalTabs } from "@/terminal/TerminalTabs";
@@ -40,6 +42,16 @@ export function TerminalWorkspace({
   const path = selected?.worktree.path ?? null;
   const activeId = activeSessionId(sessions, activeByWorktree, path);
   const hasSessions = sessions.some((session) => session.worktreePath === path);
+
+  // Looking at a finished agent is what clears its "done" mark.
+  const activeFinished = sessions.some(
+    (session) => session.id === activeId && session.agentStatus === "done",
+  );
+  useEffect(() => {
+    if (activeFinished && activeId) {
+      useTerminalStore.getState().markSeen(activeId);
+    }
+  }, [activeFinished, activeId]);
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">
@@ -95,6 +107,7 @@ function Welcome() {
 }
 
 function EmptyWorktree({ selected }: { selected: SelectedWorktree }) {
+  const presets = useVisiblePresets();
   const askCustomCommand = useDialogStore((state) => state.askCustomCommand);
   const path = selected.worktree.path;
 
@@ -109,14 +122,14 @@ function EmptyWorktree({ selected }: { selected: SelectedWorktree }) {
         </p>
       </div>
       <div className="flex flex-wrap justify-center gap-2">
-        {TERMINAL_PRESETS.map((preset) => (
+        {presets.map((preset) => (
           <Button
             key={preset.id}
             variant="outline"
             size="sm"
             onClick={() => void startTerminal(path, preset.command)}
           >
-            <PresetIcon kind={preset.kind} />
+            <PresetIcon harness={preset.harness} />
             {preset.label}
           </Button>
         ))}

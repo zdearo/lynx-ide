@@ -1,43 +1,72 @@
+import type { HarnessId } from "@/bindings";
+import type { AgentStatus } from "@/bindings";
 import { CircleCheckGlyph18 } from "@/components/icons/CircleCheckGlyph18";
+import { CircleQuestionGlyph18 } from "@/components/icons/CircleQuestionGlyph18";
 import { CircleXmarkGlyph18 } from "@/components/icons/CircleXmarkGlyph18";
+import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
 import { RadioCheckedGlyph18 } from "@/components/icons/RadioCheckedGlyph18";
-import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
+import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
 import { formatAge } from "@/terminal/relative-time";
+import { agentStatusText } from "@/workspace/agent-status";
 import { copy } from "@/ui-copy";
 
 export interface AgentItem {
   id: string;
+  harness: HarnessId;
   title: string;
   running: boolean;
   exitCode: number | null;
   startedAt: number;
+  /** Null until the monitor has reported a state. */
+  status: AgentStatus | null;
 }
 
-/** Running is the only live state we can tell apart today; working/idle/needs-you arrive with state detection. */
+/** Each state has its own shape, not just its own color: a spinner works, a question mark waits, a check is done. */
 export function AgentStatusIcon({ agent }: { agent: AgentItem }) {
-  if (agent.running) {
-    return (
-      <RadioCheckedGlyph18 aria-hidden className="size-3 shrink-0 text-live" />
-    );
-  }
-  if (agent.exitCode === 0) {
-    return (
+  if (!agent.running) {
+    return agent.exitCode === 0 ? (
       <CircleCheckGlyph18
         aria-hidden
         className="size-3 shrink-0 text-muted-foreground"
       />
+    ) : (
+      <CircleXmarkGlyph18
+        aria-hidden
+        className="size-3 shrink-0 text-destructive"
+      />
     );
   }
-  return (
-    <CircleXmarkGlyph18
-      aria-hidden
-      className="size-3 shrink-0 text-destructive"
-    />
-  );
+  switch (agent.status) {
+    case "working":
+      return (
+        <Loader2Glyph18
+          aria-hidden
+          className="size-3 shrink-0 animate-spin text-live"
+        />
+      );
+    case "needsYou":
+      return (
+        <CircleQuestionGlyph18
+          aria-hidden
+          className="size-3 shrink-0 text-attention"
+        />
+      );
+    case "done":
+      return (
+        <CircleCheckGlyph18 aria-hidden className="size-3 shrink-0 text-live" />
+      );
+    default:
+      return (
+        <RadioCheckedGlyph18
+          aria-hidden
+          className="size-3 shrink-0 text-muted-foreground"
+        />
+      );
+  }
 }
 
 interface AgentRowProps {
@@ -57,9 +86,7 @@ export function AgentRow({
   onOpen,
   onClose,
 }: AgentRowProps) {
-  const status = agent.running
-    ? copy.agent.running
-    : copy.agent.exited(agent.exitCode);
+  const status = agentStatusText(agent.running, agent.status, agent.exitCode);
 
   return (
     <li className="group/agent relative">
@@ -80,7 +107,10 @@ export function AgentRow({
         )}
       >
         <AgentStatusIcon agent={agent} />
-        <SparkleGlyph18 aria-hidden className="size-3 shrink-0 text-agent" />
+        <AgentBrandIcon
+          harness={agent.harness}
+          className="size-3 shrink-0 text-agent"
+        />
         <span className="min-w-0 flex-1 truncate">{agent.title}</span>
         <span
           aria-hidden

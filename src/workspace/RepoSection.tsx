@@ -15,7 +15,6 @@ import {
 import { useDialogStore } from "@/dialog-store";
 import { cn } from "@/lib/utils";
 import { shortcutLabel } from "@/platform-shortcuts";
-import { isAgentCommand } from "@/terminal/agent-presets";
 import { requestCloseTerminal } from "@/terminal/terminal-actions";
 import { tabTitles } from "@/terminal/terminal-tab-title";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
@@ -91,15 +90,21 @@ export function RepoSection({
       const titles = tabTitles(own);
       grouped.set(
         path,
-        own
-          .filter((session) => isAgentCommand(session.command))
-          .map((session) => ({
-            id: session.id,
-            title: titles.get(session.id) ?? session.shell,
-            running: session.running,
-            exitCode: session.exitCode,
-            startedAt: session.startedAt,
-          })),
+        own.flatMap((session) =>
+          session.harness === null
+            ? []
+            : [
+                {
+                  id: session.id,
+                  harness: session.harness,
+                  title: titles.get(session.id) ?? session.shell,
+                  running: session.running,
+                  exitCode: session.exitCode,
+                  startedAt: session.startedAt,
+                  status: session.agentStatus,
+                },
+              ],
+        ),
       );
     }
     return grouped;

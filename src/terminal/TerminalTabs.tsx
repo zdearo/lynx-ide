@@ -7,7 +7,6 @@ import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
 import { shortcutLabel } from "@/platform-shortcuts";
-import { isAgentCommand } from "@/terminal/agent-presets";
 import { NewTerminalMenu } from "@/terminal/NewTerminalMenu";
 import { PresetIcon } from "@/terminal/PresetIcon";
 import { tabTitles } from "@/terminal/terminal-tab-title";
@@ -118,9 +117,7 @@ export function TerminalTabs({
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <PresetIcon
-                kind={isAgentCommand(session.command) ? "agent" : "shell"}
-              />
+              <PresetIcon harness={session.harness} />
               <span className="truncate">{titles.get(session.id)}</span>
               {!session.running && (
                 <span className="shrink-0 text-meta text-muted-foreground tabular-nums">

@@ -477,6 +477,83 @@ const termFont = (p) =>
       : null;
   });
 
+// The agents found on this computer get a switch. Turning one on rewrites its settings, so it is asked first.
+await session("?mock=full", 1200, 760, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(600);
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  await p.getByRole("tab", { name: "Agents" }).click();
+  await p.waitForTimeout(300);
+
+  const onComputer = p.getByRole("region", { name: "On this computer" });
+  const elsewhere = p.getByRole("region", { name: "Other supported agents" });
+  const claudeSwitch = p.getByRole("switch", {
+    name: "Use Claude Code in Lynx",
+  });
+  check(
+    "Claude Code is found on this computer, with its switch off",
+    (await onComputer.getByText("Claude Code").count()) === 1 &&
+      (await claudeSwitch.getAttribute("aria-checked")) === "false",
+  );
+  check(
+    "an agent not found here is listed for information, with no switch",
+    (await elsewhere.getByText("OpenCode").count()) === 1 &&
+      (await elsewhere.getByText("Not found on this computer").count()) > 0 &&
+      (await p
+        .getByRole("switch", { name: "Use OpenCode in Lynx" })
+        .count()) === 0,
+  );
+
+  await claudeSwitch.click();
+  await p.waitForTimeout(300);
+  const confirm = p.getByRole("alertdialog");
+  const confirmText = (await confirm.textContent()) ?? "";
+  check(
+    "turning it on asks first and names the settings file and the events",
+    (await confirm.count()) === 1 &&
+      confirmText.includes("/home/dev/.claude/settings.json") &&
+      confirmText.includes("SessionStart"),
+    confirmText,
+  );
+
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await p.waitForTimeout(300);
+  check(
+    "cancelling leaves the switch off",
+    (await p.getByRole("alertdialog").count()) === 0 &&
+      (await claudeSwitch.getAttribute("aria-checked")) === "false",
+  );
+
+  await claudeSwitch.click();
+  await p.waitForTimeout(300);
+  await p
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Turn on", exact: true })
+    .click();
+  await p.waitForTimeout(400);
+  check(
+    "confirming turns Claude Code on",
+    (await p.getByRole("alertdialog").count()) === 0 &&
+      (await claudeSwitch.getAttribute("aria-checked")) === "true",
+  );
+
+  const axeAgents = await p.evaluate(async (src) => {
+    window.eval(src);
+    const r = await window.axe.run(document, {
+      runOnly: ["wcag2a", "wcag2aa"],
+    });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  }, axeSource);
+  check(
+    "axe: no WCAG A/AA violations on the Agents section",
+    axeAgents.length === 0,
+    axeAgents.join(" || "),
+  );
+});
+
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await p.waitForTimeout(600);
@@ -1288,7 +1365,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   await p.waitForTimeout(300);
   check(
     "opening a group lists its agents",
-    (await agent(/^claude, running$/).count()) === 1,
+    (await agent(/^claude, idle$/).count()) === 1,
   );
   check(
     "plain shells are not listed as agents",
@@ -1296,7 +1373,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
   check(
     "an agent row says how long ago it started",
-    ((await agent(/^claude, running$/).textContent()) ?? "").includes("5m"),
+    ((await agent(/^claude, idle$/).textContent()) ?? "").includes("5m"),
   );
   check(
     "another worktree's agents stay collapsed until opened",
@@ -1304,7 +1381,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
 
   await p.getByRole("tab", { name: /zsh/ }).click();
-  await agent(/^claude, running$/).click();
+  await agent(/^claude, idle$/).click();
   await p.waitForTimeout(400);
   check(
     "clicking an agent brings its tab forward",
@@ -1317,7 +1394,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
   check(
     "the agent row of the open tab is marked current",
-    (await agent(/^claude, running$/).getAttribute("aria-current")) === "true",
+    (await agent(/^claude, idle$/).getAttribute("aria-current")) === "true",
   );
 
   await p.getByRole("button", { name: /^feat\/auth/ }).focus();
@@ -1351,17 +1428,17 @@ await session("?mock=full", 1300, 760, async (p) => {
   await p.waitForTimeout(400);
   check(
     "selecting another worktree keeps the first one's agents in view",
-    (await agent(/^claude, running$/).count()) === 1,
+    (await agent(/^claude, idle$/).count()) === 1,
   );
   check(
     "the newly selected worktree's agents stay collapsed until opened",
-    (await agent(/^codex, running$/).count()) === 0,
+    (await agent(/^codex, idle$/).count()) === 0,
   );
   await toggleGroup(fixPath).click();
   await p.waitForTimeout(300);
   check(
     "each row shows its own age",
-    ((await agent(/^codex, running$/).textContent()) ?? "").includes("3h"),
+    ((await agent(/^codex, idle$/).textContent()) ?? "").includes("3h"),
   );
 
   await toggleGroup(refactorPath).click();
@@ -1372,12 +1449,12 @@ await session("?mock=full", 1300, 760, async (p) => {
       ((await agent(/^claude, exited/).textContent()) ?? "").includes("2d"),
   );
 
-  await agent(/^claude, running$/).hover();
+  await agent(/^claude, idle$/).hover();
   await groupOf(featPath).getByRole("button", { name: "Close claude" }).click();
   await p.waitForTimeout(400);
   check(
     "closing from the row removes the agent and its tab",
-    (await agent(/^claude, running$/).count()) === 0 &&
+    (await agent(/^claude, idle$/).count()) === 0 &&
       (await p.getByRole("tab", { name: /claude/ }).count()) === 0,
   );
   check(
@@ -1409,7 +1486,7 @@ await session("?mock=full", 1300, 760, async (p) => {
     )
     .click();
   await p.waitForTimeout(300);
-  const agentRow = p.getByRole("button", { name: /^claude, running$/ });
+  const agentRow = p.getByRole("button", { name: /^claude, idle$/ });
   check("agent rows stay inside the sidebar too", await fits(agentRow));
 
   const surfaces = await p.evaluate(() => {
@@ -1789,7 +1866,7 @@ await session("?mock=crowded", 1300, 760, async (p) => {
     '[data-agent-group="/home/dev/agent-ade-worktrees/fix-pty"]',
   );
   const header = fixGroup.locator(":scope > button");
-  const badges = header.locator('svg[data-icon="sparkles"]');
+  const badges = header.locator('svg[data-icon="agent"]');
 
   check(
     "a collapsed group shows up to three agent badges side by side",
@@ -1810,7 +1887,7 @@ await session("?mock=crowded", 1300, 760, async (p) => {
   await p.waitForTimeout(300);
   check(
     "opened, the header is only the word Agents, with no badges",
-    (await header.locator('svg[data-icon="sparkles"]').count()) === 0 &&
+    (await header.locator('svg[data-icon="agent"]').count()) === 0 &&
       ((await header.textContent()) ?? "").trim() === "Agents",
     JSON.stringify(await header.textContent()),
   );

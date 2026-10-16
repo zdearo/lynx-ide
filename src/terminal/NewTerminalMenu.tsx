@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useDialogStore } from "@/dialog-store";
 import { shortcutLabel } from "@/platform-shortcuts";
-import { TERMINAL_PRESETS } from "@/terminal/agent-presets";
+import { useVisiblePresets } from "@/agents/agent-catalog-store";
 import { PresetIcon } from "@/terminal/PresetIcon";
 import { startTerminal } from "@/terminal/terminal-actions";
 import { copy } from "@/ui-copy";
@@ -23,18 +23,19 @@ export function NewTerminalMenu({
   worktreePath: string;
   children: ReactNode;
 }) {
+  const presets = useVisiblePresets();
   const askCustomCommand = useDialogStore((state) => state.askCustomCommand);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-44">
-        {TERMINAL_PRESETS.map((preset) => (
+        {presets.map((preset) => (
           <DropdownMenuItem
             key={preset.id}
             onSelect={() => void startTerminal(worktreePath, preset.command)}
           >
-            <PresetIcon kind={preset.kind} />
+            <PresetIcon harness={preset.harness} />
             {preset.label}
             {preset.kind === "shell" && (
               <DropdownMenuShortcut>

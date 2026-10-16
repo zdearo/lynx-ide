@@ -8,3 +8,7 @@ Fonts bundled with the app. Full license texts are in `src/assets/fonts/licenses
 | Symbols Nerd Font Mono | Terminal icons (Nerd Fonts glyphs) | MIT                       | https://github.com/ryanoasis/nerd-fonts                                                  |
 
 The Nerd Fonts symbols are a collection of icon sets, each under its own license (Font Awesome, Material Design Icons, Octicons, Devicons, Powerline and others). See the Nerd Fonts repository for the per-set licenses before shipping a release.
+
+## Agent logos
+
+The images in `src/assets/agents/` (Antigravity, Grok, Droid and Kiro) are copies of the logos in the agent icons folder of the Orca repository, `src/shared/agent-icons/` (https://github.com/stablyai/orca). Orca is MIT-licensed. `omp.svg` is the `assets/icon.svg` of the oh-my-pi repository (https://github.com/can1357/oh-my-pi), also MIT. Each logo is a trademark of its owner, shown only to name the agent. The vector marks in `src/components/icons/brands/AgentBrandIcon.tsx` come from Simple Icons (CC0 for the drawings, same caveat for the trademarks) and from the OpenCode repository.

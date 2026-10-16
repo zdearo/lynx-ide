@@ -25,15 +25,16 @@ const folder = (id: string, parentId: string | null = null): Folder => ({
 describe("runningAgentsByWorktree", () => {
   it("counts running agent sessions per worktree and ignores shells and exited agents", () => {
     const sessions: TerminalInfo[] = [
-      session("a", "/w/one", { command: "claude" }),
-      session("b", "/w/one", { command: "codex" }),
+      session("a", "/w/one", { command: "claude", harness: "claude" }),
+      session("b", "/w/one", { command: "codex", harness: "codex" }),
       session("c", "/w/one", { command: null }),
       session("d", "/w/one", {
         command: "claude",
+        harness: "claude",
         running: false,
         exitCode: 0,
       }),
-      session("e", "/w/two", { command: "claude" }),
+      session("e", "/w/two", { command: "claude", harness: "claude" }),
     ];
     const counts = runningAgentsByWorktree(sessions);
     expect(counts.get("/w/one")).toBe(2);

@@ -1,11 +1,17 @@
 //! Runs real shells on a PTY, so these are Unix-only.
 
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::Path;
 #[cfg(not(target_os = "linux"))]
 use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+
+use crate::agents::activity::AgentStatus;
+use crate::agents::harness::{HarnessId, harness_name};
+use crate::agents::hook_hub::{HookHub, PORT_ENV, TOKEN_ENV};
 
 use super::terminal_events::TerminalEventSink;
 use super::terminal_manager::TerminalManager;
@@ -17,6 +23,8 @@ const WAIT: Duration = Duration::from_secs(10);
 struct Events {
     output: Vec<(String, u32, String)>,
     exits: Vec<(String, Option<i32>)>,
+    /// Agent state reports, in order: session, harness and status.
+    states: Vec<(String, Option<HarnessId>, Option<AgentStatus>)>,
 }
 
 #[derive(Default)]
@@ -41,6 +49,15 @@ impl TerminalEventSink for RecordingSink {
             .expect("lock")
             .exits
             .push((id.to_owned(), exit_code));
+        self.changed.notify_all();
+    }
+
+    fn agent_state(&self, id: &str, harness: Option<HarnessId>, status: Option<AgentStatus>) {
+        self.events
+            .lock()
+            .expect("lock")
+            .states
+            .push((id.to_owned(), harness, status));
         self.changed.notify_all();
     }
 }
@@ -74,6 +91,18 @@ impl RecordingSink {
         });
     }
 
+    /// Waits until the session's latest reported state is this one.
+    fn wait_for_state(&self, id: &str, harness: Option<HarnessId>, status: Option<AgentStatus>) {
+        self.wait_until(&format!("{harness:?} {status:?}"), |events| {
+            events
+                .states
+                .iter()
+                .rev()
+                .find(|(i, _, _)| i == id)
+                .is_some_and(|(_, h, s)| *h == harness && *s == status)
+        });
+    }
+
     fn wait_for_exit(&self, id: &str) -> Option<i32> {
         self.wait_until("the exit event", |events| {
             events.exits.iter().any(|(i, _)| i == id)
@@ -103,7 +132,11 @@ fn setup() -> (TerminalManager, Arc<RecordingSink>, tempfile::TempDir) {
         program: "/bin/sh".to_owned(),
         args: Vec::new(),
     });
-    let manager = TerminalManager::new(shell, Arc::clone(&sink) as Arc<dyn TerminalEventSink>);
+    let manager = TerminalManager::new(
+        shell,
+        Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+        HookHub::disabled(),
+    );
     (manager, sink, tempfile::tempdir().expect("temp dir"))
 }
 
@@ -397,4 +430,109 @@ fn a_session_records_when_it_started_and_keeps_that_time() {
         .as_secs() as u32;
     assert!(info.started_at >= before && info.started_at <= after);
     assert_eq!(manager.list()[0].started_at, info.started_at);
+}
+
+/// Posts a hook report the way the relay does, to the listener the session was given.
+fn post_hook(hub: &HookHub, session: &str, harness: &str, payload: &str) -> String {
+    let env = hub.session_env(session);
+    let value = |key: &str| {
+        env.iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+            .expect("the session has hook variables")
+    };
+    let port: u16 = value(PORT_ENV).parse().expect("port");
+    let body = format!(r#"{{"sessionId":"{session}","harness":"{harness}","payload":{payload}}}"#);
+    let request = format!(
+        "POST /agent-hook HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Lynx-Token: {}\r\nContent-Length: {}\r\n\r\n{body}",
+        value(TOKEN_ENV),
+        body.len()
+    );
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to the listener");
+    stream.write_all(request.as_bytes()).expect("write");
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).expect("read");
+    answer.lines().next().unwrap_or_default().to_owned()
+}
+
+/// A shell turns into the harness that reports from it, and back when that harness ends.
+fn a_shell_becomes_the_harness_that_reports_from_it_and_back(
+    harness: HarnessId,
+    start: &str,
+    end: &str,
+) {
+    let sink = Arc::new(RecordingSink::default());
+    let hub = HookHub::start();
+    let shell = Arc::new(|| Shell {
+        program: "/bin/sh".to_owned(),
+        args: Vec::new(),
+    });
+    let manager = TerminalManager::new(
+        shell,
+        Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+        hub.clone(),
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let info = manager
+        .create(&path_of(&dir), None, 80, 24)
+        .expect("create");
+    assert_eq!(info.harness, None, "a new shell is not an agent");
+    let name = harness_name(harness);
+
+    let reply = post_hook(&hub, &info.id, name, start);
+    assert_eq!(reply, "HTTP/1.1 204 No Content");
+    sink.wait_for_state(&info.id, Some(harness), Some(AgentStatus::Idle));
+    let listed = manager
+        .list()
+        .into_iter()
+        .find(|session| session.id == info.id)
+        .expect("listed");
+    assert_eq!(listed.harness, Some(harness));
+
+    post_hook(&hub, &info.id, name, end);
+    sink.wait_for_state(&info.id, None, None);
+    let listed = manager
+        .list()
+        .into_iter()
+        .find(|session| session.id == info.id)
+        .expect("listed");
+    assert_eq!(listed.harness, None, "the session is a shell again");
+
+    manager.close(&info.id).expect("close");
+}
+
+#[test]
+fn a_shell_that_runs_grok_becomes_an_agent_and_back_when_it_ends() {
+    a_shell_becomes_the_harness_that_reports_from_it_and_back(
+        HarnessId::Grok,
+        r#"{"hook_event_name":"SessionStart"}"#,
+        r#"{"hook_event_name":"SessionEnd"}"#,
+    );
+}
+
+#[test]
+fn a_shell_that_runs_claude_becomes_an_agent_and_back_when_it_ends() {
+    a_shell_becomes_the_harness_that_reports_from_it_and_back(
+        HarnessId::Claude,
+        r#"{"hook_event_name":"SessionStart","source":"startup"}"#,
+        r#"{"hook_event_name":"SessionEnd","reason":"other"}"#,
+    );
+}
+
+#[test]
+fn a_shell_that_runs_codex_becomes_an_agent_and_back_when_it_ends() {
+    a_shell_becomes_the_harness_that_reports_from_it_and_back(
+        HarnessId::Codex,
+        r#"{"hook_event_name":"SessionStart"}"#,
+        r#"{"hook_event_name":"SessionEnd"}"#,
+    );
+}
+
+#[test]
+fn a_shell_that_runs_opencode_becomes_an_agent_and_back_when_it_ends() {
+    a_shell_becomes_the_harness_that_reports_from_it_and_back(
+        HarnessId::Opencode,
+        r#"{"type":"session.created"}"#,
+        r#"{"type":"session.deleted"}"#,
+    );
 }

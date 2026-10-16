@@ -1,0 +1,48 @@
+use tauri::State;
+
+use crate::blocking_task::run_blocking;
+use crate::error::IpcError;
+
+use super::agent_catalog::{AgentEntry, catalog};
+use super::harness::HarnessId;
+use super::hook_install::HookInstallStatus;
+use super::hook_targets::HookTargets;
+
+/// Every supported agent: whether it is on this computer, and whether its hooks are in.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_catalog(targets: State<'_, HookTargets>) -> Result<Vec<AgentEntry>, IpcError> {
+    let targets = targets.inner().clone();
+    run_blocking(move || Ok(catalog(&targets))).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn hook_status(
+    targets: State<'_, HookTargets>,
+    harness: HarnessId,
+) -> Result<HookInstallStatus, IpcError> {
+    let targets = targets.inner().clone();
+    run_blocking(move || Ok(targets.status(harness))).await
+}
+
+/// Writes a harness's config. The frontend asks the user first; nothing here runs on its own.
+#[tauri::command]
+#[specta::specta]
+pub async fn install_hooks(
+    targets: State<'_, HookTargets>,
+    harness: HarnessId,
+) -> Result<HookInstallStatus, IpcError> {
+    let targets = targets.inner().clone();
+    run_blocking(move || Ok(targets.install(harness)?)).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_hooks(
+    targets: State<'_, HookTargets>,
+    harness: HarnessId,
+) -> Result<HookInstallStatus, IpcError> {
+    let targets = targets.inner().clone();
+    run_blocking(move || Ok(targets.remove(harness)?)).await
+}

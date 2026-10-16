@@ -95,6 +95,51 @@ export const copy = {
         hint: "Asks before closing a tab whose process is still alive, even an idle shell.",
       },
     },
+    agents: {
+      title: "Agents",
+      intro:
+        "Turn an agent on to let Lynx follow its sessions and offer it in the new terminal menu. Turning it on adds hooks to the agent's own settings, after you confirm.",
+      detected: "On this computer",
+      undetected: "Other supported agents",
+      notFound: "Not found on this computer",
+      refresh: "Check again",
+      use: (name: string) => `Use ${name} in Lynx`,
+      failed: "Could not update the agent settings",
+      harnesses: {
+        claude: { name: "Claude Code" },
+        codex: { name: "Codex" },
+        opencode: { name: "OpenCode" },
+        antigravity: { name: "Antigravity" },
+        cursor: { name: "Cursor" },
+        copilot: { name: "GitHub Copilot" },
+        grok: { name: "Grok" },
+        droid: { name: "Droid" },
+        kiro: { name: "Kiro" },
+        qwen: { name: "Qwen Code" },
+        pi: { name: "Pi" },
+        omp: { name: "OMP" },
+      },
+      hooks: {
+        states: {
+          partial: "Partly on",
+          error: "Settings cannot be read",
+        },
+        eventsLabel: "Events",
+        connectTitle: (name: string) => `Turn on ${name}?`,
+        updateTitle: (name: string) => `Update ${name}?`,
+        disconnectTitle: (name: string) => `Turn off ${name}?`,
+        connectBody: (path: string) =>
+          `Lynx adds its entries to ${path}. Your other settings and hooks stay as they are.`,
+        updateBody: (path: string) =>
+          `Lynx rewrites its own entries in ${path} so they match this version. Your other settings and hooks stay as they are.`,
+        disconnectBody: (path: string) =>
+          `Lynx removes only its own entries from ${path}.`,
+        cancel: "Cancel",
+        confirmConnect: "Turn on",
+        confirmUpdate: "Update",
+        confirmDisconnect: "Turn off",
+      },
+    },
     worktrees: {
       title: "Worktrees",
       directory: {
@@ -230,7 +275,12 @@ export const copy = {
 
   agent: {
     title: "Agents",
-    running: "running",
+    status: {
+      working: "working",
+      needsYou: "needs you",
+      done: "done",
+      idle: "idle",
+    },
     group: (count: number, running: number) => {
       const agents = count === 1 ? "1 agent" : `${count} agents`;
       return running > 0 ? `${agents}, ${running} running` : agents;

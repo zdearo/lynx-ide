@@ -3,12 +3,13 @@
 
 use tauri_specta::{Builder, collect_commands, collect_events};
 
+use crate::agents::agent_commands as agents;
 use crate::app_info;
 use crate::config::config_commands as config;
 use crate::config::config_events::ConfigChanged;
 use crate::files::files_commands as files;
 use crate::terminal::terminal_commands as terminal;
-use crate::terminal::terminal_events::{TerminalExit, TerminalOutput};
+use crate::terminal::terminal_events::{AgentStatusChanged, TerminalExit, TerminalOutput};
 use crate::workspace::workspace_commands as workspace;
 
 pub fn builder() -> Builder<tauri::Wry> {
@@ -35,7 +36,12 @@ pub fn builder() -> Builder<tauri::Wry> {
             terminal::terminal_snapshot,
             terminal::write_terminal,
             terminal::resize_terminal,
+            terminal::mark_agent_seen,
             terminal::close_terminal,
+            agents::agent_catalog,
+            agents::hook_status,
+            agents::install_hooks,
+            agents::remove_hooks,
             config::get_config,
             config::update_config,
             config::list_shells,
@@ -43,7 +49,12 @@ pub fn builder() -> Builder<tauri::Wry> {
             files::list_directory,
             files::reveal_in_file_manager,
         ])
-        .events(collect_events![TerminalOutput, TerminalExit, ConfigChanged])
+        .events(collect_events![
+            TerminalOutput,
+            TerminalExit,
+            AgentStatusChanged,
+            ConfigChanged
+        ])
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+mod agents;
 mod app_info;
 mod blocking_task;
 mod config;
@@ -14,6 +15,8 @@ use std::sync::Arc;
 
 use tauri::{Manager, RunEvent};
 
+use agents::hook_hub::HookHub;
+use agents::hook_targets::HookTargets;
 use config::ConfigStore;
 use config::config_events::start_config_watcher;
 use persistence::AppDatabase;
@@ -30,6 +33,12 @@ fn lynx_home(user_home: PathBuf) -> PathBuf {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The harness runs this same binary for each hook event; it answers and exits without a window.
+    let arguments: Vec<String> = std::env::args().collect();
+    if let Some(code) = agents::hook_relay::run_if_requested(&arguments) {
+        std::process::exit(code);
+    }
+
     let builder = ipc::builder();
 
     tauri::Builder::default()
@@ -39,6 +48,12 @@ pub fn run() {
             builder.mount_events(app);
 
             let user_home = app.path().home_dir()?;
+            let executable = std::env::current_exe().ok();
+            app.manage(HookTargets::from_environment(
+                &user_home,
+                executable.as_deref(),
+            ));
+
             let config = Arc::new(ConfigStore::open(
                 lynx_home(user_home.clone()).join("config.json"),
                 user_home,
@@ -59,6 +74,7 @@ pub fn run() {
                     terminal::Shell::from_config(shell_config.config().terminal.shell.as_deref())
                 }),
                 Arc::new(TauriEventSink::new(app.handle().clone())),
+                HookHub::start(),
             ));
             Ok(())
         })

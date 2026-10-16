@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 
 import { events } from "@/bindings";
+import { useAgentCatalogStore } from "@/agents/agent-catalog-store";
 import { DialogHost } from "@/dialog-host";
 import { useConfigStore } from "@/config/config-store";
 import { useExplorerStore } from "@/files/explorer-store";
@@ -66,6 +67,7 @@ function App() {
       useWorkspaceStore.getState().load(),
       useTerminalStore.getState().load(),
       useConfigStore.getState().load(),
+      useAgentCatalogStore.getState().load(),
     ]).catch((error: unknown) => {
       toast.error(copy.sidebar.loadError, { description: errorMessage(error) });
     });
@@ -73,6 +75,14 @@ function App() {
     const unlistenExit = events.terminalExit.listen(({ payload }) => {
       handleTerminalExit(payload.id, payload.exitCode);
     });
+
+    const unlistenAgentStatus = events.agentStatusChanged.listen(
+      ({ payload }) => {
+        useTerminalStore
+          .getState()
+          .setAgentState(payload.id, payload.harness, payload.status);
+      },
+    );
 
     // The config file is meant to be edited by hand, so changes can arrive at any time.
     const unlistenConfig = events.configChanged.listen(({ payload }) => {
@@ -95,6 +105,7 @@ function App() {
     return () => {
       window.removeEventListener("focus", refreshOnFocus);
       void unlistenExit.then((unlisten) => unlisten());
+      void unlistenAgentStatus.then((unlisten) => unlisten());
       void unlistenConfig.then((unlisten) => unlisten());
     };
   }, []);

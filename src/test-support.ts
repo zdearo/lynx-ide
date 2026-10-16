@@ -38,6 +38,8 @@ export function session(
     running: true,
     exitCode: null,
     startedAt: 1_800_000_000,
+    harness: null,
+    agentStatus: null,
     ...overrides,
   };
 }

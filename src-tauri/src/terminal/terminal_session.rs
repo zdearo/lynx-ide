@@ -1,11 +1,16 @@
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
 use specta::Type;
+
+use crate::agents::activity::AgentStatus;
+use crate::agents::agent_monitor::{AgentInput, AgentSlot, MonitorLink};
+use crate::agents::harness::HarnessId;
 
 use super::scrollback_buffer::ScrollbackBuffer;
 use super::shell_resolution::Shell;
@@ -28,6 +33,8 @@ pub struct SpawnRequest<'a> {
     pub command: Option<&'a str>,
     pub cols: u16,
     pub rows: u16,
+    /// Extra variables for the shell, such as the hook port of an agent session.
+    pub env: &'a [(String, String)],
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -41,6 +48,10 @@ pub struct TerminalInfo {
     pub exit_code: Option<i32>,
     /// Unix seconds when the session started. `u32` because the contract has no 64-bit integers.
     pub started_at: u32,
+    /// The agent CLI this session runs; None for a plain shell.
+    pub harness: Option<HarnessId>,
+    /// The agent's status while it runs; None for a plain shell or an exited session.
+    pub agent_status: Option<AgentStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -60,6 +71,8 @@ pub struct TerminalSession {
     shell_name: String,
     started_at: u32,
     shared: Arc<SessionShared>,
+    /// Every session has one; it also knows whether the session currently runs an agent.
+    monitor: MonitorLink,
     pty: Mutex<PtyHandles>,
     #[cfg(unix)]
     shell_pid: Option<u32>,
@@ -109,6 +122,7 @@ impl TerminalSession {
         id: String,
         request: &SpawnRequest<'_>,
         sink: Arc<dyn TerminalEventSink>,
+        monitor: MonitorLink,
     ) -> Result<Self, TerminalError> {
         if request.cols == 0 || request.rows == 0 {
             return Err(TerminalError::InvalidSize);
@@ -136,6 +150,9 @@ impl TerminalSession {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("TERM_PROGRAM", "agent-ade");
+        for (key, value) in request.env {
+            command.env(key, value);
+        }
 
         let mut child = pair
             .slave
@@ -170,7 +187,14 @@ impl TerminalSession {
             reader_done_signal: Condvar::new(),
         });
 
-        spawn_reader(&id, reader, Arc::clone(&shared), Arc::clone(&sink))?;
+        let observer = (monitor.input.clone(), Arc::clone(&monitor.slot));
+        spawn_reader(
+            &id,
+            reader,
+            Arc::clone(&shared),
+            Arc::clone(&sink),
+            observer,
+        )?;
         spawn_waiter(&id, move || child.wait(), Arc::clone(&shared), sink)?;
 
         Ok(Self {
@@ -180,6 +204,7 @@ impl TerminalSession {
             shell_name: request.shell.display_name(),
             started_at: unix_seconds_now(),
             shared,
+            monitor,
             pty: Mutex::new(PtyHandles {
                 writer,
                 master: pair.master,
@@ -193,15 +218,33 @@ impl TerminalSession {
 
     pub fn info(&self) -> TerminalInfo {
         let exit = *SessionShared::lock(&self.shared.exit);
+        let running = exit.is_none();
+        let slot = *self
+            .monitor
+            .slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         TerminalInfo {
             id: self.id.clone(),
             worktree_path: self.worktree_path.clone(),
             command: self.command.clone(),
             shell: self.shell_name.clone(),
-            running: exit.is_none(),
+            running,
             exit_code: exit.flatten(),
             started_at: self.started_at,
+            harness: slot.harness,
+            agent_status: if running && slot.harness.is_some() {
+                Some(slot.status)
+            } else {
+                None
+            },
         }
+    }
+
+    /// The user has looked at this session.
+    pub fn mark_seen(&self) {
+        // The monitor ends with the session, so a failed send means nobody is listening.
+        let _ = self.monitor.input.send(AgentInput::Seen);
     }
 
     pub fn snapshot(&self) -> TerminalSnapshot {
@@ -313,6 +356,7 @@ fn spawn_reader(
     mut reader: Box<dyn Read + Send>,
     shared: Arc<SessionShared>,
     sink: Arc<dyn TerminalEventSink>,
+    observer: (Sender<AgentInput>, Arc<Mutex<AgentSlot>>),
 ) -> Result<(), TerminalError> {
     let id = id.to_owned();
     std::thread::Builder::new()
@@ -341,6 +385,17 @@ fn spawn_reader(
                     output.scrollback.push(text.clone());
                     output.seq
                 };
+                // Only an agent's output is worth the monitor's time; a plain shell is not followed.
+                let (input, slot) = &observer;
+                let running_agent = slot
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .harness
+                    .is_some();
+                if running_agent {
+                    // The monitor has ended if the send fails, and then nobody needs the output.
+                    let _ = input.send(AgentInput::Output(text.clone()));
+                }
                 sink.output(&id, seq, text);
             }
             shared.mark_reader_done();

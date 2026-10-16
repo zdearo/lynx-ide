@@ -3,6 +3,7 @@ use std::io;
 use serde::Serialize;
 use specta::Type;
 
+use crate::agents::hook_install::HookInstallError;
 use crate::config::config_store::ConfigError;
 use crate::files::files_error::FilesError;
 use crate::git::GitError;
@@ -51,6 +52,8 @@ pub enum AppError {
     Config(#[from] ConfigError),
     #[error(transparent)]
     Files(#[from] FilesError),
+    #[error(transparent)]
+    AgentHooks(#[from] HookInstallError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
 }
@@ -86,6 +89,7 @@ pub enum IpcErrorKind {
     TerminalNotFound,
     TerminalNotRunning,
     Terminal,
+    AgentHooks,
     Internal,
 }
 
@@ -119,6 +123,7 @@ impl From<AppError> for IpcError {
             AppError::Terminal(TerminalError::NotFound(_)) => IpcErrorKind::TerminalNotFound,
             AppError::Terminal(TerminalError::NotRunning) => IpcErrorKind::TerminalNotRunning,
             AppError::Terminal(_) => IpcErrorKind::Terminal,
+            AppError::AgentHooks(_) => IpcErrorKind::AgentHooks,
             AppError::TaskFailed(_) => IpcErrorKind::Internal,
         };
         Self {

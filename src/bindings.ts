@@ -26,7 +26,14 @@ export const commands = {
 	terminalSnapshot: (id: string) => typedError<TerminalSnapshot, IpcError>(__TAURI_INVOKE("terminal_snapshot", { id })),
 	writeTerminal: (id: string, data: string) => typedError<null, IpcError>(__TAURI_INVOKE("write_terminal", { id, data })),
 	resizeTerminal: (id: string, cols: number, rows: number) => typedError<null, IpcError>(__TAURI_INVOKE("resize_terminal", { id, cols, rows })),
+	markAgentSeen: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("mark_agent_seen", { id })),
 	closeTerminal: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("close_terminal", { id })),
+	/**  Every supported agent: whether it is on this computer, and whether its hooks are in. */
+	agentCatalog: () => typedError<AgentEntry[], IpcError>(__TAURI_INVOKE("agent_catalog")),
+	hookStatus: (harness: HarnessId) => typedError<HookInstallStatus, IpcError>(__TAURI_INVOKE("hook_status", { harness })),
+	/**  Writes a harness's config. The frontend asks the user first; nothing here runs on its own. */
+	installHooks: (harness: HarnessId) => typedError<HookInstallStatus, IpcError>(__TAURI_INVOKE("install_hooks", { harness })),
+	removeHooks: (harness: HarnessId) => typedError<HookInstallStatus, IpcError>(__TAURI_INVOKE("remove_hooks", { harness })),
 	getConfig: () => typedError<ConfigSnapshot, IpcError>(__TAURI_INVOKE("get_config")),
 	updateConfig: (config: AppConfig) => typedError<ConfigSnapshot, IpcError>(__TAURI_INVOKE("update_config", { config })),
 	/**  Shells the settings can offer for new terminals. */
@@ -41,12 +48,34 @@ export const commands = {
 
 /** Events */
 export const events = {
+	agentStatusChanged: makeEvent<AgentStatusChanged>("agent-status-changed"),
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
 	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
 };
 
 /* Types */
+export type AgentEntry = {
+	harness: HarnessId,
+	/**  The CLI is on this computer's PATH. */
+	found: boolean,
+	/**
+	 *  Lynx's hooks for the agent. Installed means the agent is on: Lynx follows its sessions and
+	 *  offers it in the new-terminal menu.
+	 */
+	hooks: HookInstallStatus,
+};
+
+/**  What the user sees for an agent session. `Done` means it finished and nobody has looked yet. */
+export type AgentStatus = "working" | "needsYou" | "done" | "idle";
+
+/**  What a session is running now: a harness and its status, or nothing for a plain shell. */
+export type AgentStatusChanged = {
+	id: string,
+	harness: HarnessId | null,
+	status: AgentStatus | null,
+};
+
 /**  The effective settings: what `~/.lynx/config.json` says, with defaults for the rest. */
 export type AppConfig = {
 	terminal: TerminalConfig,
@@ -113,13 +142,26 @@ export type Folder = {
 	collapsed: boolean,
 };
 
+export type HarnessId = "claude" | "codex" | "opencode" | "antigravity" | "cursor" | "copilot" | "grok" | "droid" | "kiro" | "qwen" | "pi" | "omp";
+
+export type HookInstallState = "notInstalled" | "partial" | "installed" | "error";
+
+export type HookInstallStatus = {
+	state: HookInstallState,
+	/**  The file Lynx changes for this harness. */
+	configPath: string,
+	/**  The events Lynx listens to, so the confirmation can name them before anything changes. */
+	events: string[],
+	detail: string | null,
+};
+
 /**  Error as the frontend sees it: a stable `kind` to branch on and a message to show. */
 export type IpcError = {
 	kind: IpcErrorKind,
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
 
 export type RemoveWorktreeResult = {
 	branch: string | null,
@@ -181,6 +223,10 @@ export type TerminalInfo = {
 	exitCode: number | null,
 	/**  Unix seconds when the session started. `u32` because the contract has no 64-bit integers. */
 	startedAt: number,
+	/**  The agent CLI this session runs; None for a plain shell. */
+	harness: HarnessId | null,
+	/**  The agent's status while it runs; None for a plain shell or an exited session. */
+	agentStatus: AgentStatus | null,
 };
 
 /**

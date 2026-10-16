@@ -1,5 +1,5 @@
 import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
-import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
+import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 
 import { useNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
@@ -96,8 +96,9 @@ function AgentBadge({ agent }: { agent: AgentItem }) {
       className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md bg-foreground/10 px-1.5"
     >
       <AgentStatusIcon agent={agent} />
-      <SparkleGlyph18
-        data-icon="sparkles"
+      <AgentBrandIcon
+        data-icon="agent"
+        harness={agent.harness}
         className="size-3 shrink-0 text-agent"
       />
     </span>

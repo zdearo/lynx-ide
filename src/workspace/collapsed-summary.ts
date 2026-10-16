@@ -1,5 +1,4 @@
 import type { TerminalInfo, WorktreeInfo } from "@/bindings";
-import { isAgentCommand } from "@/terminal/agent-presets";
 import type { ProjectNode } from "@/workspace/project-tree";
 
 /** What a collapsed row hides: its projects and worktrees, and the agents running in them. */
@@ -17,7 +16,7 @@ export function runningAgentsByWorktree(
 ): Map<string, number> {
   const counts = new Map<string, number>();
   for (const session of sessions) {
-    if (session.running && isAgentCommand(session.command)) {
+    if (session.running && session.harness !== null) {
       counts.set(
         session.worktreePath,
         (counts.get(session.worktreePath) ?? 0) + 1,

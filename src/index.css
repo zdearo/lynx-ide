@@ -19,6 +19,7 @@
 @theme inline {
   --color-live: var(--live);
   --color-agent: var(--agent);
+  --color-attention: var(--attention);
   --font-mono:
     ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --font-heading: var(--font-sans);
@@ -92,6 +93,8 @@
   --live: oklch(0.74 0.17 152);
   /* Reserved for agent glyphs. */
   --agent: oklch(0.76 0.14 55);
+  /* An agent waits on the user: a question or an approval. */
+  --attention: oklch(0.84 0.16 85);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);

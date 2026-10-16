@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::agents::agent_monitor;
+use crate::agents::harness::harness_for_command;
+use crate::agents::hook_hub::HookHub;
+
 use super::shell_resolution::Shell;
 use super::terminal_error::TerminalError;
 use super::terminal_events::TerminalEventSink;
@@ -20,15 +24,17 @@ pub type ShellProvider = Arc<dyn Fn() -> Shell + Send + Sync>;
 struct Inner {
     shell: ShellProvider,
     sink: Arc<dyn TerminalEventSink>,
+    hooks: HookHub,
     sessions: Mutex<BTreeMap<String, Arc<TerminalSession>>>,
 }
 
 impl TerminalManager {
-    pub fn new(shell: ShellProvider, sink: Arc<dyn TerminalEventSink>) -> Self {
+    pub fn new(shell: ShellProvider, sink: Arc<dyn TerminalEventSink>, hooks: HookHub) -> Self {
         Self {
             inner: Arc::new(Inner {
                 shell,
                 sink,
+                hooks,
                 sessions: Mutex::new(BTreeMap::new()),
             }),
         }
@@ -43,21 +49,46 @@ impl TerminalManager {
     ) -> Result<TerminalInfo, TerminalError> {
         let shell = (self.inner.shell)();
         let command = command.map(str::trim).filter(|command| !command.is_empty());
-        let session = TerminalSession::spawn(
-            uuid::Uuid::new_v4().to_string(),
+        let id = uuid::Uuid::new_v4().to_string();
+        // Every session is followed, so an agent started by hand in a shell is recognised too.
+        let monitor = agent_monitor::start(
+            &id,
+            command.and_then(harness_for_command),
+            Arc::clone(&self.inner.sink),
+        )?;
+        self.inner.hooks.register(&id, monitor.input.clone());
+        let env = self.inner.hooks.session_env(&id);
+
+        let spawned = TerminalSession::spawn(
+            id.clone(),
             &SpawnRequest {
                 cwd: Path::new(worktree_path),
                 shell: &shell,
                 command,
                 cols,
                 rows,
+                env: &env,
             },
             Arc::clone(&self.inner.sink),
-        )?;
+            monitor,
+        );
+        let session = match spawned {
+            Ok(session) => session,
+            Err(error) => {
+                self.inner.hooks.unregister(&id);
+                return Err(error);
+            }
+        };
 
         let info = session.info();
         self.sessions().insert(info.id.clone(), Arc::new(session));
         Ok(info)
+    }
+
+    /// The user looked at an agent session that had finished.
+    pub fn mark_seen(&self, id: &str) -> Result<(), TerminalError> {
+        self.session(id)?.mark_seen();
+        Ok(())
     }
 
     pub fn list(&self) -> Vec<TerminalInfo> {
@@ -85,13 +116,15 @@ impl TerminalManager {
             .sessions()
             .remove(id)
             .ok_or_else(|| TerminalError::NotFound(id.to_owned()))?;
+        self.inner.hooks.unregister(id);
         session.terminate();
         Ok(())
     }
 
     pub fn close_all(&self) {
         let sessions = std::mem::take(&mut *self.sessions());
-        for session in sessions.values() {
+        for (id, session) in &sessions {
+            self.inner.hooks.unregister(id);
             session.terminate();
         }
     }

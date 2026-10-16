@@ -1,6 +1,11 @@
 import { create } from "zustand";
 
-import { commands, type TerminalInfo } from "@/bindings";
+import {
+  commands,
+  type AgentStatus,
+  type HarnessId,
+  type TerminalInfo,
+} from "@/bindings";
 import { unwrap } from "@/lib/ipc-result";
 
 // The real size is sent as soon as the view fits itself.
@@ -23,6 +28,13 @@ interface TerminalState {
   setActive: (worktreePath: string, id: string) => void;
   requestFocus: (id: string) => void;
   markExited: (id: string, exitCode: number | null) => void;
+  /** A session became an agent, stopped being one, or its agent changed status. */
+  setAgentState: (
+    id: string,
+    harness: HarnessId | null,
+    status: AgentStatus | null,
+  ) => void;
+  markSeen: (id: string) => void;
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -100,9 +112,22 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   markExited(id, exitCode) {
     set((state) => ({
       sessions: state.sessions.map((s) =>
-        s.id === id ? { ...s, running: false, exitCode } : s,
+        s.id === id ? { ...s, running: false, exitCode, agentStatus: null } : s,
       ),
     }));
+  },
+
+  setAgentState(id, harness, status) {
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id ? { ...s, harness, agentStatus: status } : s,
+      ),
+    }));
+  },
+
+  markSeen(id) {
+    // The backend clears "done" and reports it back as a status change, so the store waits for that.
+    void commands.markAgentSeen(id);
   },
 }));
 

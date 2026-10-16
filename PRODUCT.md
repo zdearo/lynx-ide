@@ -16,7 +16,7 @@ The product is meant to be commercial, so audiences beyond the author are in sco
 
 ## Product Purpose
 
-agent-ade is an Agentic Development Environment: a desktop app that runs many coding agents in parallel, each isolated in its own git worktree, with terminals, agent status and code review in one place. Success means a developer can start, watch, steer and finish several agent tasks without juggling branches, stashes or terminal windows, and always knows which agent needs them.
+Lynx is an Agentic Development Environment: a desktop app that runs many coding agents in parallel, each isolated in its own git worktree, with terminals, agent status and code review in one place. Success means a developer can start, watch, steer and finish several agent tasks without juggling branches, stashes or terminal windows, and always knows which agent needs them.
 
 ## Positioning
 
@@ -46,10 +46,10 @@ Constraints:
 
 ## Brand Commitments
 
-- **Visual direction: the Orca family, executed at full craft.** The owner prefers the established direction of Orca (dark neutral chrome, three zones: project/worktree tree, terminal tabs, source-control panel; dense small type, hairline dividers, status dots and agent glyphs) and wants to adjust it to their own taste rather than invent a new visual world. This was chosen in place of the rolled directions (Wire Desk, Timing Tower, Line Diagram, Flight Strip Rack). Structure, density and conventions follow the reference; Orca's icons, marks and exact layout are not copied, because agent-ade is commercial.
+- **Visual direction: the Orca family, executed at full craft.** The owner prefers the established direction of Orca (dark neutral chrome, three zones: project/worktree tree, terminal tabs, source-control panel; dense small type, hairline dividers, status dots and agent glyphs) and wants to adjust it to their own taste rather than invent a new visual world. This was chosen in place of the rolled directions (Wire Desk, Timing Tower, Line Diagram, Flight Strip Rack). Structure, density and conventions follow the reference; Orca's icons, marks and exact layout are not copied, because Lynx is commercial.
 - **Craft bar: Orca, Linear and Raycast.** Lists must feel as fast, dense and consistent as Linear, with keyboard-first command surfaces as in Raycast.
 - **Baseline first, differences later.** The first interface reproduces the basics of the Orca family well; deliberate departures from it (e.g. right panel closed by default, stronger "needs you" state, leaner sidebar, quieter status bar) are deferred until the basics work and are not part of the minimal interface.
-- "agent-ade" is a working name.
+- **Product name: Lynx**, as the initial name (owner's decision). User data lives in `~/.lynx/`; `LYNX_HOME` overrides it. The repository, crate and bundle identifier still say `agent-ade` and are renamed separately.
 
 ## Evidence on Hand
 

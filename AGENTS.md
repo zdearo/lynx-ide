@@ -4,7 +4,7 @@ Contexto do projeto para agentes de IA (Claude Code, Codex e similares) que trab
 
 ## O projeto
 
-**agent-ade** é um ADE (Agentic Development Environment) desktop. Ele roda vários agentes de código em paralelo (Claude Code, Codex, OpenCode e outros CLIs), cada um isolado no seu próprio `git worktree`, com terminais, estado e revisão reunidos num lugar só.
+**agent-ade** (nome do produto: **Lynx**, ver `PRODUCT.md`) é um ADE (Agentic Development Environment) desktop. Ele roda vários agentes de código em paralelo (Claude Code, Codex, OpenCode e outros CLIs), cada um isolado no seu próprio `git worktree`, com terminais, estado e revisão reunidos num lugar só.
 
 O foco atual é o **núcleo**: worktrees, terminais de agentes e estado básico. Revisão de diff, integrações (GitHub, Linear, Jira), orquestração e CLI própria entram depois, nas fases do TODO.
 
@@ -33,6 +33,10 @@ Versões atuais: Tauri 2.12, tauri-specta 2.0.0-rc.25, React 19, Vite 8, TypeScr
 - `src/`: frontend React. Primitivos shadcn em `src/components/ui/`; o alias `@/` aponta para `src/`.
   - `workspace/`: sidebar, seções de repo, linhas de worktree, diálogos de worktree e `workspace-store.ts` (estado de repos e worktrees).
   - `terminal/`: abas, `TerminalView` (xterm), `TerminalStreamGate`, presets de agente e `terminal-store.ts`.
+  - `navigation/`: a barra primária (`ActivityBar`, estilo VS Code) e o painel lateral da view ativa. Para criar uma view nova, adicione-a em `navigation-views.tsx` (ícone, rótulo e o componente do painel) e ao tipo `NavigationViewId`. Hoje só existe "Projects" (`workspace/ProjectsPanel.tsx`).
+  - `right-panel/`: o painel da direita, com abas (hoje só Files). Aba nova entra em `right-panel-tabs.tsx`. Acoplado ao lado do terminal a partir de 1280 px; abaixo disso abre como drawer pela direita. Começa fechado; atalho Cmd/Ctrl+Shift+E.
+  - `files/`: a aba Files. `explorer-store.ts` guarda a árvore por worktree (pastas carregadas sob demanda), `file-tree-rows.ts` transforma isso em linhas, `FilesPanel.tsx` e `FileRow.tsx` desenham (padrão de árvore ARIA, navegação por setas, Shift+F10 abre o menu), `file-icon-kind.ts` decide o ícone (nomes exatos, depois prefixos, depois extensão; o nome ganha da extensão, então `package.json` é pacote e não só JSON) e `FileTypeIcon.tsx` mapeia cada tipo para um ícone do Lucide (tipo novo: um valor em `FileIconKind`, as regras e uma entrada em `ICONS`), e `file-actions.ts` tem copiar caminho, enviar o caminho ao terminal (com aspas de shell) e abrir a pasta.
+  - `config/` e `settings/`: o store da configuração e o modal de settings (seções Terminal e Worktrees; novas seções entram em `settings-sections.ts`).
   - `ui-copy.ts`: todos os textos da interface (inglês). `dialog-store.ts`: qual diálogo está aberto. `platform-shortcuts.ts` e `use-app-shortcuts.ts`: atalhos.
   - `dev/mock-tauri.ts`: backend simulado, só em desenvolvimento (`?mock=full` ou `?mock=empty` na URL).
 - `src-tauri/`: backend Rust. `src/lib.rs` monta o app; `src/ipc.rs` é o registro único de comandos e eventos; `src/main.rs` só chama `agent_ade_lib::run()`.
@@ -57,9 +61,27 @@ A direção visual é a família do Orca, com acabamento no nível de Orca, Line
 - Todo texto visível vem de `ui-copy.ts`. Não escreva strings soltas em componentes.
 - Cores e tamanhos vêm dos tokens de `src/index.css`: `bg-live` (terminal rodando), `text-agent` (glifos de agente), `text-ui` (13px) e `text-meta` (11px). Nada de valores fixos. A única exceção é o tema do xterm, que desenha em canvas e não lê tokens oklch.
 - O estado nunca depende só de cor: ponto cheio significa que há terminal rodando, ponto vazado que não há.
-- Atalhos: Cmd no macOS e Ctrl+Shift nos demais, porque Ctrl+T/W/N/B pertencem ao shell. Eles são capturados na fase de captura da janela, antes do terminal.
+- Atalhos: Cmd no macOS e, nos demais, Ctrl+Shift para as letras que o shell usa (T/W/N/B) e Ctrl puro para as outras (configurações: Cmd/Ctrl+`,`). Eles são capturados na fase de captura da janela, antes do terminal.
 - Toda ação por ícone usa `TooltipIconButton` (nome acessível e dica). Listas dentro de `ScrollArea` já têm `[&>div]:block!` para truncar com reticências.
+- Abas de terminal: o "×" fica dentro da aba (uma `tablist` só pode conter abas) e o teclado fecha com `Delete` ou com o atalho.
 - O contrato visual é verificado com `pnpm e2e` (Chrome headless contra o backend simulado, inclui axe WCAG A/AA). Rode-o ao mexer na interface. Não capture a tela do monitor: a captura pode pegar outras janelas do usuário.
+
+## Configuração
+
+As preferências do usuário ficam em `~/.lynx/config.json` (`LYNX_HOME` troca a pasta), em JSON simples como o Claude Code e o OpenCode. A regra de divisão: **arquivo = o que o usuário escolhe** (fonte, shell, pasta dos worktrees, depois atalhos e agentes); **SQLite = o estado do app** (repos abertos, base de cada worktree). Segredos nunca vão no arquivo.
+
+- Código em `src-tauri/src/config/`: `app_config.rs` (tipos, padrões, validação, leitura tolerante), `config_store.rs` (arquivo) e `config_events.rs` (vigia a cada 1 s e emite `config-changed`).
+- O arquivo é do usuário e pode ser editado à mão. Leitura: um campo inválido é avisado e vira o padrão, sem derrubar o resto. Gravação: só vão as chaves que diferem do padrão, chaves desconhecidas e a ordem são preservadas, e a escrita é atômica. Um arquivo que não é JSON nunca é sobrescrito: a interface mostra o aviso e desabilita os campos.
+- Para criar uma configuração nova: campo e padrão em `AppConfig`; leitura em `parse_config`, validação em `validate`, reset em `reset` e escrita em `apply`; o espelho do padrão em `src/config/config-store.ts`; o campo na tela (`src/settings/`) e um teste. O que usa o valor deve lê-lo quando precisa (como o shell e a pasta dos worktrees), para a mudança valer sem reiniciar.
+- Uma camada por projeto (dentro do repositório) só pode existir com confirmação de confiança: configuração pode definir comandos, e abrir um repositório clonado não pode executar código dele.
+
+## Arquivos
+
+`src-tauri/src/files/` lista uma pasta por vez para o explorador. O frontend nunca manda um caminho absoluto: manda o worktree e um caminho relativo.
+
+- O worktree precisa ter sido reportado pelo Git (`WorkspaceService::resolve_worktree`), e o caminho relativo é resolvido por `resolve_inside`, que recusa `..`, caminho absoluto, barra invertida e symlinks que saem da raiz. Qualquer comando novo que leia disco por pedido do frontend deve passar por esses dois.
+- A listagem mostra tudo, menos `.git`; o que o Git ignora vem marcado (`git check-ignore`, um processo por pasta) e aparece esmaecido. Pastas com mais de 5000 itens são cortadas e avisam.
+- O conteúdo dos arquivos ainda não é lido: ver e editar fica para a fase do editor.
 
 ## Persistência
 
@@ -75,6 +97,8 @@ O estado do app fica em SQLite (`rusqlite` com SQLite embutido), no arquivo `app
 
 - O backend guarda 1 MiB de scrollback por sessão e numera os chunks (`seq`). A view se anexa com `terminal_snapshot` e `TerminalStreamGate` (`src/terminal/`) junta o snapshot com os eventos ao vivo. Não escreva saída no xterm fora do gate.
 - O comando de um agente é digitado num shell de login, nunca executado no lugar dele.
+- Fontes: o terminal usa JetBrains Mono e Symbols Nerd Font Mono, embutidas (`terminal-appearance.ts`, `terminal-fonts.css`), para ser igual em qualquer máquina e mostrar os ícones de prompts e agentes. O terminal só é criado depois que as fontes de texto carregam: o xterm mede a célula ao abrir e mediria errado com uma fonte de reserva. Licenças em `THIRD_PARTY_NOTICES.md`.
+- Padding nunca vai no elemento onde o xterm é aberto: o `FitAddon` mede o pai e não desconta o padding dele, então a última linha passa do limite. O padding fica num contêiner por fora (`TerminalView`). O `pnpm e2e` verifica isso.
 - Encerrar sessão: nunca envie sinal a um PID de sessão que já saiu (o PID pode ter sido reaproveitado). `TerminalSession::terminate` já faz essa checagem.
 - Os testes de `terminal_manager_tests.rs` usam shells reais e só rodam em Unix. Os `seq` do contrato são `u32` porque o specta não exporta `u64` para TypeScript.
 

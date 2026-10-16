@@ -72,6 +72,17 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 
 ### Pendências da Fase 1
 
+- [ ] Explorador de arquivos: abrir o arquivo (viewer/editor, Fase 3), arrastar um item para o terminal, decorar com o status do Git (M/U) e atualizar sozinho com um vigia de arquivos (hoje atualiza ao voltar para a janela e no botão)
+- [ ] Painel da direita: largura ajustável e novas abas (busca, source control)
+
+- [ ] Seção de agents na configuração (lista editável e padrão). Adiada de propósito no primeiro corte
+- [ ] Exportar um JSON Schema do `config.json` para autocompletar no editor
+- [ ] Renomear o repositório, o crate e o identificador do bundle de `agent-ade` para Lynx. Mudar o identificador muda a pasta de dados do app, então vale fazer junto com a assinatura
+
+- [ ] Decidir com o dono do projeto o que entra nas configurações (o modal já existe, vazio) e quais views entram na barra primária depois de "Projects"
+
+- [x] Configuração do terminal (fonte, tamanho, shell, scrollback) e da pasta dos worktrees em `~/.lynx/config.json`, com tela de settings
+
 - [ ] Verificar a interface na janela real do Tauri (hoje só foi exercitada no Chrome headless com o backend simulado, mais os testes do backend em Rust)
 - [ ] Atalhos de aba anterior/próxima e de troca de worktree
 - [ ] Estado dos agentes (1.4): trabalhando/ocioso, título OSC e indicador na sidebar

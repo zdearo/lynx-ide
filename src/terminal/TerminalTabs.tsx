@@ -1,8 +1,7 @@
 import type { KeyboardEvent } from "react";
-import { PanelLeft, Plus, X } from "lucide-react";
+import { PanelLeft, PanelRight, Plus, X } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { isAgentCommand } from "@/terminal/agent-presets";
@@ -18,11 +17,15 @@ interface TerminalTabsProps {
   /** When the sidebar is hidden the bar says which worktree this is. */
   showLocation: boolean;
   onToggleSidebar: () => void;
+  rightPanelOpen: boolean;
+  onToggleRightPanel: () => void;
 }
 
 export function TerminalTabs({
   showLocation,
   onToggleSidebar,
+  rightPanelOpen,
+  onToggleRightPanel,
 }: TerminalTabsProps) {
   const selected = useSelectedWorktree();
   const allSessions = useTerminalStore((state) => state.sessions);
@@ -79,50 +82,61 @@ export function TerminalTabs({
         {sessions.map((session) => {
           const active = session.id === activeId;
           return (
-            <div
+            // A tablist owns only tabs, so the close "x" lives inside the tab: a mouse
+            // target here, and Delete (or the shortcut) for the keyboard.
+            <button
               key={session.id}
-              role="presentation"
+              type="button"
+              role="tab"
+              id={`tab-${session.id}`}
+              aria-selected={active}
+              aria-keyshortcuts="Delete"
+              tabIndex={active ? 0 : -1}
+              onClick={(event) => {
+                if (
+                  event.target instanceof Element &&
+                  event.target.closest("[data-close]")
+                ) {
+                  void close(session.id);
+                } else if (path) {
+                  setActive(path, session.id);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Delete") {
+                  event.preventDefault();
+                  void close(session.id);
+                }
+              }}
               className={cn(
-                "group/tab flex shrink-0 items-center border-r border-border",
+                "group/tab flex h-full max-w-48 shrink-0 items-center gap-1.5 border-r border-border pr-1 pl-3 text-ui [&_svg]:size-3.5",
                 active
                   ? "bg-background text-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <button
-                type="button"
-                role="tab"
-                id={`tab-${session.id}`}
-                aria-selected={active}
-                tabIndex={active ? 0 : -1}
-                onClick={() => path && setActive(path, session.id)}
-                className="flex h-full max-w-44 items-center gap-1.5 pr-1.5 pl-3 text-ui [&_svg]:size-3.5"
-              >
-                <PresetIcon
-                  kind={isAgentCommand(session.command) ? "agent" : "shell"}
-                />
-                <span className="truncate">{titles.get(session.id)}</span>
-                {!session.running && (
-                  <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
-                    {copy.terminal.exited(session.exitCode)}
-                  </span>
-                )}
-              </button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={copy.terminal.close}
-                onClick={() => void close(session.id)}
+              <PresetIcon
+                kind={isAgentCommand(session.command) ? "agent" : "shell"}
+              />
+              <span className="truncate">{titles.get(session.id)}</span>
+              {!session.running && (
+                <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
+                  {copy.terminal.exited(session.exitCode)}
+                </span>
+              )}
+              <span
+                data-close
+                aria-hidden
+                title={copy.terminal.close}
                 className={cn(
-                  "mr-1",
+                  "grid size-5 shrink-0 place-items-center rounded-md hover:bg-muted",
                   !active &&
-                    "opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100",
+                    "opacity-0 group-focus-visible/tab:opacity-100 group-hover/tab:opacity-100",
                 )}
               >
                 <X />
-              </Button>
-            </div>
+              </span>
+            </button>
           );
         })}
       </div>
@@ -139,6 +153,16 @@ export function TerminalTabs({
           </NewTerminalMenu>
         </div>
       )}
+      <div className="ml-auto flex items-center px-1.5">
+        <TooltipIconButton
+          label={copy.rightPanel.toggle}
+          shortcut={shortcutLabel("toggleFilesPanel")}
+          aria-pressed={rightPanelOpen}
+          onClick={onToggleRightPanel}
+        >
+          <PanelRight />
+        </TooltipIconButton>
+      </div>
     </div>
   );
 }

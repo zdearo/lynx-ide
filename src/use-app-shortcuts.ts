@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 
+import { useNavigationStore } from "@/navigation/navigation-store";
 import { matchShortcut } from "@/platform-shortcuts";
 import {
   closeActiveTerminal,
@@ -18,7 +19,10 @@ function openNewWorktreeForSelection() {
 }
 
 /** Capture phase, so the terminal never sees a key the app has claimed. */
-export function useAppShortcuts(toggleSidebar: () => void) {
+export function useAppShortcuts(
+  toggleSidebar: () => void,
+  toggleFilesPanel: () => void,
+) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const action = matchShortcut(event);
@@ -39,10 +43,16 @@ export function useAppShortcuts(toggleSidebar: () => void) {
         case "toggleSidebar":
           toggleSidebar();
           break;
+        case "toggleFilesPanel":
+          toggleFilesPanel();
+          break;
+        case "openSettings":
+          useNavigationStore.getState().openSettings();
+          break;
       }
     };
     window.addEventListener("keydown", onKeyDown, { capture: true });
     return () =>
       window.removeEventListener("keydown", onKeyDown, { capture: true });
-  }, [toggleSidebar]);
+  }, [toggleSidebar, toggleFilesPanel]);
 }

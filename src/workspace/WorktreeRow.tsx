@@ -75,7 +75,7 @@ export function WorktreeRow({
           <Lock className="size-3 shrink-0" aria-label={copy.worktree.locked} />
         )}
         {worktree.isMain && (
-          <span className="shrink-0 rounded-sm px-1 text-meta text-muted-foreground ring-1 ring-border ring-inset">
+          <span className="shrink-0 rounded-sm px-1 text-meta text-muted-foreground ring-1 ring-border ring-inset group-focus-within/row:invisible group-hover/row:invisible">
             {copy.worktree.primary}
           </span>
         )}

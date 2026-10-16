@@ -21,11 +21,15 @@ import { useWorkspaceStore } from "@/workspace/workspace-store";
 interface TerminalWorkspaceProps {
   sidebarVisible: boolean;
   onToggleSidebar: () => void;
+  rightPanelOpen: boolean;
+  onToggleRightPanel: () => void;
 }
 
 export function TerminalWorkspace({
   sidebarVisible,
   onToggleSidebar,
+  rightPanelOpen,
+  onToggleRightPanel,
 }: TerminalWorkspaceProps) {
   const loaded = useWorkspaceStore((state) => state.loaded);
   const repoCount = useWorkspaceStore((state) => state.repos.length);
@@ -42,6 +46,8 @@ export function TerminalWorkspace({
       <TerminalTabs
         showLocation={!sidebarVisible}
         onToggleSidebar={onToggleSidebar}
+        rightPanelOpen={rightPanelOpen}
+        onToggleRightPanel={onToggleRightPanel}
       />
       <div className="relative min-h-0 flex-1">
         {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. */}

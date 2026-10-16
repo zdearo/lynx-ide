@@ -22,7 +22,7 @@ function moveFocus(event: KeyboardEvent<HTMLElement>) {
   items[Math.max(0, Math.min(items.length - 1, next))]?.focus();
 }
 
-export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
   const repos = useWorkspaceStore((state) => state.repos);
   const worktrees = useWorkspaceStore((state) => state.worktrees);
   const pending = useWorkspaceStore((state) => state.pending);

@@ -1,9 +1,88 @@
 /** Every user-facing string lives here so the interface can be translated later. */
 export const copy = {
-  appName: "agent-ade",
+  appName: "Lynx",
+
+  navigation: {
+    label: "Primary navigation",
+    projects: "Projects",
+    settings: "Settings",
+  },
+
+  settings: {
+    title: "Settings",
+    description: "App settings",
+    close: "Close settings",
+    sections: "Settings sections",
+    reset: "Reset to default",
+    terminal: {
+      title: "Terminal",
+      fontFamily: {
+        label: "Font",
+        hint: "Comma-separated, like CSS. Tried before the bundled JetBrains Mono, so a Nerd Font here keeps your prompt icons.",
+        placeholder: "JetBrains Mono (bundled)",
+      },
+      fontSize: { label: "Font size", hint: "From 8 to 32." },
+      shell: {
+        label: "Shell",
+        hint: "Program for new terminals. Leave empty to use your login shell. Open terminals keep theirs.",
+        placeholder: "Login shell",
+      },
+      scrollback: {
+        label: "Scrollback",
+        hint: "Lines of history kept per terminal, up to 100000.",
+      },
+    },
+    worktrees: {
+      title: "Worktrees",
+      directory: {
+        label: "Worktrees folder",
+        hint: "New worktrees are created in <folder>/<repository>/<name>. Leave empty to create them next to each repository. Existing worktrees do not move.",
+        placeholder: "Next to each repository",
+      },
+    },
+    file: {
+      label: "Config file",
+      open: "Open config file",
+      openFailed: "Could not open the config file",
+      brokenTitle: "The config file is not valid JSON",
+      brokenBody:
+        "Fix it in your editor. Settings cannot be saved until then, and nothing in the file has been changed.",
+      issuesTitle: "Some values in the config file were ignored",
+      usingDefault: "using the default",
+    },
+    invalidNumber: "Enter a whole number",
+  },
+
+  rightPanel: {
+    label: "Side panel",
+    tabs: "Side panel tabs",
+    toggle: "Toggle side panel",
+  },
+
+  files: {
+    title: "Files",
+    tree: "Files in the selected worktree",
+    refresh: "Refresh",
+    collapseAll: "Collapse all",
+    noWorktree: "Select a worktree to browse its files.",
+    loading: "Loading files…",
+    loadFailed: "Could not read the files",
+    retry: "Retry",
+    actions: (name: string) => `Actions for ${name}`,
+    copyPath: "Copy path",
+    copyRelativePath: "Copy relative path",
+    sendToTerminal: "Send path to terminal",
+    openFolder: "Open containing folder",
+    copied: "Path copied",
+    copyFailed: "Could not copy to the clipboard",
+    noTerminal: "Open a terminal in this worktree first.",
+    openFolderFailed: "Could not open the folder",
+    ignored: "ignored by Git",
+    link: "link",
+  },
 
   sidebar: {
-    title: "Repositories",
+    title: "Projects",
     openRepository: "Open repository",
     toggle: "Toggle sidebar",
     emptyTitle: "No repository open",
@@ -101,6 +180,8 @@ export const copy = {
     closeTerminal: "Close terminal",
     newWorktree: "New worktree",
     toggleSidebar: "Toggle sidebar",
+    openSettings: "Open settings",
+    toggleFilesPanel: "Toggle files panel",
   },
 
   errors: {

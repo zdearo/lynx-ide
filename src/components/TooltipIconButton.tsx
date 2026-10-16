@@ -10,12 +10,15 @@ import {
 interface TooltipIconButtonProps extends ComponentProps<typeof Button> {
   label: string;
   shortcut?: string;
+  /** Where the tooltip opens; beside the button for a vertical bar. */
+  tooltipSide?: "top" | "right" | "bottom" | "left";
 }
 
 /** An icon-only button that names itself to screen readers and on hover. */
 export function TooltipIconButton({
   label,
   shortcut,
+  tooltipSide = "bottom",
   children,
   ...props
 }: TooltipIconButtonProps) {
@@ -32,10 +35,10 @@ export function TooltipIconButton({
           {children}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">
+      <TooltipContent side={tooltipSide}>
         {label}
         {shortcut && (
-          <span className="ml-2 text-muted-foreground tabular-nums">
+          <span className="ml-2 text-background/70 tabular-nums">
             {shortcut}
           </span>
         )}

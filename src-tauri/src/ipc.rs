@@ -4,9 +4,19 @@
 use tauri_specta::{Builder, collect_commands};
 
 use crate::app_info;
+use crate::workspace::workspace_commands as workspace;
 
 pub fn builder() -> Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new().commands(collect_commands![app_info::app_info])
+    Builder::<tauri::Wry>::new().commands(collect_commands![
+        app_info::app_info,
+        workspace::list_repos,
+        workspace::add_repo,
+        workspace::remove_repo,
+        workspace::list_worktrees,
+        workspace::create_worktree,
+        workspace::remove_worktree,
+        workspace::repo_refs,
+    ])
 }
 
 #[cfg(test)]

@@ -24,20 +24,20 @@ Legenda: `[ ]` pendente · `[x]` feito · **(?)** decisão em aberto (ver seçã
 
 ### 1.1 Domínio e persistência (Rust)
 
-- [ ] Modelo `Repo` (caminho, nome) e `Worktree` (id, repo, caminho, branch, base ref, status)
-- [ ] Validar que o caminho é um repositório git antes de registrá-lo
-- [ ] Persistir repos e worktrees em JSON no diretório de dados do app **(?)**
-- [ ] Restaurar a lista de repos e worktrees ao abrir o app
+- [x] Modelo `Repo` (id, nome, caminho) e `WorktreeInfo` (caminho, branch, base ref, principal, bloqueado, órfão)
+- [x] Validar que o caminho é um repositório git antes de registrá-lo (resolve para o worktree principal e recusa repositórios bare)
+- [x] Persistir repos e a base ref de cada worktree em JSON no diretório de dados do app, com escrita atômica. A lista de worktrees vem sempre do Git, que é a fonte da verdade **(?)**
+- [x] Restaurar a lista de repos e worktrees ao abrir o app (backend; a interface vem na 1.5)
 
 ### 1.2 Worktrees (Git)
 
-- [ ] Listar worktrees com `git worktree list --porcelain`
-- [ ] Criar worktree com branch nova a partir de uma base (branch local, SHA ou branch remota)
-- [ ] Criar em segundo plano, com status visível (`fetch` e `worktree add`)
-- [ ] Colocar os worktrees fora da pasta do repo **(?)**
-- [ ] Remover worktree e branch, pedindo confirmação
-- [ ] Preservar a branch quando tiver commits não mergeados (`git branch -d` e aviso ao usuário)
-- [ ] Testes com repositórios temporários: criar, listar, remover e preservar branch
+- [x] Listar worktrees com `git worktree list --porcelain`
+- [x] Criar worktree com branch nova a partir de uma base (branch local, SHA ou branch remota), sem rastrear a branch remota
+- [ ] Criar em segundo plano, com status visível (`fetch` e `worktree add`). O comando já roda fora da thread da UI; falta a linha de progresso na sidebar (1.5)
+- [x] Colocar os worktrees fora da pasta do repo, em `<repo>-worktrees/<nome>` **(?)**
+- [x] Remover worktree e branch; recusa alterações não commitadas, a menos que seja forçado (a confirmação na interface vem na 1.5)
+- [x] Preservar a branch quando tiver commits não mergeados (`git branch -d` e motivo devolvido ao frontend)
+- [x] Testes com repositórios temporários: criar, listar, remover, preservar branch, nomes inválidos, duplicados e worktree apagado por fora
 
 ### 1.3 Terminais (PTY)
 

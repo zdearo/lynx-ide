@@ -5,6 +5,13 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 /** Commands */
 export const commands = {
 	appInfo: () => __TAURI_INVOKE<AppInfo>("app_info"),
+	listRepos: () => typedError<Repo[], IpcError>(__TAURI_INVOKE("list_repos")),
+	addRepo: (path: string) => typedError<Repo, IpcError>(__TAURI_INVOKE("add_repo", { path })),
+	removeRepo: (repoId: string) => typedError<null, IpcError>(__TAURI_INVOKE("remove_repo", { repoId })),
+	listWorktrees: (repoId: string) => typedError<WorktreeInfo[], IpcError>(__TAURI_INVOKE("list_worktrees", { repoId })),
+	createWorktree: (repoId: string, name: string, baseRef: string | null) => typedError<WorktreeInfo, IpcError>(__TAURI_INVOKE("create_worktree", { repoId, name, baseRef })),
+	removeWorktree: (repoId: string, worktreePath: string, force: boolean) => typedError<RemoveWorktreeResult, IpcError>(__TAURI_INVOKE("remove_worktree", { repoId, worktreePath, force })),
+	repoRefs: (repoId: string) => typedError<RepoRefs, IpcError>(__TAURI_INVOKE("repo_refs", { repoId })),
 };
 
 /* Types */
@@ -12,4 +19,58 @@ export type AppInfo = {
 	name: string,
 	version: string,
 };
+
+/**  Error as the frontend sees it: a stable `kind` to branch on and a message to show. */
+export type IpcError = {
+	kind: IpcErrorKind,
+	message: string,
+};
+
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "git" | "storage" | "internal";
+
+export type RemoveWorktreeResult = {
+	branch: string | null,
+	branchDeleted: boolean,
+	/**  Why the branch was kept, when it was. */
+	branchKeptReason: string | null,
+};
+
+export type Repo = {
+	id: string,
+	name: string,
+	/**  Path of the repository's main worktree. */
+	path: string,
+};
+
+export type RepoRefs = {
+	/**  Ref new worktrees branch from unless the user picks another one. */
+	defaultBase: string,
+	/**  Local branches and remote-tracking branches, e.g. `main`, `origin/main`. */
+	refs: string[],
+};
+
+export type WorktreeInfo = {
+	path: string,
+	/**  Directory name; the repository name for the main worktree. */
+	name: string,
+	/**  `None` when HEAD is detached. */
+	branch: string | null,
+	head: string | null,
+	/**  Ref the worktree was created from; unknown for worktrees made outside the app. */
+	baseRef: string | null,
+	isMain: boolean,
+	locked: boolean,
+	/**  The worktree directory is gone; `git worktree prune` would drop the entry. */
+	prunable: boolean,
+};
+
+/* Tauri Specta runtime */
+async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {
+    try {
+        return { status: "ok", data: await result };
+    } catch (e) {
+        if (e instanceof Error) throw e;
+        return { status: "error", error: e as any };
+    }
+}
 

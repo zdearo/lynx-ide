@@ -27,3 +27,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Impeccable: keep the durable surface briefs, drop generated artifacts
+.impeccable/*
+!.impeccable/surfaces/

@@ -54,6 +54,15 @@ O estado do app fica em SQLite (`rusqlite` com SQLite embutido), no arquivo `app
 - Um banco criado por versão mais nova é recusado sem alteração; um arquivo que não é SQLite é guardado como `app.db.corrupt-<timestamp>`.
 - O Git continua sendo a fonte da verdade sobre worktrees: o banco só guarda o que o Git não sabe (repos abertos, base ref de cada worktree).
 
+## Terminais
+
+`src-tauri/src/terminal/` é dono dos PTYs; a UI só mostra e envia input.
+
+- O backend guarda 1 MiB de scrollback por sessão e numera os chunks (`seq`). A view se anexa com `terminal_snapshot` e `TerminalStreamGate` (`src/terminal/`) junta o snapshot com os eventos ao vivo. Não escreva saída no xterm fora do gate.
+- O comando de um agente é digitado num shell de login, nunca executado no lugar dele.
+- Encerrar sessão: nunca envie sinal a um PID de sessão que já saiu (o PID pode ter sido reaproveitado). `TerminalSession::terminate` já faz essa checagem.
+- Os testes de `terminal_manager_tests.rs` usam shells reais e só rodam em Unix. Os `seq` do contrato são `u32` porque o specta não exporta `u64` para TypeScript.
+
 ## Convenções
 
 - **Idioma:** documentação e comunicação com o dono do projeto em português (pt-BR). Código, identificadores, nomes de arquivo, logs e mensagens de commit em inglês.

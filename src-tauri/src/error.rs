@@ -3,6 +3,7 @@ use specta::Type;
 
 use crate::git::GitError;
 use crate::persistence::DatabaseError;
+use crate::terminal::TerminalError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -26,6 +27,8 @@ pub enum AppError {
     Git(#[from] GitError),
     #[error(transparent)]
     Database(#[from] DatabaseError),
+    #[error(transparent)]
+    Terminal(#[from] TerminalError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
 }
@@ -50,6 +53,9 @@ pub enum IpcErrorKind {
     CannotRemoveMainWorktree,
     Git,
     Storage,
+    TerminalNotFound,
+    TerminalNotRunning,
+    Terminal,
     Internal,
 }
 
@@ -66,6 +72,9 @@ impl From<AppError> for IpcError {
             AppError::CannotRemoveMainWorktree => IpcErrorKind::CannotRemoveMainWorktree,
             AppError::Git(_) => IpcErrorKind::Git,
             AppError::Database(_) => IpcErrorKind::Storage,
+            AppError::Terminal(TerminalError::NotFound(_)) => IpcErrorKind::TerminalNotFound,
+            AppError::Terminal(TerminalError::NotRunning) => IpcErrorKind::TerminalNotRunning,
+            AppError::Terminal(_) => IpcErrorKind::Terminal,
             AppError::TaskFailed(_) => IpcErrorKind::Internal,
         };
         Self {

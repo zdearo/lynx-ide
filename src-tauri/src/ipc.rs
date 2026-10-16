@@ -1,22 +1,32 @@
 //! Single registry of IPC commands and events. The TypeScript contract in
 //! `src/bindings.ts` is generated from it; never edit that file by hand.
 
-use tauri_specta::{Builder, collect_commands};
+use tauri_specta::{Builder, collect_commands, collect_events};
 
 use crate::app_info;
+use crate::terminal::terminal_commands as terminal;
+use crate::terminal::terminal_events::{TerminalExit, TerminalOutput};
 use crate::workspace::workspace_commands as workspace;
 
 pub fn builder() -> Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new().commands(collect_commands![
-        app_info::app_info,
-        workspace::list_repos,
-        workspace::add_repo,
-        workspace::remove_repo,
-        workspace::list_worktrees,
-        workspace::create_worktree,
-        workspace::remove_worktree,
-        workspace::repo_refs,
-    ])
+    Builder::<tauri::Wry>::new()
+        .commands(collect_commands![
+            app_info::app_info,
+            workspace::list_repos,
+            workspace::add_repo,
+            workspace::remove_repo,
+            workspace::list_worktrees,
+            workspace::create_worktree,
+            workspace::remove_worktree,
+            workspace::repo_refs,
+            terminal::create_terminal,
+            terminal::list_terminals,
+            terminal::terminal_snapshot,
+            terminal::write_terminal,
+            terminal::resize_terminal,
+            terminal::close_terminal,
+        ])
+        .events(collect_events![TerminalOutput, TerminalExit])
 }
 
 #[cfg(test)]

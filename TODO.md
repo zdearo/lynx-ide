@@ -41,13 +41,13 @@ Legenda: `[ ]` pendente · `[x]` feito · **(?)** decisão em aberto (ver seçã
 
 ### 1.3 Terminais (PTY)
 
-- [ ] Criar sessão de PTY com `portable-pty`, no diretório do worktree
-- [ ] Comandos IPC: criar, enviar input, redimensionar e encerrar
-- [ ] Enviar ao frontend os eventos de saída e de término
-- [ ] Suportar várias sessões por worktree
-- [ ] Renderizar no frontend com xterm.js e o addon de fit
-- [ ] Escolher o comando ao criar a sessão: shell, `claude`, `codex`, `opencode` ou comando livre
-- [ ] Encerrar todos os PTYs ao fechar o app, sem deixar processo órfão
+- [x] Criar sessão de PTY com `portable-pty`, no diretório do worktree (shell de login do usuário; o comando é digitado no shell, então a aba continua viva quando o agente sai)
+- [x] Comandos IPC: criar, listar, snapshot, enviar input, redimensionar e fechar
+- [x] Enviar ao frontend os eventos de saída e de término (tipados, com scrollback de 1 MiB no Rust para reanexar a view sem perder nem duplicar saída)
+- [x] Suportar várias sessões por worktree
+- [x] Renderizar no frontend com xterm.js e o addon de fit (`TerminalView`; ainda não montado na janela, isso vem na 1.5)
+- [ ] Escolher o comando ao criar a sessão: shell, `claude`, `codex`, `opencode` ou comando livre. O backend já aceita qualquer comando; falta o seletor na interface (1.5)
+- [x] Encerrar todos os PTYs ao fechar o app, sem deixar processo órfão (SIGHUP no grupo em primeiro plano, SIGKILL após 3 s para quem ignora)
 
 ### 1.4 Estado dos agentes (básico)
 

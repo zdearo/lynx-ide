@@ -113,7 +113,7 @@ mod tests {
     use super::*;
     use crate::agents::hook_install::HookInstallState;
 
-    const EXE: &str = "/opt/lynx/agent-ade";
+    const EXE: &str = "/opt/lynx/lynx-ide";
 
     #[test]
     fn opencode_events_map_to_what_the_activity_tracks() {
@@ -159,7 +159,7 @@ mod tests {
     fn the_plugin_names_the_relay_and_the_forwarded_events() {
         let source = plugin_source(Path::new(EXE));
         assert!(source.starts_with(MARKER));
-        assert!(source.contains("const RELAY = \"/opt/lynx/agent-ade\";"));
+        assert!(source.contains("const RELAY = \"/opt/lynx/lynx-ide\";"));
         assert!(source.contains("\"permission.asked\""));
         assert!(source.contains("--agent-hook"));
     }
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn a_plugin_from_another_build_is_partial_until_updated() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let old = target(dir.path().to_path_buf(), Some(Path::new("/old/agent-ade")));
+        let old = target(dir.path().to_path_buf(), Some(Path::new("/old/lynx-ide")));
         old.install().expect("install old");
 
         let current = target(dir.path().to_path_buf(), Some(Path::new(EXE)));

@@ -1,4 +1,4 @@
-# TODO — agent-ade
+# TODO — Lynx (`lynx-ide`)
 
 Ordem de execução: de cima para baixo. Cada fase depende da anterior. Contexto, princípios e convenções estão em [AGENTS.md](./AGENTS.md).
 
@@ -89,7 +89,8 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 - [ ] Painel da direita: largura ajustável e novas abas (busca, source control)
 
 - [ ] Exportar um JSON Schema do `config.json` para autocompletar no editor
-- [ ] Renomear o repositório, o crate e o identificador do bundle de `agent-ade` para Lynx. O nome do produto (`productName`) já é Lynx; falta o crate (`Cargo.toml`) e o identificador `dev.zdearo.agentade`. Mudar o identificador muda a pasta de dados do app, então vale fazer junto com a assinatura
+- [x] Renomear o crate, o pacote, o binário e o identificador do bundle para `lynx-ide`. O produto segue Lynx (`productName`). Feito: `Cargo.toml`, `package.json`, `tauri.conf.json` (`dev.zdearo.lynx-ide`) e a documentação. Efeito: a pasta de dados do app muda com o identificador, então o app começa vazio nesse caminho; quem já usava a versão antiga precisa adicionar os repositórios de novo
+  - [ ] Renomear a pasta do repositório no disco e o remoto no GitHub. Fica fora do código: a pasta muda o caminho da sessão do Claude Code, então faço só com o seu aval
 
 - [ ] Decidir com o dono do projeto quais views entram na barra primária depois de "Projects"
 
@@ -105,20 +106,25 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 
 Depois da Fase 1. A Fase 1 entrega os estados genéricos (trabalhando, ocioso e encerrado), detectados pela saída e pelo título OSC. Esta fase traz o que depende de conhecer o agente: "precisa de você" e a configuração dos agentes.
 
-- [ ] Registro de harnesses: os 12 são reconhecidos pelo comando de lançamento (`agents/harness.rs`). Falta: o padrão de título de cada um, para sessões sem hook (hoje só o título OSC genérico é lido)
-- [x] Hooks dos agentes para o estado preciso e para "precisa de você". Instalar só com confirmação do usuário; nunca alterar a configuração do agente sem pedir (movido da Fase 4). Implementados para os 12: Claude Code (`claude_hooks.rs`), Codex (`codex_hooks.rs`) e OpenCode (`opencode_hooks.rs`); os demais pela camada genérica (`json_hook_file.rs`, `hook_layouts.rs`, `kiro_hooks.rs`, `plugin_file.rs`, `pi_hooks.rs`)
+- [x] Registro de harnesses: os 12 são reconhecidos pelo comando de lançamento (`agents/harness.rs`) e pelo processo em primeiro plano, com o nome do programa ou do script que um runtime executa (`harness_of_job`). Padrão de título por harness em `agents/agent_title.rs`: Claude (spinner e `✳`), OpenCode (`OC |`), Pi e OMP (marcador `π`, conferido no binário do OMP 18.8.2), e os demais pelo nome junto de uma palavra de estado. Os padrões dos demais vêm do Orca e ainda não foram vistos numa CLI real
+- [x] Hooks dos agentes para o estado preciso e para "precisa de você". Instalar só com confirmação do usuário; nunca alterar a configuração do agente sem pedir (movido da Fase 4). Implementados para os 12: Claude Code (`claude_hooks.rs`), Codex (`codex_hooks.rs`), OpenCode (`opencode_hooks.rs`); os demais pela camada genérica (`json_hook_file.rs`, `hook_layouts.rs`, `kiro_hooks.rs`, `plugin_file.rs`, `pi_hooks.rs`)
   - Validados: Claude Code (usado pelo dono) e Codex (`hooks/list` do app-server 0.160.1). OpenCode só com relé falso, sem a CLI
-  - [ ] Validar com uma sessão real Antigravity (`agy` 1.3.5), Grok (1.0.41) e OMP (18.8.2): estão instalados nesta máquina, mas a sessão pede um modelo autenticado
-  - [ ] Validar Cursor, GitHub Copilot, Droid, Kiro, Qwen Code e Pi quando forem instalados. Hoje valem só pela documentação e pelo código do Orca
-  - [ ] Cursor: confirmar se `{"permission":"ask"}` é a resposta certa em `preToolUse`. O Orca responde `allow`; o Lynx escolheu `ask` para não aprovar ferramentas sozinho
-  - [ ] Antigravity: confirmar que `{"decision":"ask"}` no `PreToolUse` é necessário (silêncio é negação)
-  - [ ] Qwen Code e Droid: o mapeamento de `SessionStart` usa o campo `source` do Claude, que ainda não confirmei que esses CLIs enviam
-  - [ ] Pi e OMP: confirmar que a extensão carrega e envia os eventos (`pi.on`)
-  - [ ] Kiro: ligar falha sem arquivo de agente, e o agente padrão não é coberto. Decidir o comportamento
-  - [ ] Antigravity, Cursor e Kiro não têm evento de fim, então a sessão continua como agente até o terminal fechar. Decidir se o Lynx volta a shell por outro sinal
-- [ ] Estado "precisa de você" pelos hooks, exibido na sidebar e no resumo das pastas (movido da seção Pastas). Feito na sidebar (ícone de pergunta em `AgentRow`). Falta o resumo das pastas: `collapsed-summary.ts` conta só os agentes rodando, sem os que precisam de você
-- [ ] Detectar agente digitado à mão pelo processo em primeiro plano (Unix), para Codex e OpenCode e para sessões sem hooks. Hoje o hook identifica um agente digitado à mão nos três harnesses; falta para sessões sem hooks
-- [ ] Seção de agentes na configuração: lista editável e padrão de argumentos de lançamento (movido das Pendências da Fase 1). Feita a lista: os agentes encontrados no PATH com uma alavanca (ligada = hooks instalados, aparece no menu de novo terminal) e os suportados não encontrados, só informativos. Falta o padrão de argumentos de lançamento, editável por agente: `AppConfig` ainda não tem esse campo
+  - [x] Grok: `grok inspect` lê os 9 eventos do arquivo do Lynx (33 hooks com ele, 24 sem), e `SessionStart`, `Stop` e `SessionEnd` chegam ao relé com `hook_event_name`. Sessão sem prompt, com a CLI 1.0.41
+  - [x] OMP: a extensão carrega com `-e`, e `session_start` chega ao relé. Sessão sem prompt, com a CLI 18.8.2
+  - [ ] Turnos com prompt no Grok (`UserPromptSubmit`, `PreToolUse`) e no OMP (`agent_start`, `agent_end`). Precisam de uma chamada de modelo na sua conta: aguardando sua autorização
+  - [ ] Antigravity (`agy` 1.3.5): `PreInvocation`, `PreToolUse` e a resposta `decision: ask`. Só dispara com um prompt, e a pasta de configuração não tem variável de ambiente, então testar exige usar o `~/.gemini` real
+  - [ ] Cursor, GitHub Copilot, Droid, Kiro, Qwen Code e Pi: validar quando forem instalados. Hoje valem só pela documentação e pelo código do Orca
+  - [ ] Cursor: confirmar `{"permission":"ask"}` em `preToolUse`. O Orca responde `allow`; o Lynx pede `ask` para não aprovar ferramentas sozinho
+  - [ ] Qwen Code e Droid: confirmar que o `SessionStart` traz o campo `source`, que o mapeamento do Claude exige
+- [x] Estado "precisa de você" pelos hooks, pelo título e pelo primeiro plano. Aparece na sidebar (ícone de pergunta em `AgentRow`) e no resumo das pastas (`collapsed-summary.ts`, com o ícone de pergunta e a contagem)
+- [x] Detectar agente digitado à mão pelo processo em primeiro plano: no Unix, o monitor lê o `argv` do grupo que tem o terminal; no Windows, o que o shell iniciou, pela árvore de processos (`terminal/foreground_job.rs`). Vira agente quando o programa, ou o script de um runtime, é um harness. Vale para Codex, OpenCode e sessões sem hooks
+  - [ ] Detecção pelo primeiro plano no Windows: implementada e com um teste num `cmd.exe` real (`windows_foreground_tests.rs`). Falta rodar `cargo test` numa máquina Windows e confirmar
+- [x] Agente sem evento de fim volta a shell quando o job sai do primeiro plano, depois de ter sido visto rodando. Vale para Antigravity, Cursor e Kiro, e para qualquer sessão. Testado com um CLI de mentira num shell real (bash)
+- [x] Kiro sem arquivo de agente: ligar falha com aviso (`NoAgentFiles`), e o agente padrão do Kiro não é coberto, porque ele não tem configuração global de hooks
+- [x] Seção de agentes na configuração: a lista (encontrados no PATH com uma alavanca, e os suportados não encontrados só informativos). Cada agente ligado ganha um interruptor de argumentos de lançamento, e o campo aparece só com ele ligado (`agents.launchArguments`). O modo de lançamento `Manual` ou `YOLO` vale para todos (`agents.launchMode`); YOLO pede confirmação e acrescenta a flag de cada agente
+  - [ ] Confirmar as flags YOLO que vêm só da documentação, numa CLI instalada: Cursor (`--force`), Copilot (`--yolo`), Droid (`--skip-permissions-unsafe`), Kiro (`--trust-all-tools`, depois de `chat`) e Qwen Code (`--yolo`). As de Claude Code, Codex, Antigravity, Grok, OpenCode e OMP foram lidas no `--help` das CLIs instaladas aqui
+  - [ ] Pi: não encontrei flag de YOLO na documentação; hoje abre sempre no modo manual
+  - [ ] Codex: a flag YOLO também desliga o sandbox (`--dangerously-bypass-approvals-and-sandbox`), não só as aprovações. Decidir se o modo YOLO deve usar outra combinação
 - [x] Ícones de marca dos 12 agentes, na lista de Agents, na sidebar e no menu de novo terminal (`AgentBrandIcon.tsx`). Cores originais, sem placa; o OMP usa o `icon.svg` do próprio repositório
 
 Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.

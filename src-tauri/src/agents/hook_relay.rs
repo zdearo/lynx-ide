@@ -1,4 +1,4 @@
-//! `agent-ade --agent-hook <harness> [event]`: what a harness runs for each hook event. It hands the
+//! `lynx-ide --agent-hook <harness> [event]`: what a harness runs for each hook event. It hands the
 //! event to the running app over loopback, then prints the harness's answer, which is `{}` for most.
 
 use std::env;

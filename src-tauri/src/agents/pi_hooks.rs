@@ -80,13 +80,13 @@ mod tests {
     use super::*;
     use crate::agents::hook_install::HookInstallState;
 
-    const EXE: &str = "/opt/lynx/agent-ade";
+    const EXE: &str = "/opt/lynx/lynx-ide";
 
     #[test]
     fn the_extension_names_the_relay_the_harness_and_the_events() {
         let source = extension_source(Path::new(EXE), "omp");
         assert!(source.starts_with(&marker("omp")));
-        assert!(source.contains("const RELAY = \"/opt/lynx/agent-ade\";"));
+        assert!(source.contains("const RELAY = \"/opt/lynx/lynx-ide\";"));
         assert!(source.contains("const HARNESS = \"omp\";"));
         assert!(source.contains("\"tool_approval_requested\""));
     }

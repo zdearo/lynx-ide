@@ -3,8 +3,8 @@ import { create } from "zustand";
 /** The views the primary bar can show in the side panel. Only one so far. */
 export type NavigationViewId = "projects";
 
-const ACTIVE_VIEW_KEY = "agent-ade.activeView";
-const PANEL_COLLAPSED_KEY = "agent-ade.panelCollapsed";
+const ACTIVE_VIEW_KEY = "lynx-ide.activeView";
+const PANEL_COLLAPSED_KEY = "lynx-ide.panelCollapsed";
 
 interface NavigationState {
   activeView: NavigationViewId;

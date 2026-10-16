@@ -105,6 +105,25 @@ export const copy = {
       refresh: "Check again",
       use: (name: string) => `Use ${name} in Lynx`,
       failed: "Could not update the agent settings",
+      launchMode: {
+        label: "Launch mode",
+        hint: "Manual keeps each agent's permission prompts. YOLO starts every agent with the flag that skips them, after you confirm.",
+        manual: "Manual",
+        yolo: "YOLO",
+        confirmTitle: "Start agents in YOLO mode?",
+        confirmBody:
+          "Each agent you have turned on starts without asking before it runs tools. Terminals opened from now on use it; sessions already running do not change.",
+        confirm: "Turn on YOLO",
+      },
+      launchArguments: {
+        toggle: (name: string) => `Launch arguments for ${name}`,
+        hint: "Typed after the agent's command each time a new terminal starts it.",
+        text: (name: string) => `Arguments for ${name}`,
+        placeholder: "For example: --model opus",
+        yoloFlag: (flag: string) => `YOLO mode adds ${flag} before them.`,
+        noYoloFlag:
+          "This agent has no known YOLO flag, so it starts in manual mode.",
+      },
       harnesses: {
         claude: { name: "Claude Code" },
         codex: { name: "Codex" },
@@ -196,6 +215,8 @@ export const copy = {
     worktrees: (n: number) => (n === 1 ? "1 worktree" : `${n} worktrees`),
     running: (n: number) =>
       n === 1 ? "1 agent running" : `${n} agents running`,
+    needsYou: (n: number) =>
+      n === 1 ? "1 agent needs you" : `${n} agents need you`,
     empty: "Nothing inside",
   },
 

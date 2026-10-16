@@ -1,3 +1,4 @@
+import { CircleQuestionGlyph18 } from "@/components/icons/CircleQuestionGlyph18";
 import { copy } from "@/ui-copy";
 import type { GroupSummary } from "@/workspace/collapsed-summary";
 
@@ -29,6 +30,7 @@ export function CollapsedSummary({
     summary.runningAgents > 0
       ? copy.summary.running(summary.runningAgents)
       : null,
+    summary.needingYou > 0 ? copy.summary.needsYou(summary.needingYou) : null,
   ].filter((part): part is string => part !== null);
 
   return (
@@ -42,6 +44,12 @@ export function CollapsedSummary({
           <span className="flex items-center gap-1 text-live">
             <span className="size-1.5 rounded-full bg-live" />
             {summary.runningAgents}
+          </span>
+        )}
+        {summary.needingYou > 0 && (
+          <span className="flex items-center gap-1 text-attention">
+            <CircleQuestionGlyph18 aria-hidden className="size-3" />
+            {summary.needingYou}
           </span>
         )}
       </span>

@@ -172,7 +172,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
   check(
     "hidden sidebar shows the location in the tab bar",
-    (await p.getByText("agent-ade / feat/auth").count()) === 1,
+    (await p.getByText("lynx-ide / feat/auth").count()) === 1,
   );
   await p.keyboard.press("Control+Shift+B");
 
@@ -477,6 +477,89 @@ const termFont = (p) =>
       : null;
   });
 
+// Launch arguments are offered once an agent is on, and the launch mode applies to every agent.
+await session("?mock=full", 1200, 900, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(600);
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  await p.getByRole("tab", { name: "Agents" }).click();
+  await p.waitForTimeout(300);
+
+  await p.getByRole("switch", { name: "Use Claude Code in Lynx" }).click();
+  await p.waitForTimeout(300);
+  await p
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Turn on", exact: true })
+    .click();
+  await p.waitForTimeout(600);
+
+  const argumentsSwitch = p.getByRole("switch", {
+    name: "Launch arguments for Claude Code",
+  });
+  const argumentsBox = p.getByRole("textbox", {
+    name: "Arguments for Claude Code",
+  });
+  check(
+    "an agent that is on offers its launch arguments, off, with no text box",
+    (await argumentsSwitch.getAttribute("aria-checked")) === "false" &&
+      (await argumentsBox.count()) === 0,
+  );
+
+  await argumentsSwitch.click();
+  await p.waitForTimeout(300);
+  check(
+    "turning the arguments on shows the text box",
+    (await argumentsBox.count()) === 1,
+  );
+  await argumentsBox.fill("--model opus");
+  await argumentsBox.press("Enter");
+  await p.waitForTimeout(400);
+  check(
+    "the arguments typed in the box are kept",
+    (await argumentsBox.inputValue()) === "--model opus",
+  );
+
+  await p.getByRole("combobox", { name: "Launch mode" }).click();
+  await p.getByRole("option", { name: "YOLO", exact: true }).click();
+  await p.waitForTimeout(300);
+  const confirm = p.getByRole("alertdialog");
+  check(
+    "YOLO asks before it is turned on",
+    (await confirm.count()) === 1 &&
+      ((await confirm.textContent()) ?? "").includes("YOLO mode"),
+  );
+  await confirm.getByRole("button", { name: "Turn on YOLO" }).click();
+  await p.waitForTimeout(500);
+  check(
+    "in YOLO mode the agent says which flag it starts with",
+    (await p
+      .getByText("YOLO mode adds --dangerously-skip-permissions before them.")
+      .count()) === 1,
+  );
+
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(300);
+  // Several rows have a "New terminal" button; the one in the tab bar sits at the top of the main area.
+  const launchers = p.getByRole("button", { name: "New terminal" });
+  let launcher = null;
+  for (let index = 0; index < (await launchers.count()); index += 1) {
+    const box = await launchers.nth(index).boundingBox();
+    if (box && box.y < 60 && box.x > 300) {
+      launcher = launchers.nth(index);
+      break;
+    }
+  }
+  check("the tab bar has a new terminal button", launcher !== null);
+  await launcher.click();
+  await p.getByRole("menuitem", { name: "Claude Code" }).click();
+  await p.waitForTimeout(500);
+  check(
+    "a Claude Code terminal opens from the menu",
+    (await p.getByRole("tab", { name: /claude/i }).count()) >= 1,
+  );
+});
+
 // The agents found on this computer get a switch. Turning one on rewrites its settings, so it is asked first.
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
@@ -503,6 +586,13 @@ await session("?mock=full", 1200, 760, async (p) => {
       (await p
         .getByRole("switch", { name: "Use OpenCode in Lynx" })
         .count()) === 0,
+  );
+
+  check(
+    "an agent that is off offers no launch arguments",
+    (await p
+      .getByRole("switch", { name: "Launch arguments for Claude Code" })
+      .count()) === 0,
   );
 
   await claudeSwitch.click();
@@ -1121,7 +1211,7 @@ await session(
     check(
       "Copy path gives the absolute path",
       (await p.evaluate(() => navigator.clipboard.readText())).endsWith(
-        "/agent-ade-worktrees/feat-auth/docs",
+        "/lynx-ide-worktrees/feat-auth/docs",
       ),
       await p.evaluate(() => navigator.clipboard.readText()),
     );
@@ -1336,8 +1426,8 @@ await session("?mock=full", 1300, 760, async (p) => {
   const agentRows = p.locator("[data-agent-id]");
   const groupOf = (path) => p.locator(`[data-agent-group="${path}"]`);
   const toggleGroup = (path) => groupOf(path).locator(":scope > button");
-  const featPath = "/home/dev/agent-ade-worktrees/feat-auth";
-  const fixPath = "/home/dev/agent-ade-worktrees/fix-pty";
+  const featPath = "/home/dev/lynx-ide-worktrees/feat-auth";
+  const fixPath = "/home/dev/lynx-ide-worktrees/fix-pty";
   const refactorPath = "/home/dev/api-server-worktrees/refactor-db";
 
   check(
@@ -1432,13 +1522,13 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
   check(
     "the newly selected worktree's agents stay collapsed until opened",
-    (await agent(/^codex, idle$/).count()) === 0,
+    (await agent(/^codex, needs you$/).count()) === 0,
   );
   await toggleGroup(fixPath).click();
   await p.waitForTimeout(300);
   check(
     "each row shows its own age",
-    ((await agent(/^codex, idle$/).textContent()) ?? "").includes("3h"),
+    ((await agent(/^codex, needs you$/).textContent()) ?? "").includes("3h"),
   );
 
   await toggleGroup(refactorPath).click();
@@ -1482,7 +1572,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   await p.waitForTimeout(300);
   await p
     .locator(
-      '[data-agent-group="/home/dev/agent-ade-worktrees/feat-auth"] > button',
+      '[data-agent-group="/home/dev/lynx-ide-worktrees/feat-auth"] > button',
     )
     .click();
   await p.waitForTimeout(300);
@@ -1821,22 +1911,22 @@ await session("?mock=full", 1300, 760, async (p) => {
     (await spokenOf(repoHeader)) === null,
   );
 
-  await p.getByRole("button", { name: "Collapse agent-ade" }).click();
+  await p.getByRole("button", { name: "Collapse lynx-ide" }).click();
   await p.waitForTimeout(200);
   const spoken = await spokenOf(repoHeader);
   check(
-    "a collapsed repo says what it hides, including the agents running in it",
-    spoken === "3 worktrees, 2 agents running",
+    "a collapsed repo says what it hides, including the agents running in it and those that need the user",
+    spoken === "3 worktrees, 2 agents running, 1 agent needs you",
     spoken ?? "null",
   );
   const shownInRow =
     (await repoHeader.locator('span[aria-hidden="true"]').textContent()) ?? "";
   check(
-    "the row shows the worktree count and the running agents at its right edge",
-    shownInRow.includes("3 worktrees") && shownInRow.endsWith("2"),
+    "the row shows the worktree count, the running agents and the ones that need the user at its right edge",
+    shownInRow.includes("3 worktrees") && shownInRow.endsWith("1"),
     shownInRow,
   );
-  await p.getByRole("button", { name: "Expand agent-ade" }).click();
+  await p.getByRole("button", { name: "Expand lynx-ide" }).click();
   await p.waitForTimeout(200);
   check(
     "expanding the repo removes the summary again",
@@ -1863,7 +1953,7 @@ await session("?mock=full", 1300, 760, async (p) => {
 
 await session("?mock=crowded", 1300, 760, async (p) => {
   const fixGroup = p.locator(
-    '[data-agent-group="/home/dev/agent-ade-worktrees/fix-pty"]',
+    '[data-agent-group="/home/dev/lynx-ide-worktrees/fix-pty"]',
   );
   const header = fixGroup.locator(":scope > button");
   const badges = header.locator('svg[data-icon="agent"]');
@@ -1900,7 +1990,7 @@ await session("?mock=crowded", 1300, 760, async (p) => {
   await p.waitForTimeout(200);
   const styles = await p.evaluate(() => {
     const header = document.querySelector(
-      '[data-agent-group="/home/dev/agent-ade-worktrees/fix-pty"] > button',
+      '[data-agent-group="/home/dev/lynx-ide-worktrees/fix-pty"] > button',
     );
     const title = header.querySelector("span");
     const repoName = document.querySelector('[data-project-id="r1"] span');
@@ -2043,7 +2133,7 @@ await session("?mock=full", 800, 700, async (p) => {
   );
   check(
     "the tab bar names the worktree when the sidebar is closed",
-    (await p.getByText("agent-ade / feat/auth").count()) === 1,
+    (await p.getByText("lynx-ide / feat/auth").count()) === 1,
   );
 });
 

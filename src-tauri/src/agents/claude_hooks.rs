@@ -247,7 +247,7 @@ mod tests {
 
     use super::*;
 
-    const COMMAND: &str = "'/opt/lynx/agent-ade' --agent-hook claude";
+    const COMMAND: &str = "'/opt/lynx/lynx-ide' --agent-hook claude";
     /// A version that accepts every event.
     const RECENT: Version = [9, 9, 9];
 
@@ -301,7 +301,7 @@ mod tests {
         let mut settings = json!({});
         apply(
             &mut settings,
-            "'/old/agent-ade' --agent-hook claude",
+            "'/old/lynx-ide' --agent-hook claude",
             &events_for(Some(RECENT)),
         );
         apply(&mut settings, COMMAND, &events_for(Some(RECENT)));
@@ -521,8 +521,8 @@ mod tests {
     #[test]
     fn hook_command_quotes_the_executable_path() {
         assert_eq!(
-            hook_command(Path::new("/opt/it's here/agent-ade")),
-            "'/opt/it'\\''s here/agent-ade' --agent-hook claude"
+            hook_command(Path::new("/opt/it's here/lynx-ide")),
+            "'/opt/it'\\''s here/lynx-ide' --agent-hook claude"
         );
     }
 

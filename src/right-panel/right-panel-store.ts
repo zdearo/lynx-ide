@@ -3,7 +3,7 @@ import { create } from "zustand";
 /** The tabs of the right-hand panel. Only Files so far. */
 export type RightPanelTabId = "files";
 
-const DOCKED_OPEN_KEY = "agent-ade.rightPanelOpen";
+const DOCKED_OPEN_KEY = "lynx-ide.rightPanelOpen";
 
 interface RightPanelState {
   activeTab: RightPanelTabId;

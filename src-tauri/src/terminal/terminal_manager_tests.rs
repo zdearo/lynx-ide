@@ -6,7 +6,7 @@ use std::net::TcpStream;
 use std::path::Path;
 #[cfg(not(target_os = "linux"))]
 use std::process::Command;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::agents::activity::AgentStatus;
@@ -15,115 +15,8 @@ use crate::agents::hook_hub::{HookHub, PORT_ENV, TOKEN_ENV};
 
 use super::terminal_events::TerminalEventSink;
 use super::terminal_manager::TerminalManager;
+use super::terminal_test_support::{RecordingSink, WAIT, output_of, path_of};
 use super::{Shell, TerminalError};
-
-const WAIT: Duration = Duration::from_secs(10);
-
-#[derive(Default)]
-struct Events {
-    output: Vec<(String, u32, String)>,
-    exits: Vec<(String, Option<i32>)>,
-    /// Agent state reports, in order: session, harness and status.
-    states: Vec<(String, Option<HarnessId>, Option<AgentStatus>)>,
-}
-
-#[derive(Default)]
-struct RecordingSink {
-    events: Mutex<Events>,
-    changed: Condvar,
-}
-
-impl TerminalEventSink for RecordingSink {
-    fn output(&self, id: &str, seq: u32, data: String) {
-        self.events
-            .lock()
-            .expect("lock")
-            .output
-            .push((id.to_owned(), seq, data));
-        self.changed.notify_all();
-    }
-
-    fn exit(&self, id: &str, exit_code: Option<i32>) {
-        self.events
-            .lock()
-            .expect("lock")
-            .exits
-            .push((id.to_owned(), exit_code));
-        self.changed.notify_all();
-    }
-
-    fn agent_state(&self, id: &str, harness: Option<HarnessId>, status: Option<AgentStatus>) {
-        self.events
-            .lock()
-            .expect("lock")
-            .states
-            .push((id.to_owned(), harness, status));
-        self.changed.notify_all();
-    }
-}
-
-impl RecordingSink {
-    fn wait_until(&self, what: &str, condition: impl Fn(&Events) -> bool) {
-        let deadline = Instant::now() + WAIT;
-        let mut events = self.events.lock().expect("lock");
-        while !condition(&events) {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(
-                !remaining.is_zero(),
-                "timed out waiting for {what}; output so far: {:?}",
-                events
-                    .output
-                    .iter()
-                    .map(|(_, _, data)| data.as_str())
-                    .collect::<String>()
-            );
-            events = self
-                .changed
-                .wait_timeout(events, remaining)
-                .expect("wait")
-                .0;
-        }
-    }
-
-    fn wait_for_text(&self, id: &str, needle: &str) {
-        self.wait_until(&format!("{needle:?} in the output"), |events| {
-            output_of(events, id).contains(needle)
-        });
-    }
-
-    /// Waits until the session's latest reported state is this one.
-    fn wait_for_state(&self, id: &str, harness: Option<HarnessId>, status: Option<AgentStatus>) {
-        self.wait_until(&format!("{harness:?} {status:?}"), |events| {
-            events
-                .states
-                .iter()
-                .rev()
-                .find(|(i, _, _)| i == id)
-                .is_some_and(|(_, h, s)| *h == harness && *s == status)
-        });
-    }
-
-    fn wait_for_exit(&self, id: &str) -> Option<i32> {
-        self.wait_until("the exit event", |events| {
-            events.exits.iter().any(|(i, _)| i == id)
-        });
-        let events = self.events.lock().expect("lock");
-        events
-            .exits
-            .iter()
-            .find(|(i, _)| i == id)
-            .and_then(|(_, code)| *code)
-    }
-}
-
-fn output_of(events: &Events, id: &str) -> String {
-    events
-        .output
-        .iter()
-        .filter(|(i, _, _)| i == id)
-        .map(|(_, _, data)| data.as_str())
-        .collect()
-}
 
 fn setup() -> (TerminalManager, Arc<RecordingSink>, tempfile::TempDir) {
     let sink = Arc::new(RecordingSink::default());
@@ -138,13 +31,6 @@ fn setup() -> (TerminalManager, Arc<RecordingSink>, tempfile::TempDir) {
         HookHub::disabled(),
     );
     (manager, sink, tempfile::tempdir().expect("temp dir"))
-}
-
-fn path_of(dir: &tempfile::TempDir) -> String {
-    fs::canonicalize(dir.path())
-        .expect("canonical")
-        .to_string_lossy()
-        .into_owned()
 }
 
 fn is_running(pid: &str) -> bool {
@@ -497,6 +383,51 @@ fn a_shell_becomes_the_harness_that_reports_from_it_and_back(
         .find(|session| session.id == info.id)
         .expect("listed");
     assert_eq!(listed.harness, None, "the session is a shell again");
+
+    manager.close(&info.id).expect("close");
+}
+
+/// A stand-in for an agent CLI: a script under the name the agent goes by, which waits the way an
+/// agent does until it is interrupted.
+fn fake_cli(dir: &Path, name: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin = dir.join("bin");
+    fs::create_dir_all(&bin).expect("bin dir");
+    let script = bin.join(name);
+    fs::write(&script, "#!/bin/sh\nsleep 30\n").expect("write");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
+    bin
+}
+
+#[test]
+fn an_agent_typed_by_hand_in_a_shell_is_followed_until_it_exits() {
+    let sink = Arc::new(RecordingSink::default());
+    let hub = HookHub::start();
+    let shell = Arc::new(|| Shell {
+        program: "/bin/sh".to_owned(),
+        args: Vec::new(),
+    });
+    let manager = TerminalManager::new(
+        shell,
+        Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+        hub.clone(),
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let bin = fake_cli(dir.path(), "claude");
+    let info = manager
+        .create(&path_of(&dir), None, 80, 24)
+        .expect("create");
+    assert_eq!(info.harness, None, "a new shell is not an agent");
+
+    manager
+        .write(&info.id, &format!("PATH={}:$PATH claude\r", bin.display()))
+        .expect("type the command");
+    sink.wait_for_state(&info.id, Some(HarnessId::Claude), Some(AgentStatus::Idle));
+
+    // Ctrl+C stops the stand-in, and the shell is in the foreground again.
+    manager.write(&info.id, "\u{3}").expect("interrupt");
+    sink.wait_for_state(&info.id, None, None);
 
     manager.close(&info.id).expect("close");
 }

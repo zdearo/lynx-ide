@@ -7,7 +7,7 @@ import { useDialogStore } from "@/dialog-store";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { useVisiblePresets } from "@/agents/agent-catalog-store";
 import { PresetIcon } from "@/terminal/PresetIcon";
-import { startTerminal } from "@/terminal/terminal-actions";
+import { startPreset } from "@/terminal/terminal-actions";
 import { TerminalTabs } from "@/terminal/TerminalTabs";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalView } from "@/terminal/TerminalView";
@@ -127,7 +127,7 @@ function EmptyWorktree({ selected }: { selected: SelectedWorktree }) {
             key={preset.id}
             variant="outline"
             size="sm"
-            onClick={() => void startTerminal(path, preset.command)}
+            onClick={() => void startPreset(path, preset)}
           >
             <PresetIcon harness={preset.harness} />
             {preset.label}

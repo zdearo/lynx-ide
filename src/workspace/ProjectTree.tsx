@@ -1,5 +1,6 @@
 import type { WorktreeInfo } from "@/bindings";
 import {
+  type AgentCount,
   summarizeChildren,
   summarizeRepo,
 } from "@/workspace/collapsed-summary";
@@ -13,8 +14,8 @@ export interface ProjectContext {
   worktrees: Record<string, WorktreeInfo[]>;
   pending: PendingWorktree[];
   collapsedRepoIds: Record<string, boolean>;
-  /** Running agent sessions per worktree path, for the summary of collapsed rows. */
-  runningAgents: ReadonlyMap<string, number>;
+  /** Running agents per worktree path, for the summary of collapsed rows. */
+  agents: ReadonlyMap<string, AgentCount>;
   selectedPath: string | null;
   onSelectWorktree: (path: string) => void;
 }
@@ -42,7 +43,7 @@ export function ProjectTree({
             summary={summarizeChildren(
               node.children,
               context.worktrees,
-              context.runningAgents,
+              context.agents,
             )}
           >
             <ProjectTree
@@ -62,7 +63,7 @@ export function ProjectTree({
             collapsed={context.collapsedRepoIds[node.repo.id] ?? false}
             summary={summarizeRepo(
               context.worktrees[node.repo.id] ?? [],
-              context.runningAgents,
+              context.agents,
             )}
             selectedPath={context.selectedPath}
             onSelectWorktree={context.onSelectWorktree}

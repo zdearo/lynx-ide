@@ -6,6 +6,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use super::agent_title::{self, TitleSignal};
+use super::harness::HarnessId;
+
 /// What the user sees for an agent session. `Done` means it finished and nobody has looked yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -74,8 +77,13 @@ impl AgentActivity {
     }
 
     /// A title frame. Spinner frames mean work and a rest prefix means the turn is over.
-    pub fn on_title(&mut self, title: &str, now: Instant) -> Option<AgentStatus> {
-        let signal = classify_title(title)?;
+    pub fn on_title(
+        &mut self,
+        harness: HarnessId,
+        title: &str,
+        now: Instant,
+    ) -> Option<AgentStatus> {
+        let signal = agent_title::signal_of(harness, title)?;
         self.titles_seen = true;
         match signal {
             // Hooks say when work starts and stops; a spinner frame adds nothing to that.
@@ -146,33 +154,6 @@ impl AgentActivity {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TitleSignal {
-    Working,
-    NeedsYou,
-    Rest,
-}
-
-/// Claude Code's titles: a spinner frame while busy, a `✳` (or ASCII `*`) prefix at rest.
-fn classify_title(title: &str) -> Option<TitleSignal> {
-    if title.to_ascii_lowercase().contains("action required") {
-        return Some(TitleSignal::NeedsYou);
-    }
-    let trimmed = title.trim_start();
-    if trimmed.starts_with('✳') || trimmed.starts_with("* ") {
-        return Some(TitleSignal::Rest);
-    }
-    if trimmed.starts_with(". ") || trimmed.chars().any(is_spinner_frame) {
-        return Some(TitleSignal::Working);
-    }
-    None
-}
-
-/// Braille patterns, which terminal UIs animate as a spinner.
-fn is_spinner_frame(ch: char) -> bool {
-    ('\u{2800}'..='\u{28ff}').contains(&ch)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,11 +201,11 @@ mod tests {
         let now = start();
         let mut activity = AgentActivity::default();
         assert_eq!(
-            activity.on_title("⠋ Claude Code", now),
+            activity.on_title(HarnessId::Claude, "⠋ Claude Code", now),
             Some(AgentStatus::Working)
         );
         assert_eq!(
-            activity.on_title("✳ Claude Code", now),
+            activity.on_title(HarnessId::Claude, "✳ Claude Code", now),
             Some(AgentStatus::Done)
         );
     }
@@ -233,9 +214,9 @@ mod tests {
     fn the_ascii_rest_prefix_counts_as_rest_too() {
         let now = start();
         let mut activity = AgentActivity::default();
-        activity.on_title("⠋ Claude Code", now);
+        activity.on_title(HarnessId::Claude, "⠋ Claude Code", now);
         assert_eq!(
-            activity.on_title("* Claude Code", now),
+            activity.on_title(HarnessId::Claude, "* Claude Code", now),
             Some(AgentStatus::Done)
         );
     }
@@ -244,8 +225,11 @@ mod tests {
     fn a_title_that_says_nothing_about_the_agent_is_ignored() {
         let now = start();
         let mut activity = AgentActivity::default();
-        assert_eq!(activity.on_title("~/projects/repo", now), None);
-        assert_eq!(activity.on_title("zsh", now), None);
+        assert_eq!(
+            activity.on_title(HarnessId::Claude, "~/projects/repo", now),
+            None
+        );
+        assert_eq!(activity.on_title(HarnessId::Claude, "zsh", now), None);
         assert_eq!(activity.status, AgentStatus::Idle);
     }
 
@@ -254,7 +238,7 @@ mod tests {
         let now = start();
         let mut activity = AgentActivity::default();
         assert_eq!(
-            activity.on_title("Claude Code - action required", now),
+            activity.on_title(HarnessId::Claude, "Claude Code - action required", now),
             Some(AgentStatus::NeedsYou)
         );
     }
@@ -264,10 +248,13 @@ mod tests {
         let now = start();
         let mut activity = AgentActivity::default();
         activity.on_hook(HookEvent::Working);
-        assert_eq!(activity.on_title("⠋ Claude Code", now), None);
+        assert_eq!(
+            activity.on_title(HarnessId::Claude, "⠋ Claude Code", now),
+            None
+        );
         // An interrupted turn sends no Stop hook; the rest title is what ends it.
         assert_eq!(
-            activity.on_title("✳ Claude Code", now),
+            activity.on_title(HarnessId::Claude, "✳ Claude Code", now),
             Some(AgentStatus::Done)
         );
     }
@@ -276,7 +263,7 @@ mod tests {
     fn a_working_title_that_goes_quiet_turns_idle_not_done() {
         let now = start();
         let mut activity = AgentActivity::default();
-        activity.on_title("⠋ Codex", now);
+        activity.on_title(HarnessId::Claude, "⠋ Codex", now);
         assert_eq!(activity.on_tick(now + Duration::from_secs(1)), None);
         assert_eq!(activity.on_tick(now + QUIET_AFTER), Some(AgentStatus::Idle));
     }
@@ -305,7 +292,7 @@ mod tests {
         let mut activity = AgentActivity::default();
         activity.on_output(now);
         assert_eq!(
-            activity.on_title("✳ Claude Code", now),
+            activity.on_title(HarnessId::Claude, "✳ Claude Code", now),
             Some(AgentStatus::Idle)
         );
     }
@@ -314,7 +301,7 @@ mod tests {
     fn output_is_ignored_once_a_title_or_hook_has_spoken() {
         let now = start();
         let mut activity = AgentActivity::default();
-        activity.on_title("✳ Claude Code", now);
+        activity.on_title(HarnessId::Claude, "✳ Claude Code", now);
         assert_eq!(activity.on_output(now), None);
         assert_eq!(activity.status, AgentStatus::Idle);
     }

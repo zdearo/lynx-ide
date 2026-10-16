@@ -7,6 +7,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 
 import type {
+  AgentStatus,
   AppConfig,
   ConfigSnapshot,
   Folder,
@@ -51,12 +52,12 @@ const AGENT_TRANSCRIPT = [
 
 const SHELL_TRANSCRIPT = [
   // \ue0a0 branch, \uf07c folder, \ue0b0 powerline arrow: Nerd Font glyphs.
-  `${ESC}44;30m \uf07c ~/agent-ade ${ESC}0m${ESC}34m\ue0b0${ESC}0m ${green("\ue0a0 feat/auth")} ${orange("\uf113")}`,
-  `${green("dev@host")} ${dim("~/agent-ade")} $ git status -sb`,
+  `${ESC}44;30m \uf07c ~/lynx-ide ${ESC}0m${ESC}34m\ue0b0${ESC}0m ${green("\ue0a0 feat/auth")} ${orange("\uf113")}`,
+  `${green("dev@host")} ${dim("~/lynx-ide")} $ git status -sb`,
   "## feat/auth",
   " M src/workspace/Sidebar.tsx",
   "?? src/dev/mock-tauri.ts",
-  `${green("dev@host")} ${dim("~/agent-ade")} $ `,
+  `${green("dev@host")} ${dim("~/lynx-ide")} $ `,
 ].join("\r\n");
 
 function worktree(
@@ -85,8 +86,8 @@ function seedRepos(): {
   const repos: Repo[] = [
     {
       id: "r1",
-      name: "agent-ade",
-      path: "/home/dev/agent-ade",
+      name: "lynx-ide",
+      path: "/home/dev/lynx-ide",
       folderId: null,
     },
     {
@@ -100,7 +101,7 @@ function seedRepos(): {
     repos,
     worktrees: {
       r1: [
-        worktree(repos[0].path, "agent-ade", "main", null, true),
+        worktree(repos[0].path, "lynx-ide", "main", null, true),
         worktree(repos[0].path, "feat-auth", "feat/auth", "origin/main"),
         worktree(repos[0].path, "fix-pty", "fix/pty", "origin/main"),
       ],
@@ -199,6 +200,7 @@ const DEFAULT_CONFIG: AppConfig = {
     textColorScheme: null,
   },
   worktrees: { directory: null },
+  agents: { launchMode: "manual", launchArguments: {} },
 };
 
 /** The same rules as the Rust validation, close enough for the interface to react to them. */
@@ -413,6 +415,7 @@ export function installMockTauri(scenario: string): void {
     running: boolean,
     text: string,
     startedSecondsAgo = 0,
+    agentStatus: AgentStatus = "idle",
   ) {
     const id = `t${++nextSessionId}`;
     sessions.push({
@@ -424,7 +427,7 @@ export function installMockTauri(scenario: string): void {
       exitCode: running ? null : 0,
       startedAt: Math.floor(Date.now() / 1000) - startedSecondsAgo,
       harness: harnessOf(command),
-      agentStatus: harnessOf(command) && running ? "idle" : null,
+      agentStatus: harnessOf(command) && running ? agentStatus : null,
     });
     transcripts.set(id, text);
     seq.set(id, 1);
@@ -439,7 +442,7 @@ export function installMockTauri(scenario: string): void {
       ["codex", 2 * 86400],
     ] as const) {
       addSession(
-        "/home/dev/agent-ade-worktrees/fix-pty",
+        "/home/dev/lynx-ide-worktrees/fix-pty",
         command,
         true,
         AGENT_TRANSCRIPT,
@@ -450,24 +453,26 @@ export function installMockTauri(scenario: string): void {
 
   if (scenario !== "empty") {
     addSession(
-      "/home/dev/agent-ade-worktrees/feat-auth",
+      "/home/dev/lynx-ide-worktrees/feat-auth",
       "claude",
       true,
       AGENT_TRANSCRIPT,
       5 * 60,
     );
     addSession(
-      "/home/dev/agent-ade-worktrees/feat-auth",
+      "/home/dev/lynx-ide-worktrees/feat-auth",
       null,
       true,
       SHELL_TRANSCRIPT,
     );
+    // Codex waits for an answer, so its folder's summary shows the question mark too.
     addSession(
-      "/home/dev/agent-ade-worktrees/fix-pty",
+      "/home/dev/lynx-ide-worktrees/fix-pty",
       "codex",
       true,
       AGENT_TRANSCRIPT,
       3 * 3600,
+      "needsYou",
     );
     addSession(
       "/home/dev/api-server-worktrees/refactor-db",

@@ -155,7 +155,7 @@ impl KiroHookTarget {
 mod tests {
     use super::*;
 
-    const EXE: &str = "/opt/lynx/agent-ade";
+    const EXE: &str = "/opt/lynx/lynx-ide";
 
     fn agent_file(dir: &Path, name: &str, body: &str) -> PathBuf {
         let path = dir.join(name);

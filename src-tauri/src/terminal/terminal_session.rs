@@ -9,9 +9,11 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::agents::activity::AgentStatus;
-use crate::agents::agent_monitor::{AgentInput, AgentSlot, MonitorLink};
+use crate::agents::agent_monitor::{AgentInput, Foreground, ForegroundSource, MonitorLink};
 use crate::agents::harness::HarnessId;
 
+#[cfg(unix)]
+use super::foreground_job::command_line;
 use super::scrollback_buffer::ScrollbackBuffer;
 use super::shell_resolution::Shell;
 use super::terminal_error::TerminalError;
@@ -73,8 +75,10 @@ pub struct TerminalSession {
     shared: Arc<SessionShared>,
     /// Every session has one; it also knows whether the session currently runs an agent.
     monitor: MonitorLink,
-    pty: Mutex<PtyHandles>,
-    #[cfg(unix)]
+    /// Shared with the monitor, which reads the foreground through it.
+    pty: Arc<Mutex<PtyHandles>>,
+    // Only the Unix hangup reads it; on Windows the foreground is found from it at attach time.
+    #[cfg_attr(not(unix), allow(dead_code))]
     shell_pid: Option<u32>,
     #[cfg(not(unix))]
     killer: Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
@@ -149,7 +153,7 @@ impl TerminalSession {
         command.cwd(request.cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
-        command.env("TERM_PROGRAM", "agent-ade");
+        command.env("TERM_PROGRAM", "lynx-ide");
         for (key, value) in request.env {
             command.env(key, value);
         }
@@ -187,13 +191,17 @@ impl TerminalSession {
             reader_done_signal: Condvar::new(),
         });
 
-        let observer = (monitor.input.clone(), Arc::clone(&monitor.slot));
+        let pty = Arc::new(Mutex::new(PtyHandles {
+            writer,
+            master: pair.master,
+        }));
+        attach_foreground(&monitor, &pty, shell_pid);
         spawn_reader(
             &id,
             reader,
             Arc::clone(&shared),
             Arc::clone(&sink),
-            observer,
+            monitor.input.clone(),
         )?;
         spawn_waiter(&id, move || child.wait(), Arc::clone(&shared), sink)?;
 
@@ -205,11 +213,7 @@ impl TerminalSession {
             started_at: unix_seconds_now(),
             shared,
             monitor,
-            pty: Mutex::new(PtyHandles {
-                writer,
-                master: pair.master,
-            }),
-            #[cfg(unix)]
+            pty,
             shell_pid,
             #[cfg(not(unix))]
             killer,
@@ -351,12 +355,78 @@ fn signal_groups(groups: &[i32], signal: nix::sys::signal::Signal) {
     }
 }
 
+/// Lets the monitor read this terminal's foreground, through the handle the session writes with.
+#[cfg(unix)]
+fn attach_foreground(monitor: &MonitorLink, pty: &Arc<Mutex<PtyHandles>>, shell_pid: Option<u32>) {
+    let Some(shell_pid) = shell_pid.and_then(|pid| i32::try_from(pid).ok()) else {
+        return;
+    };
+    let source = SessionForeground {
+        pty: Arc::clone(pty),
+        shell_pid,
+    };
+    let _ = monitor.input.send(AgentInput::Attach(Arc::new(source)));
+}
+
+/// Windows has no foreground group, so the foreground is what the shell has started.
+#[cfg(windows)]
+fn attach_foreground(monitor: &MonitorLink, _pty: &Arc<Mutex<PtyHandles>>, shell_pid: Option<u32>) {
+    let Some(shell_pid) = shell_pid else {
+        return;
+    };
+    let _ = monitor
+        .input
+        .send(AgentInput::Attach(Arc::new(ShellJobs { shell_pid })));
+}
+
+#[cfg(not(any(unix, windows)))]
+fn attach_foreground(
+    _monitor: &MonitorLink,
+    _pty: &Arc<Mutex<PtyHandles>>,
+    _shell_pid: Option<u32>,
+) {
+}
+
+/// The foreground on Windows: the job found under the shell in the process table.
+#[cfg(windows)]
+struct ShellJobs {
+    shell_pid: u32,
+}
+
+#[cfg(windows)]
+impl ForegroundSource for ShellJobs {
+    fn foreground(&self) -> Option<Foreground> {
+        Some(super::foreground_job::shell_job(self.shell_pid))
+    }
+}
+
+/// The foreground of a session's terminal: its shell, or the job the shell started.
+#[cfg(unix)]
+struct SessionForeground {
+    pty: Arc<Mutex<PtyHandles>>,
+    shell_pid: i32,
+}
+
+#[cfg(unix)]
+impl ForegroundSource for SessionForeground {
+    fn foreground(&self) -> Option<Foreground> {
+        let group = SessionShared::lock(&self.pty)
+            .master
+            .process_group_leader()?;
+        if group == self.shell_pid {
+            return Some(Foreground::Shell);
+        }
+        // A job's group is led by the process that started it, so its pid is the group.
+        command_line(group).map(Foreground::Job)
+    }
+}
+
 fn spawn_reader(
     id: &str,
     mut reader: Box<dyn Read + Send>,
     shared: Arc<SessionShared>,
     sink: Arc<dyn TerminalEventSink>,
-    observer: (Sender<AgentInput>, Arc<Mutex<AgentSlot>>),
+    input: Sender<AgentInput>,
 ) -> Result<(), TerminalError> {
     let id = id.to_owned();
     std::thread::Builder::new()
@@ -385,17 +455,9 @@ fn spawn_reader(
                     output.scrollback.push(text.clone());
                     output.seq
                 };
-                // Only an agent's output is worth the monitor's time; a plain shell is not followed.
-                let (input, slot) = &observer;
-                let running_agent = slot
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .harness
-                    .is_some();
-                if running_agent {
-                    // The monitor has ended if the send fails, and then nobody needs the output.
-                    let _ = input.send(AgentInput::Output(text.clone()));
-                }
+                // The monitor also watches a plain shell, for the line that starts a command.
+                // It has ended if the send fails, and then nobody needs the output.
+                let _ = input.send(AgentInput::Output(text.clone()));
                 sink.output(&id, seq, text);
             }
             shared.mark_reader_done();

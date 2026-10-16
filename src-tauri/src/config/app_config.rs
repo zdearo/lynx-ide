@@ -1,14 +1,18 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use specta::Type;
 
+use crate::agents::harness::{HarnessId, harness_name, harness_named};
+
 pub const DEFAULT_FONT_SIZE: u8 = 13;
 pub const MIN_FONT_SIZE: u8 = 8;
 pub const MAX_FONT_SIZE: u8 = 32;
 pub const DEFAULT_SCROLLBACK: u32 = 5_000;
 pub const MAX_SCROLLBACK: u32 = 100_000;
+pub const MAX_LAUNCH_ARGUMENTS_CHARS: usize = 500;
 
 /// What a bell from a program does. Sound is left out: the terminal engine only reports the bell.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -92,12 +96,33 @@ pub struct WorktreesConfig {
     pub directory: Option<String>,
 }
 
+/// How every agent starts from a new terminal: `Manual` keeps its permission prompts, and `Yolo`
+/// adds each agent's own flag that skips them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum LaunchMode {
+    #[default]
+    Manual,
+    Yolo,
+}
+
+/// How agents are started from a new terminal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentsConfig {
+    pub launch_mode: LaunchMode,
+    /// Arguments typed after an agent's command when a terminal starts it. An agent is in this map
+    /// when its arguments are on; an empty text means on, with no arguments of its own.
+    pub launch_arguments: BTreeMap<HarnessId, String>,
+}
+
 /// The effective settings: what `~/.lynx/config.json` says, with defaults for the rest.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub terminal: TerminalConfig,
     pub worktrees: WorktreesConfig,
+    pub agents: AgentsConfig,
 }
 
 /// One thing wrong with the config, addressed by its dotted key (`terminal.fontSize`).
@@ -138,6 +163,9 @@ impl AppConfig {
             if let Some(text) = field.as_deref().map(str::trim) {
                 *field = (!text.is_empty()).then(|| text.to_owned());
             }
+        }
+        for arguments in self.agents.launch_arguments.values_mut() {
+            *arguments = arguments.trim().to_owned();
         }
         self
     }
@@ -184,6 +212,17 @@ impl AppConfig {
                 "must be an absolute path, or start with ~",
             ));
         }
+        for (harness, arguments) in &self.agents.launch_arguments {
+            let key = format!("agents.launchArguments.{}", harness_name(*harness));
+            if arguments.chars().any(char::is_control) {
+                issues.push(ConfigIssue::new(&key, "must be one line of arguments"));
+            } else if arguments.chars().count() > MAX_LAUNCH_ARGUMENTS_CHARS {
+                issues.push(ConfigIssue::new(
+                    &key,
+                    format!("must be at most {MAX_LAUNCH_ARGUMENTS_CHARS} characters"),
+                ));
+            }
+        }
         issues
     }
 
@@ -211,7 +250,15 @@ impl AppConfig {
                 self.terminal.confirm_close = defaults.terminal.confirm_close
             }
             "worktrees.directory" => self.worktrees.directory = defaults.worktrees.directory,
-            _ => {}
+            "agents.launchMode" => self.agents.launch_mode = defaults.agents.launch_mode,
+            key => {
+                if let Some(harness) = key
+                    .strip_prefix("agents.launchArguments.")
+                    .and_then(harness_named)
+                {
+                    self.agents.launch_arguments.remove(&harness);
+                }
+            }
         }
     }
 }
@@ -263,8 +310,62 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
         config.worktrees.directory =
             optional_text(worktrees, "directory", "worktrees", &mut issues);
     }
+    if let Some(agents) = section(root, "agents", &mut issues) {
+        config.agents.launch_mode = launch_mode(agents, &mut issues).unwrap_or_default();
+        config.agents.launch_arguments = launch_arguments(agents, &mut issues);
+    }
 
     finish(config.normalized(), issues, home)
+}
+
+fn launch_mode(agents: &Map<String, Value>, issues: &mut Vec<ConfigIssue>) -> Option<LaunchMode> {
+    match optional_text(agents, "launchMode", "agents", issues)?.as_str() {
+        "manual" => Some(LaunchMode::Manual),
+        "yolo" => Some(LaunchMode::Yolo),
+        _ => {
+            issues.push(ConfigIssue::new(
+                "agents.launchMode",
+                "must be manual or yolo",
+            ));
+            None
+        }
+    }
+}
+
+/// Reads each agent's arguments. Names Lynx does not know are left in the file and not read here.
+fn launch_arguments(
+    agents: &Map<String, Value>,
+    issues: &mut Vec<ConfigIssue>,
+) -> BTreeMap<HarnessId, String> {
+    let mut arguments = BTreeMap::new();
+    let Some(value) = agents.get("launchArguments") else {
+        return arguments;
+    };
+    let Value::Object(by_agent) = value else {
+        if !value.is_null() {
+            issues.push(ConfigIssue::new(
+                "agents.launchArguments",
+                "must be an object, with an agent name for each entry",
+            ));
+        }
+        return arguments;
+    };
+    for (name, value) in by_agent {
+        let Some(harness) = harness_named(name) else {
+            continue;
+        };
+        match value {
+            Value::String(text) => {
+                arguments.insert(harness, text.clone());
+            }
+            Value::Null => {}
+            _ => issues.push(ConfigIssue::new(
+                &format!("agents.launchArguments.{name}"),
+                "must be text",
+            )),
+        }
+    }
+    arguments
 }
 
 /// Resets invalid fields one at a time until the config validates.
@@ -615,5 +716,80 @@ mod tests {
             ["terminal.colorScheme", "terminal.textColorScheme"]
         );
         assert_eq!(config.terminal, TerminalConfig::default());
+    }
+
+    #[test]
+    fn reads_the_arguments_of_each_agent_by_its_name() {
+        let (config, issues) = parse(json!({
+            "agents": { "launchArguments": { "claude": "  --model opus  " } }
+        }));
+        assert!(issues.is_empty());
+        assert_eq!(
+            config.agents.launch_arguments,
+            BTreeMap::from([(HarnessId::Claude, "--model opus".to_owned())])
+        );
+    }
+
+    #[test]
+    fn an_empty_argument_text_means_on_with_no_arguments_of_its_own() {
+        let (config, issues) = parse(json!({
+            "agents": { "launchArguments": { "codex": "   " } }
+        }));
+        assert!(issues.is_empty());
+        assert_eq!(
+            config.agents.launch_arguments,
+            BTreeMap::from([(HarnessId::Codex, String::new())])
+        );
+    }
+
+    #[test]
+    fn reads_the_launch_mode_and_manual_is_the_default() {
+        assert_eq!(parse(json!({})).0.agents.launch_mode, LaunchMode::Manual);
+        let (config, issues) = parse(json!({ "agents": { "launchMode": "yolo" } }));
+        assert!(issues.is_empty());
+        assert_eq!(config.agents.launch_mode, LaunchMode::Yolo);
+    }
+
+    #[test]
+    fn an_unknown_launch_mode_is_reported_and_manual_is_used() {
+        let (config, issues) = parse(json!({ "agents": { "launchMode": "fast" } }));
+        assert_eq!(keys(&issues), ["agents.launchMode"]);
+        assert_eq!(config.agents.launch_mode, LaunchMode::Manual);
+    }
+
+    #[test]
+    fn unknown_agent_names_are_ignored_without_complaint() {
+        let (config, issues) = parse(json!({
+            "agents": { "launchArguments": { "mystery": "--x" } }
+        }));
+        assert!(issues.is_empty());
+        assert!(config.agents.launch_arguments.is_empty());
+    }
+
+    #[test]
+    fn arguments_must_be_text_on_one_line_and_not_too_long() {
+        let (config, issues) = parse(json!({
+            "agents": { "launchArguments": { "claude": 7, "codex": "--a\n--b" } }
+        }));
+        assert_eq!(
+            keys(&issues),
+            [
+                "agents.launchArguments.claude",
+                "agents.launchArguments.codex"
+            ]
+        );
+        assert!(config.agents.launch_arguments.is_empty());
+
+        let long = "x".repeat(MAX_LAUNCH_ARGUMENTS_CHARS + 1);
+        let (_, issues) = parse(json!({
+            "agents": { "launchArguments": { "claude": long } }
+        }));
+        assert_eq!(keys(&issues), ["agents.launchArguments.claude"]);
+    }
+
+    #[test]
+    fn a_list_of_arguments_that_is_not_an_object_is_reported() {
+        let (_, issues) = parse(json!({ "agents": { "launchArguments": ["--x"] } }));
+        assert_eq!(keys(&issues), ["agents.launchArguments"]);
     }
 }

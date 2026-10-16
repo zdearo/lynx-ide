@@ -9,7 +9,7 @@ import {
 } from "@/bindings";
 import { IpcRequestError, unwrap } from "@/lib/ipc-result";
 
-const SELECTED_WORKTREE_KEY = "agent-ade.selectedWorktree";
+const SELECTED_WORKTREE_KEY = "lynx-ide.selectedWorktree";
 
 let nextPendingId = 0;
 

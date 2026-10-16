@@ -12,7 +12,7 @@ import { useDialogStore } from "@/dialog-store";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { useVisiblePresets } from "@/agents/agent-catalog-store";
 import { PresetIcon } from "@/terminal/PresetIcon";
-import { startTerminal } from "@/terminal/terminal-actions";
+import { startPreset } from "@/terminal/terminal-actions";
 import { copy } from "@/ui-copy";
 
 /** What to start in a worktree: a shell, a known agent, or any command. */
@@ -33,7 +33,7 @@ export function NewTerminalMenu({
         {presets.map((preset) => (
           <DropdownMenuItem
             key={preset.id}
-            onSelect={() => void startTerminal(worktreePath, preset.command)}
+            onSelect={() => void startPreset(worktreePath, preset)}
           >
             <PresetIcon harness={preset.harness} />
             {preset.label}

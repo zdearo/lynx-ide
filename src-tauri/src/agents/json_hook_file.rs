@@ -348,7 +348,7 @@ mod tests {
     use super::*;
 
     const MARKER: &str = " --agent-hook demo";
-    const COMMAND: &str = "'/opt/lynx/agent-ade' --agent-hook demo";
+    const COMMAND: &str = "'/opt/lynx/lynx-ide' --agent-hook demo";
 
     fn claude_handler(command: &str) -> Value {
         json!({ "type": "command", "command": command })

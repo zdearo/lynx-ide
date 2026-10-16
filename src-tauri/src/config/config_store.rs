@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -8,9 +9,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use specta::Type;
 
+use crate::agents::harness::{HarnessId, harness_name, supported};
+
 use super::app_config::{
-    AppConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, TerminalConfig, expand_home,
-    parse_config,
+    AppConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, LaunchMode, TerminalConfig,
+    expand_home, parse_config,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -331,6 +334,45 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
         "directory",
         config.worktrees.directory.as_ref().map(|v| json!(v)),
     );
+    put(
+        root,
+        "agents",
+        "launchMode",
+        (config.agents.launch_mode != LaunchMode::Manual).then(|| json!("yolo")),
+    );
+    put_launch_arguments(root, &config.agents.launch_arguments);
+}
+
+/// Writes each agent's arguments under `agents.launchArguments`. Only the names Lynx knows are
+/// rewritten, so an entry for an agent this build does not know stays as the user wrote it.
+fn put_launch_arguments(root: &mut Map<String, Value>, arguments: &BTreeMap<HarnessId, String>) {
+    let agents = root.entry("agents").or_insert_with(|| json!({}));
+    if !agents.is_object() {
+        // Already reported as invalid; the section is ours to rewrite.
+        *agents = json!({});
+    }
+    let Some(agents) = agents.as_object_mut() else {
+        return;
+    };
+    let list = agents.entry("launchArguments").or_insert_with(|| json!({}));
+    if !list.is_object() {
+        *list = json!({});
+    }
+    let Some(list) = list.as_object_mut() else {
+        return;
+    };
+    for harness in supported() {
+        list.shift_remove(harness_name(harness));
+    }
+    for (harness, text) in arguments {
+        list.insert(harness_name(*harness).to_owned(), json!(text));
+    }
+    if list.is_empty() {
+        agents.shift_remove("launchArguments");
+    }
+    if agents.is_empty() {
+        root.shift_remove("agents");
+    }
 }
 
 fn put(root: &mut Map<String, Value>, section: &str, key: &str, value: Option<Value>) {
@@ -658,5 +700,94 @@ mod tests {
         store.update(with_font_size(16)).expect("set");
         store.ensure_file().expect("again");
         assert_eq!(file_json(&store), json!({ "terminal": { "fontSize": 16 } }));
+    }
+
+    #[test]
+    fn launch_arguments_are_written_per_agent_and_only_when_set() {
+        let (store, _dir) = setup();
+        let mut config = AppConfig::default();
+        config
+            .agents
+            .launch_arguments
+            .insert(HarnessId::Claude, "--model opus".to_owned());
+
+        store.update(config).expect("update");
+
+        assert_eq!(
+            file_json(&store),
+            json!({ "agents": { "launchArguments": { "claude": "--model opus" } } })
+        );
+    }
+
+    #[test]
+    fn launch_arguments_keep_the_entries_of_agents_this_build_does_not_know() {
+        let (store, _dir) = setup();
+        fs::create_dir_all(store.path().parent().expect("parent")).expect("mkdir");
+        fs::write(
+            store.path(),
+            r#"{ "agents": { "launchArguments": { "mystery": "--x", "codex": "--old" } } }"#,
+        )
+        .expect("write");
+        store.reload_if_changed();
+        let mut config = AppConfig::default();
+        config
+            .agents
+            .launch_arguments
+            .insert(HarnessId::Claude, "--model opus".to_owned());
+
+        store.update(config).expect("update");
+
+        assert_eq!(
+            file_json(&store),
+            json!({ "agents": { "launchArguments": { "mystery": "--x", "claude": "--model opus" } } })
+        );
+    }
+
+    #[test]
+    fn clearing_the_arguments_removes_the_section_when_nothing_else_is_in_it() {
+        let (store, _dir) = setup();
+        let mut config = AppConfig::default();
+        config
+            .agents
+            .launch_arguments
+            .insert(HarnessId::Codex, "--full-auto".to_owned());
+        store.update(config).expect("set");
+
+        store.update(AppConfig::default()).expect("clear");
+
+        assert_eq!(file_json(&store), json!({}));
+    }
+
+    #[test]
+    fn the_launch_mode_is_written_only_when_it_is_yolo() {
+        let (store, _dir) = setup();
+        let mut config = AppConfig::default();
+        config.agents.launch_mode = LaunchMode::Yolo;
+
+        store.update(config).expect("update");
+        assert_eq!(
+            file_json(&store),
+            json!({ "agents": { "launchMode": "yolo" } })
+        );
+
+        store.update(AppConfig::default()).expect("back to manual");
+        assert_eq!(file_json(&store), json!({}));
+    }
+
+    #[test]
+    fn an_argument_entry_with_no_text_is_written_as_on() {
+        let (store, _dir) = setup();
+        let mut config = AppConfig::default();
+        config
+            .agents
+            .launch_arguments
+            .insert(HarnessId::Codex, String::new());
+
+        store.update(config).expect("update");
+
+        assert_eq!(
+            file_json(&store),
+            json!({ "agents": { "launchArguments": { "codex": "" } } })
+        );
     }
 }

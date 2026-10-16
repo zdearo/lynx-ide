@@ -20,6 +20,7 @@ function snapshot(fontSize: number): ConfigSnapshot {
     config: {
       terminal: { ...DEFAULT_TERMINAL_CONFIG, fontSize },
       worktrees: { directory: null },
+      agents: { launchMode: "manual", launchArguments: {} },
     },
     issues: [],
     path: "/home/dev/.lynx/config.json",

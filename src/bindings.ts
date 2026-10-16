@@ -76,10 +76,21 @@ export type AgentStatusChanged = {
 	status: AgentStatus | null,
 };
 
+/**  How agents are started from a new terminal. */
+export type AgentsConfig = {
+	launchMode: LaunchMode,
+	/**
+	 *  Arguments typed after an agent's command when a terminal starts it. An agent is in this map
+	 *  when its arguments are on; an empty text means on, with no arguments of its own.
+	 */
+	launchArguments: Partial<{ [key in HarnessId]: string }>,
+};
+
 /**  The effective settings: what `~/.lynx/config.json` says, with defaults for the rest. */
 export type AppConfig = {
 	terminal: TerminalConfig,
 	worktrees: WorktreesConfig,
+	agents: AgentsConfig,
 };
 
 export type AppInfo = {
@@ -162,6 +173,12 @@ export type IpcError = {
 };
 
 export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+
+/**
+ *  How every agent starts from a new terminal: `Manual` keeps its permission prompts, and `Yolo`
+ *  adds each agent's own flag that skips them.
+ */
+export type LaunchMode = "manual" | "yolo";
 
 export type RemoveWorktreeResult = {
 	branch: string | null,

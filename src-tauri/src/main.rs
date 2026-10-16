@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    agent_ade_lib::run()
+    lynx_ide_lib::run()
 }

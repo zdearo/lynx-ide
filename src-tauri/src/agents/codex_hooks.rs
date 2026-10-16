@@ -530,7 +530,10 @@ mod tests {
 
     use super::*;
 
-    const COMMAND: &str = "'/opt/lynx/agent-ade' --agent-hook codex";
+    const COMMAND: &str = "'/opt/lynx/lynx-ide' --agent-hook codex";
+    /// The command the vectors below were checked against, with Codex 0.160.1. The hash depends on
+    /// the command, so it keeps the name the app had then; the vectors are not recomputed.
+    const VERIFIED_COMMAND: &str = "'/opt/lynx/agent-ade' --agent-hook codex";
 
     fn event(name: &str) -> &'static HookedEvent {
         HOOKED_EVENTS
@@ -548,11 +551,11 @@ mod tests {
     #[test]
     fn trusted_hashes_match_the_definition_codex_hashes() {
         assert_eq!(
-            trusted_hash(event("Stop"), &handler()),
+            trusted_hash(event("Stop"), &command_handler(VERIFIED_COMMAND)),
             "sha256:9303631a9bb6b4928371fd9c5e04b7f300d54a60eeff3fdb9309ad2ec2ec756d"
         );
         assert_eq!(
-            trusted_hash(event("Interrupt"), &handler()),
+            trusted_hash(event("Interrupt"), &command_handler(VERIFIED_COMMAND)),
             "sha256:dffbbb154cedc9a4b67bffa2429e84ee43ef1498b3efaad93617b0fc36ce11ab"
         );
     }
@@ -617,7 +620,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
-            Some(Path::new("/opt/lynx/agent-ade")),
+            Some(Path::new("/opt/lynx/lynx-ide")),
         );
 
         let status = target.install(Some([0, 160, 1])).expect("install");
@@ -650,7 +653,7 @@ mod tests {
         .expect("write config");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
-            Some(Path::new("/opt/lynx/agent-ade")),
+            Some(Path::new("/opt/lynx/lynx-ide")),
         );
 
         target.install(Some([0, 160, 1])).expect("install");
@@ -690,7 +693,7 @@ mod tests {
         .expect("write config");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
-            Some(Path::new("/opt/lynx/agent-ade")),
+            Some(Path::new("/opt/lynx/lynx-ide")),
         );
 
         target.remove(Some([0, 160, 1])).expect("remove");
@@ -707,7 +710,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
-            Some(Path::new("/opt/lynx/agent-ade")),
+            Some(Path::new("/opt/lynx/lynx-ide")),
         );
 
         let status = target.install(Some([0, 128, 0])).expect("install");
@@ -722,7 +725,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
-            Some(Path::new("/opt/lynx/agent-ade")),
+            Some(Path::new("/opt/lynx/lynx-ide")),
         );
         target.install(Some([0, 160, 1])).expect("install");
         let config = fs::read_to_string(dir.path().join("config.toml")).expect("config");
@@ -744,7 +747,7 @@ mod tests {
         fs::write(dir.path().join("hooks.json"), "{ nope").expect("write");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
-            Some(Path::new("/opt/lynx/agent-ade")),
+            Some(Path::new("/opt/lynx/lynx-ide")),
         );
 
         assert_eq!(target.status(None).state, HookInstallState::Error);

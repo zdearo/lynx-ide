@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useDialogStore } from "@/dialog-store";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
-import { runningAgentsByWorktree } from "@/workspace/collapsed-summary";
+import { agentsByWorktree } from "@/workspace/collapsed-summary";
 import { buildProjectTree } from "@/workspace/project-tree";
 import { ProjectTree } from "@/workspace/ProjectTree";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
@@ -37,10 +37,7 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
   const askFolderDialog = useDialogStore((state) => state.askFolderDialog);
   const askAddProject = useDialogStore((state) => state.askAddProject);
   const sessions = useTerminalStore((state) => state.sessions);
-  const runningAgents = useMemo(
-    () => runningAgentsByWorktree(sessions),
-    [sessions],
-  );
+  const agents = useMemo(() => agentsByWorktree(sessions), [sessions]);
 
   const empty = repos.length === 0 && folders.length === 0;
 
@@ -84,7 +81,7 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
                 worktrees,
                 pending,
                 collapsedRepoIds,
-                runningAgents,
+                agents,
                 selectedPath,
                 onSelectWorktree: (path) => {
                   selectWorktree(path);

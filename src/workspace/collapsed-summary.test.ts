@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Folder, Repo, TerminalInfo, WorktreeInfo } from "@/bindings";
 import { session, worktree } from "@/test-support";
 import {
-  runningAgentsByWorktree,
+  agentsByWorktree,
   summarizeChildren,
   summarizeRepo,
 } from "@/workspace/collapsed-summary";
@@ -22,8 +22,8 @@ const folder = (id: string, parentId: string | null = null): Folder => ({
   collapsed: false,
 });
 
-describe("runningAgentsByWorktree", () => {
-  it("counts running agent sessions per worktree and ignores shells and exited agents", () => {
+describe("agentsByWorktree", () => {
+  it("counts running agents per worktree and ignores shells and exited agents", () => {
     const sessions: TerminalInfo[] = [
       session("a", "/w/one", { command: "claude", harness: "claude" }),
       session("b", "/w/one", { command: "codex", harness: "codex" }),
@@ -36,9 +36,35 @@ describe("runningAgentsByWorktree", () => {
       }),
       session("e", "/w/two", { command: "claude", harness: "claude" }),
     ];
-    const counts = runningAgentsByWorktree(sessions);
-    expect(counts.get("/w/one")).toBe(2);
-    expect(counts.get("/w/two")).toBe(1);
+    const counts = agentsByWorktree(sessions);
+    expect(counts.get("/w/one")).toEqual({ running: 2, needingYou: 0 });
+    expect(counts.get("/w/two")).toEqual({ running: 1, needingYou: 0 });
+  });
+
+  it("counts the running agents that are waiting for the user", () => {
+    const sessions: TerminalInfo[] = [
+      session("a", "/w/one", {
+        command: "claude",
+        harness: "claude",
+        agentStatus: "needsYou",
+      }),
+      session("b", "/w/one", {
+        command: "codex",
+        harness: "codex",
+        agentStatus: "working",
+      }),
+      session("c", "/w/one", {
+        command: "claude",
+        harness: "claude",
+        agentStatus: "needsYou",
+        running: false,
+        exitCode: 0,
+      }),
+    ];
+    expect(agentsByWorktree(sessions).get("/w/one")).toEqual({
+      running: 2,
+      needingYou: 1,
+    });
   });
 });
 
@@ -48,11 +74,12 @@ describe("summarizeRepo", () => {
       worktree("/w/main"),
       worktree("/w/task"),
     ];
-    const running = new Map([["/w/task", 2]]);
-    expect(summarizeRepo(worktrees, running)).toEqual({
+    const agents = new Map([["/w/task", { running: 2, needingYou: 1 }]]);
+    expect(summarizeRepo(worktrees, agents)).toEqual({
       projects: 0,
       worktrees: 2,
       runningAgents: 2,
+      needingYou: 1,
     });
   });
 });
@@ -66,14 +93,15 @@ describe("summarizeChildren", () => {
       api: [worktree("/w/api"), worktree("/w/api-task")],
       site: [worktree("/w/site")],
     };
-    const running = new Map([["/w/api-task", 1]]);
+    const agents = new Map([["/w/api-task", { running: 1, needingYou: 0 }]]);
 
     const top = tree[0];
     if (top.kind !== "folder") throw new Error("expected a folder");
-    expect(summarizeChildren(top.children, worktreesByRepo, running)).toEqual({
+    expect(summarizeChildren(top.children, worktreesByRepo, agents)).toEqual({
       projects: 2,
       worktrees: 3,
       runningAgents: 1,
+      needingYou: 0,
     });
   });
 
@@ -82,6 +110,7 @@ describe("summarizeChildren", () => {
       projects: 0,
       worktrees: 0,
       runningAgents: 0,
+      needingYou: 0,
     });
   });
 });

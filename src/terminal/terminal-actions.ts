@@ -4,8 +4,25 @@ import { useConfigStore } from "@/config/config-store";
 import { useDialogStore } from "@/dialog-store";
 import { copy } from "@/ui-copy";
 import { errorMessage } from "@/lib/error-message";
+import { launchCommand, type TerminalPreset } from "@/terminal/agent-presets";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
+
+/** Starts a preset in a worktree, with the launch arguments Settings sets for its agent. */
+export function startPreset(
+  worktreePath: string,
+  preset: TerminalPreset,
+): Promise<void> {
+  const agents = useConfigStore.getState().snapshot?.config.agents;
+  return startTerminal(
+    worktreePath,
+    launchCommand(
+      preset,
+      agents?.launchArguments ?? {},
+      agents?.launchMode ?? "manual",
+    ),
+  );
+}
 
 export async function startTerminal(
   worktreePath: string,

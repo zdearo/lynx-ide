@@ -193,7 +193,7 @@ mod tests {
     use super::*;
     use crate::agents::hook_install::HookInstallState;
 
-    const EXE: &str = "/opt/lynx/agent-ade";
+    const EXE: &str = "/opt/lynx/lynx-ide";
 
     /// Every layout writes its entries, reports them, and takes them back out.
     #[test]

@@ -263,6 +263,10 @@ export const copy = {
     namePlaceholder: "feature/login",
     baseLabel: "Start from",
     loadingRefs: "Loading branches…",
+    searchBranches: "Search branches…",
+    noBranches: "No branches match.",
+    moreBranches: (shown: number, total: number) =>
+      `Showing ${shown} of ${total}. Type to narrow the list.`,
     create: "Create worktree",
     cancel: "Cancel",
   },

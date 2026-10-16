@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { commands, type RepoRefs } from "@/bindings";
 import { Button } from "@/components/ui/button";
@@ -12,15 +12,10 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { unwrap } from "@/lib/ipc-result";
 import { copy } from "@/ui-copy";
+import { BaseRefPicker } from "@/workspace/BaseRefPicker";
+import { baseRefOptions } from "@/workspace/base-ref-search";
 import {
   useWorkspaceStore,
   type WorktreeDraft,
@@ -43,15 +38,6 @@ export function NewWorktreeDialog() {
   );
 }
 
-/** The base picker lists the default first, then every other branch. */
-function baseOptions(refs: RepoRefs | null): string[] {
-  if (!refs) return [];
-  return [
-    refs.defaultBase,
-    ...refs.refs.filter((ref) => ref !== refs.defaultBase),
-  ];
-}
-
 function NewWorktreeForm({ draft }: { draft: WorktreeDraft }) {
   const createWorktree = useWorkspaceStore((state) => state.createWorktree);
   const closeNewWorktree = useWorkspaceStore((state) => state.closeNewWorktree);
@@ -60,6 +46,7 @@ function NewWorktreeForm({ draft }: { draft: WorktreeDraft }) {
   const [baseRef, setBaseRef] = useState<string | null>(draft.baseRef);
   const [error, setError] = useState<string | null>(draft.error);
   const [refs, setRefs] = useState<RepoRefs | null>(null);
+  const options = useMemo(() => (refs ? baseRefOptions(refs) : null), [refs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,22 +112,12 @@ function NewWorktreeForm({ draft }: { draft: WorktreeDraft }) {
 
         <div className="grid gap-1.5">
           <Label htmlFor="worktree-base">{copy.newWorktree.baseLabel}</Label>
-          <Select
+          <BaseRefPicker
+            id="worktree-base"
             value={baseRef ?? refs?.defaultBase ?? ""}
-            onValueChange={setBaseRef}
-            disabled={refs === null}
-          >
-            <SelectTrigger id="worktree-base" className="w-full">
-              <SelectValue placeholder={copy.newWorktree.loadingRefs} />
-            </SelectTrigger>
-            <SelectContent>
-              {baseOptions(refs).map((ref) => (
-                <SelectItem key={ref} value={ref}>
-                  {ref}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={options}
+            onChange={setBaseRef}
+          />
         </div>
 
         <DialogFooter>

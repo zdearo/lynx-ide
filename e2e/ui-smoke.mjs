@@ -1965,6 +1965,68 @@ await session("?mock=full", 800, 700, async (p) => {
   );
 });
 
+// Thousands of branches must not freeze the New worktree dialog: the base picker
+// renders a bounded list, and the search still reaches the rest.
+await session("?mock=full", 1200, 760, async (p) => {
+  await p.evaluate(() => {
+    const original = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = (cmd, args, options) => {
+      if (cmd !== "repo_refs") return original(cmd, args, options);
+      const refs = ["main"];
+      for (let i = 0; i < 4000; i++) {
+        refs.push(`feature/topic-${String(i).padStart(4, "0")}`);
+      }
+      return Promise.resolve({ defaultBase: "origin/main", refs: refs.sort() });
+    };
+  });
+  await p.getByRole("button", { name: "New worktree" }).first().click();
+  const base = p.locator("#worktree-base");
+  await base.and(p.locator(":not([disabled])")).waitFor();
+  await base.click();
+  await p.getByRole("listbox").waitFor();
+  const rows = await p.getByRole("option").count();
+  check(
+    "a repo with 4000 branches shows a bounded list",
+    rows > 0 && rows <= 100,
+    String(rows),
+  );
+  check(
+    "the picker says how many branches are left out",
+    (await p.getByText("Showing 100 of 4002").count()) === 1,
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the base picker open",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await p.getByPlaceholder("Search branches…").fill("topic-0042");
+  await p
+    .getByRole("option", { name: "feature/topic-0042", exact: true })
+    .waitFor();
+  check(
+    "searching narrows the list to the match",
+    (await p.getByRole("option").count()) === 1,
+  );
+  await p
+    .getByRole("option", { name: "feature/topic-0042", exact: true })
+    .click();
+  await p.getByRole("listbox").waitFor({ state: "detached" });
+  check(
+    "picking a searched branch makes it the base",
+    (await base.textContent()).includes("feature/topic-0042"),
+    await base.textContent(),
+  );
+});
+
 console.log(results.join("\n"));
 await browser.close();
 vite.kill();

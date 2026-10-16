@@ -1,4 +1,4 @@
-import { TriangleAlert } from "lucide-react";
+import { TriangleWarningGlyph18 } from "@/components/icons/TriangleWarningGlyph18";
 
 import { useConfigStore } from "@/config/config-store";
 import { copy } from "@/ui-copy";
@@ -15,7 +15,10 @@ export function ConfigFileNotice() {
       role="alert"
       className="mb-5 flex gap-2 rounded-lg bg-destructive/10 p-3 text-xs text-destructive"
     >
-      <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+      <TriangleWarningGlyph18
+        className="mt-0.5 size-3.5 shrink-0"
+        aria-hidden
+      />
       <div className="grid gap-1">
         <p className="font-medium">
           {snapshot.fileBroken

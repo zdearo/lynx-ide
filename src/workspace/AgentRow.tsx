@@ -1,4 +1,8 @@
-import { CircleCheck, CircleDot, CircleX, Sparkles, X } from "lucide-react";
+import { CircleCheckGlyph18 } from "@/components/icons/CircleCheckGlyph18";
+import { CircleXmarkGlyph18 } from "@/components/icons/CircleXmarkGlyph18";
+import { RadioCheckedGlyph18 } from "@/components/icons/RadioCheckedGlyph18";
+import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
+import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
@@ -16,17 +20,24 @@ export interface AgentItem {
 /** Running is the only live state we can tell apart today; working/idle/needs-you arrive with state detection. */
 export function AgentStatusIcon({ agent }: { agent: AgentItem }) {
   if (agent.running) {
-    return <CircleDot aria-hidden className="size-3 shrink-0 text-live" />;
+    return (
+      <RadioCheckedGlyph18 aria-hidden className="size-3 shrink-0 text-live" />
+    );
   }
   if (agent.exitCode === 0) {
     return (
-      <CircleCheck
+      <CircleCheckGlyph18
         aria-hidden
         className="size-3 shrink-0 text-muted-foreground"
       />
     );
   }
-  return <CircleX aria-hidden className="size-3 shrink-0 text-destructive" />;
+  return (
+    <CircleXmarkGlyph18
+      aria-hidden
+      className="size-3 shrink-0 text-destructive"
+    />
+  );
 }
 
 interface AgentRowProps {
@@ -69,7 +80,7 @@ export function AgentRow({
         )}
       >
         <AgentStatusIcon agent={agent} />
-        <Sparkles aria-hidden className="size-3 shrink-0 text-agent" />
+        <SparkleGlyph18 aria-hidden className="size-3 shrink-0 text-agent" />
         <span className="min-w-0 flex-1 truncate">{agent.title}</span>
         <span
           aria-hidden
@@ -90,7 +101,7 @@ export function AgentRow({
           className="size-5"
           onClick={onClose}
         >
-          <X />
+          <XmarkGlyph18 />
         </TooltipIconButton>
       </div>
     </li>

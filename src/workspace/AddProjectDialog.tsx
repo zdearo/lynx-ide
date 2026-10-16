@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { open as pickFolder } from "@tauri-apps/plugin-dialog";
-import { FolderPlus, FolderSearch, type LucideIcon } from "lucide-react";
+import { FolderPlusGlyph18 } from "@/components/icons/FolderPlusGlyph18";
+import { FolderSearchGlyph18 } from "@/components/icons/FolderSearchGlyph18";
+import type { IconComponent } from "@/components/icons/icon-component";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -68,13 +70,13 @@ function ProjectChooser({
       </DialogHeader>
       <div className="grid gap-2">
         <ProjectOption
-          icon={FolderSearch}
+          icon={FolderSearchGlyph18}
           title={copy.addProject.browse}
           description={copy.addProject.browseDescription}
           onSelect={onBrowse}
         />
         <ProjectOption
-          icon={FolderPlus}
+          icon={FolderPlusGlyph18}
           title={copy.addProject.create}
           description={copy.addProject.createDescription}
           onSelect={onCreate}
@@ -90,7 +92,7 @@ function ProjectOption({
   description,
   onSelect,
 }: {
-  icon: LucideIcon;
+  icon: IconComponent;
   title: string;
   description: string;
   onSelect: () => void;

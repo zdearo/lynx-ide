@@ -1,11 +1,9 @@
 import type { ReactNode } from "react";
-import {
-  ChevronRight,
-  Folder as FolderIcon,
-  FolderOpen as FolderOpenIcon,
-  FolderPlus,
-  MoreHorizontal,
-} from "lucide-react";
+import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
+import { FolderGlyph18 } from "@/components/icons/FolderGlyph18";
+import { FolderOpenGlyph18 } from "@/components/icons/FolderOpenGlyph18";
+import { FolderPlusGlyph18 } from "@/components/icons/FolderPlusGlyph18";
 import { toast } from "sonner";
 
 import type { Folder } from "@/bindings";
@@ -78,12 +76,12 @@ export function FolderSection({
         >
           {!root &&
             (expanded ? (
-              <FolderOpenIcon
+              <FolderOpenGlyph18
                 aria-hidden
                 className="size-3.5 shrink-0 text-muted-foreground"
               />
             ) : (
-              <FolderIcon
+              <FolderGlyph18
                 aria-hidden
                 className="size-3.5 shrink-0 text-muted-foreground"
               />
@@ -112,7 +110,7 @@ export function FolderSection({
               askFolderDialog({ mode: "create", parentId: folder.id })
             }
           >
-            <FolderPlus />
+            <FolderPlusGlyph18 />
           </TooltipIconButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -120,7 +118,7 @@ export function FolderSection({
                 label={copy.folders.actions(folder.name)}
                 className="pointer-events-auto"
               >
-                <MoreHorizontal />
+                <DotsGlyph18 />
               </TooltipIconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-44">
@@ -147,7 +145,8 @@ export function FolderSection({
             aria-hidden
             className="pointer-events-none grid size-6 place-items-center text-muted-foreground"
           >
-            <ChevronRight
+            <ChevronRightGlyph18
+              data-icon="chevron-right"
               className={cn(
                 "size-3.5 transition-transform",
                 expanded && "rotate-90",

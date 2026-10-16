@@ -1,5 +1,8 @@
 import { useMemo } from "react";
-import { ChevronRight, GitBranch, MoreHorizontal, Plus } from "lucide-react";
+import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { CodeBranchGlyph18 } from "@/components/icons/CodeBranchGlyph18";
+import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
+import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
 
 import type { Repo, WorktreeInfo } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
@@ -119,7 +122,7 @@ export function RepoSection({
           onClick={() => toggleRepo(repo.id)}
           className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-ui font-medium text-sidebar-foreground hover:bg-sidebar-accent/50"
         >
-          <GitBranch
+          <CodeBranchGlyph18
             aria-hidden
             className="size-3.5 shrink-0 text-muted-foreground"
           />
@@ -141,7 +144,7 @@ export function RepoSection({
             shortcut={shortcutLabel("newWorktree")}
             onClick={() => openNewWorktree(repo.id)}
           >
-            <Plus />
+            <PlusGlyph18 />
           </TooltipIconButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -149,7 +152,7 @@ export function RepoSection({
                 label={copy.repo.actions(repo.name)}
                 className="pointer-events-auto"
               >
-                <MoreHorizontal />
+                <DotsGlyph18 />
               </TooltipIconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-44">
@@ -173,7 +176,8 @@ export function RepoSection({
             aria-hidden
             className="pointer-events-none grid size-6 place-items-center text-muted-foreground"
           >
-            <ChevronRight
+            <ChevronRightGlyph18
+              data-icon="chevron-right"
               className={cn(
                 "size-3.5 transition-transform",
                 !collapsed && "rotate-90",

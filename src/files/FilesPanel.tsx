@@ -1,5 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
-import { ChevronsDownUp, RefreshCw } from "lucide-react";
+import { CaretMinimizeGlyph18 } from "@/components/icons/CaretMinimizeGlyph18";
+import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
@@ -141,7 +142,7 @@ export function FilesPanel() {
             label={copy.files.refresh}
             onClick={() => void store.refresh(path)}
           >
-            <RefreshCw
+            <RefreshGlyph18
               className={cn(root?.status === "loading" && "animate-spin")}
             />
           </TooltipIconButton>
@@ -149,7 +150,7 @@ export function FilesPanel() {
             label={copy.files.collapseAll}
             onClick={() => store.collapseAll(path)}
           >
-            <ChevronsDownUp />
+            <CaretMinimizeGlyph18 />
           </TooltipIconButton>
         </div>
       </div>

@@ -1,9 +1,7 @@
-import {
-  Lock,
-  MoreHorizontal,
-  SquareTerminal,
-  TriangleAlert,
-} from "lucide-react";
+import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
+import { LockGlyph18 } from "@/components/icons/LockGlyph18";
+import { SquareTerminalGlyph18 } from "@/components/icons/SquareTerminalGlyph18";
+import { TriangleWarningGlyph18 } from "@/components/icons/TriangleWarningGlyph18";
 
 import type { WorktreeInfo } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
@@ -74,13 +72,16 @@ export function WorktreeRow({
             : copy.worktree.noTerminals}
         </span>
         {worktree.prunable && (
-          <TriangleAlert
+          <TriangleWarningGlyph18
             className="size-3 shrink-0 text-destructive"
             aria-label={copy.worktree.missingDirectory}
           />
         )}
         {worktree.locked && (
-          <Lock className="size-3 shrink-0" aria-label={copy.worktree.locked} />
+          <LockGlyph18
+            className="size-3 shrink-0"
+            aria-label={copy.worktree.locked}
+          />
         )}
         {worktree.isMain && (
           <span className="shrink-0 text-meta text-muted-foreground group-focus-within/row:invisible group-hover/row:invisible">
@@ -100,14 +101,14 @@ export function WorktreeRow({
             label={copy.worktree.newTerminal}
             shortcut={selected ? shortcutLabel("newTerminal") : undefined}
           >
-            <SquareTerminal />
+            <SquareTerminalGlyph18 />
           </TooltipIconButton>
         </NewTerminalMenu>
         {!worktree.isMain && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <TooltipIconButton label={copy.worktree.actions(label.text)}>
-                <MoreHorizontal />
+                <DotsGlyph18 />
               </TooltipIconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-44">

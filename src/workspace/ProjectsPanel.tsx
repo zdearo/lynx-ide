@@ -1,5 +1,6 @@
 import { useMemo, type KeyboardEvent } from "react";
-import { FolderGit2, FolderPlus } from "lucide-react";
+import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
+import { FolderPlusGlyph18 } from "@/components/icons/FolderPlusGlyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -54,13 +55,13 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
             label={copy.folders.newFolder}
             onClick={() => askFolderDialog({ mode: "create", parentId: null })}
           >
-            <FolderPlus />
+            <FolderPlusGlyph18 />
           </TooltipIconButton>
           <TooltipIconButton
             label={copy.sidebar.addProject}
             onClick={() => askAddProject(true)}
           >
-            <FolderGit2 />
+            <Folder2Glyph18 />
           </TooltipIconButton>
         </div>
       </div>

@@ -1560,10 +1560,10 @@ await session("?mock=full", 1300, 760, async (p) => {
   // The disclosure arrow moved from the left of the row into its hover actions.
   const chevrons = await p.evaluate(() => ({
     inActions: document.querySelectorAll(
-      "[data-folder-id] > div > div svg.lucide-chevron-right",
+      '[data-folder-id] > div > div svg[data-icon="chevron-right"]',
     ).length,
     inHeaders: document.querySelectorAll(
-      "[data-folder-id] > div > button svg.lucide-chevron-right, button[data-project-id] svg.lucide-chevron-right",
+      '[data-folder-id] > div > button svg[data-icon="chevron-right"], button[data-project-id] svg[data-icon="chevron-right"]',
     ).length,
   }));
   check(
@@ -1593,7 +1593,7 @@ await session("?mock=full", 1300, 760, async (p) => {
 
   const clickPassesThrough = await p.evaluate(() => {
     const arrow = document.querySelector(
-      '[data-folder-id="f-work"] > div > div svg.lucide-chevron-right',
+      '[data-folder-id="f-work"] > div > div svg[data-icon="chevron-right"]',
     );
     const box = arrow.getBoundingClientRect();
     const under = document.elementFromPoint(
@@ -1784,7 +1784,7 @@ await session("?mock=crowded", 1300, 760, async (p) => {
     '[data-agent-group="/home/dev/agent-ade-worktrees/fix-pty"]',
   );
   const header = fixGroup.locator(":scope > button");
-  const badges = header.locator("svg.lucide-sparkles");
+  const badges = header.locator('svg[data-icon="sparkles"]');
 
   check(
     "a collapsed group shows up to three agent badges side by side",
@@ -1805,7 +1805,7 @@ await session("?mock=crowded", 1300, 760, async (p) => {
   await p.waitForTimeout(300);
   check(
     "opened, the header is only the word Agents, with no badges",
-    (await header.locator("svg.lucide-sparkles").count()) === 0 &&
+    (await header.locator('svg[data-icon="sparkles"]').count()) === 0 &&
       ((await header.textContent()) ?? "").trim() === "Agents",
     JSON.stringify(await header.textContent()),
   );

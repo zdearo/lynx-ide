@@ -1,4 +1,7 @@
-import { ChevronRight, Link2, MoreHorizontal, Loader2 } from "lucide-react";
+import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
+import { Link2Glyph18 } from "@/components/icons/Link2Glyph18";
+import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import {
@@ -78,12 +81,12 @@ export function FileRow({
     >
       {row.isDirectory ? (
         row.loading ? (
-          <Loader2
+          <Loader2Glyph18
             aria-hidden
             className="size-3.5 shrink-0 animate-spin text-muted-foreground"
           />
         ) : (
-          <ChevronRight
+          <ChevronRightGlyph18
             aria-hidden
             className={cn(
               "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -104,7 +107,10 @@ export function FileRow({
         {row.name}
       </span>
       {row.symlink && (
-        <Link2 aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+        <Link2Glyph18
+          aria-hidden
+          className="size-3 shrink-0 text-muted-foreground"
+        />
       )}
 
       <div
@@ -122,7 +128,7 @@ export function FileRow({
               className="size-5"
               onClick={(event) => event.stopPropagation()}
             >
-              <MoreHorizontal />
+              <DotsGlyph18 />
             </TooltipIconButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-52">

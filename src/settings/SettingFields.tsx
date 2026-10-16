@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { Minus, Plus } from "lucide-react";
+import { MinusGlyph18 } from "@/components/icons/MinusGlyph18";
+import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
@@ -343,7 +344,7 @@ export function StepperSetting({
           disabled={locked || value <= min}
           onClick={() => void save(value - 1)}
         >
-          <Minus />
+          <MinusGlyph18 />
         </TooltipIconButton>
         <output
           id={id}
@@ -357,7 +358,7 @@ export function StepperSetting({
           disabled={locked || value >= max}
           onClick={() => void save(value + 1)}
         >
-          <Plus />
+          <PlusGlyph18 />
         </TooltipIconButton>
       </div>
     </SettingFrame>

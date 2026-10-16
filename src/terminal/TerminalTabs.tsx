@@ -1,5 +1,8 @@
 import type { KeyboardEvent } from "react";
-import { PanelLeft, PanelRight, Plus, X } from "lucide-react";
+import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
+import { SidebarLeftGlyph18 } from "@/components/icons/SidebarLeftGlyph18";
+import { SidebarRightGlyph18 } from "@/components/icons/SidebarRightGlyph18";
+import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
@@ -60,7 +63,7 @@ export function TerminalTabs({
           shortcut={shortcutLabel("toggleSidebar")}
           onClick={onToggleSidebar}
         >
-          <PanelLeft />
+          <SidebarLeftGlyph18 />
         </TooltipIconButton>
       </div>
 
@@ -134,7 +137,7 @@ export function TerminalTabs({
                     "opacity-0 group-focus-visible/tab:opacity-100 group-hover/tab:opacity-100",
                 )}
               >
-                <X />
+                <XmarkGlyph18 />
               </span>
             </button>
           );
@@ -148,7 +151,7 @@ export function TerminalTabs({
               label={copy.terminal.newTerminal}
               shortcut={shortcutLabel("newTerminal")}
             >
-              <Plus />
+              <PlusGlyph18 />
             </TooltipIconButton>
           </NewTerminalMenu>
         </div>
@@ -160,7 +163,7 @@ export function TerminalTabs({
           aria-pressed={rightPanelOpen}
           onClick={onToggleRightPanel}
         >
-          <PanelRight />
+          <SidebarRightGlyph18 />
         </TooltipIconButton>
       </div>
     </div>

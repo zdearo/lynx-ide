@@ -1,4 +1,4 @@
-import { Settings } from "lucide-react";
+import { GearGlyph18 } from "@/components/icons/GearGlyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
@@ -54,7 +54,7 @@ export function ActivityBar({ wide, panelVisible }: ActivityBarProps) {
         onClick={openSettings}
         className="size-9 text-muted-foreground hover:text-foreground"
       >
-        <Settings className="size-5" />
+        <GearGlyph18 className="size-5" />
       </TooltipIconButton>
     </nav>
   );

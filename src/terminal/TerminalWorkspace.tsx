@@ -1,4 +1,4 @@
-import { FolderGit2 } from "lucide-react";
+import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
 
 import { Button } from "@/components/ui/button";
 import { useDialogStore } from "@/dialog-store";
@@ -87,7 +87,7 @@ function Welcome() {
         </p>
       </div>
       <Button onClick={() => askAddProject(true)}>
-        <FolderGit2 />
+        <Folder2Glyph18 />
         {copy.sidebar.addProject}
       </Button>
     </div>

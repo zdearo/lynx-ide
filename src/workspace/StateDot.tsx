@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
 
 import { cn } from "@/lib/utils";
 
@@ -14,7 +14,7 @@ export function StateDot({
 }) {
   if (state === "creating") {
     return (
-      <Loader2
+      <Loader2Glyph18
         aria-hidden
         className={cn(
           "size-3 shrink-0 animate-spin text-muted-foreground",

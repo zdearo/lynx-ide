@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { X } from "lucide-react";
+import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { toast } from "sonner";
 
 import { commands } from "@/bindings";
@@ -69,7 +69,7 @@ export function SettingsDialog() {
           </DialogDescription>
           <DialogClose asChild>
             <TooltipIconButton label={copy.settings.close} shortcut="Esc">
-              <X />
+              <XmarkGlyph18 />
             </TooltipIconButton>
           </DialogClose>
         </header>
@@ -91,12 +91,13 @@ export function SettingsDialog() {
                 aria-controls="settings-panel"
                 onClick={() => setSectionId(candidate.id)}
                 className={cn(
-                  "h-7 rounded-md px-2 text-left text-ui",
+                  "flex h-7 items-center gap-2 rounded-md px-2 text-left text-ui",
                   candidate.id === section.id
                     ? "bg-sidebar-accent text-foreground"
                     : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
                 )}
               >
+                <candidate.icon aria-hidden className="size-3.5 shrink-0" />
                 {candidate.label}
               </button>
             ))}

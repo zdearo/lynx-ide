@@ -1,4 +1,7 @@
 import type { AppConfig, ColorScheme } from "@/bindings";
+import { PaletteGlyph18 } from "@/components/icons/PaletteGlyph18";
+import { SlidersGlyph18 } from "@/components/icons/SlidersGlyph18";
+import { TypographyGlyph18 } from "@/components/icons/TypographyGlyph18";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DEFAULT_TERMINAL_CONFIG } from "@/config/config-store";
 import { isMacPlatform } from "@/platform-shortcuts";
@@ -70,12 +73,15 @@ export function TerminalSettings() {
     <Tabs defaultValue="text" className="gap-6">
       <TabsList variant="line" aria-label={copy.settings.terminal.tabs.label}>
         <TabsTrigger value="text">
+          <TypographyGlyph18 aria-hidden className="size-3.5" />
           {copy.settings.terminal.tabs.text}
         </TabsTrigger>
         <TabsTrigger value="appearance">
+          <PaletteGlyph18 aria-hidden className="size-3.5" />
           {copy.settings.terminal.tabs.appearance}
         </TabsTrigger>
         <TabsTrigger value="behavior">
+          <SlidersGlyph18 aria-hidden className="size-3.5" />
           {copy.settings.terminal.tabs.behavior}
         </TabsTrigger>
       </TabsList>

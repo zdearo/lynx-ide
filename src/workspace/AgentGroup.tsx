@@ -1,4 +1,5 @@
-import { ChevronRight, Sparkles } from "lucide-react";
+import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
 
 import { useNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
@@ -67,7 +68,7 @@ export function AgentGroup({
             <span aria-hidden className="flex-1" />
           </>
         )}
-        <ChevronRight
+        <ChevronRightGlyph18
           aria-hidden
           className={cn(
             "size-3.5 shrink-0 transition-transform",
@@ -95,7 +96,10 @@ function AgentBadge({ agent }: { agent: AgentItem }) {
       className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md bg-foreground/10 px-1.5"
     >
       <AgentStatusIcon agent={agent} />
-      <Sparkles className="size-3 shrink-0 text-agent" />
+      <SparkleGlyph18
+        data-icon="sparkles"
+        className="size-3 shrink-0 text-agent"
+      />
     </span>
   );
 }

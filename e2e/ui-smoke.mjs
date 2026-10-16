@@ -1669,7 +1669,12 @@ await session("?mock=full", 1300, 760, async (p) => {
 
   // Deleting a folder moves what was inside it up one level; nothing is lost.
   await openMenu("Client X", "Delete folder…", true);
-  await p.waitForTimeout(200);
+  // The dialog's code loads on first open, so wait for its text rather than a fixed time.
+  await p
+    .getByText("Its folders and projects move up one level", { exact: false })
+    .first()
+    .waitFor({ timeout: 5000 })
+    .catch(() => undefined);
   check(
     "the delete dialog says contents move up",
     (await p

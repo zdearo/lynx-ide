@@ -13,7 +13,10 @@ import {
   terminalFontsReady,
 } from "@/terminal/terminal-appearance";
 import { resolveTerminalTheme } from "@/terminal/terminal-color-schemes";
-import { loadWebglRenderer } from "@/terminal/terminal-renderer";
+import {
+  webglBudget,
+  type WebglRendererSlot,
+} from "@/terminal/terminal-renderer";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalStreamGate } from "@/terminal/terminal-stream-gate";
 
@@ -28,6 +31,8 @@ interface TerminalViewProps {
 interface Mounted {
   terminal: Terminal;
   fit: FitAddon;
+  /** WebGL is attached only while this terminal is the visible one. */
+  webgl: WebglRendererSlot;
   dispose: () => void;
 }
 
@@ -52,7 +57,7 @@ function mountTerminal(
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(container);
-  loadWebglRenderer(terminal);
+  const webgl = webglBudget.slotFor(terminal);
 
   // A hidden container measures 0x0 and would collapse the terminal.
   const fitIfVisible = () => {
@@ -138,6 +143,7 @@ function mountTerminal(
   return {
     terminal,
     fit,
+    webgl,
     dispose() {
       disposed = true;
       observer.disconnect();
@@ -147,6 +153,7 @@ function mountTerminal(
       container.removeEventListener("animationend", endFlash);
       container.removeEventListener("mouseup", copyOnRelease);
       unlisteners.forEach((unlisten) => unlisten());
+      webgl.dispose();
       terminal.dispose();
     },
   };
@@ -188,6 +195,9 @@ export function TerminalView({
       );
       mountedRef.current = mounted;
       // The tab may have become active while the fonts were loading.
+      // WebGL is wanted for every mounted terminal; the budget decides which keep it.
+      // It is requested after the first frame, so creating a tab is not slowed by the GPU.
+      requestAnimationFrame(() => void mounted.webgl.show());
       if (activeRef.current) mounted.terminal.focus();
     });
 
@@ -227,6 +237,8 @@ export function TerminalView({
     const frame = requestAnimationFrame(() => {
       mountedRef.current?.fit.fit();
       mountedRef.current?.terminal.focus();
+      // The DOM view is usable at once; the GPU renderer follows a task later.
+      setTimeout(() => void mountedRef.current?.webgl.show(), 0);
     });
     return () => cancelAnimationFrame(frame);
   }, [active]);

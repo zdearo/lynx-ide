@@ -1,34 +1,31 @@
-import { useCallback, useEffect } from "react";
+import { lazy, Suspense, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 
 import { events } from "@/bindings";
+import { DialogHost } from "@/dialog-host";
 import { useConfigStore } from "@/config/config-store";
 import { useExplorerStore } from "@/files/explorer-store";
-import { RightSidebar } from "@/right-panel/RightSidebar";
 import { useRightPanelStore } from "@/right-panel/right-panel-store";
 import { Toaster } from "@/components/ui/sonner";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { errorMessage } from "@/lib/error-message";
-import { CloseTerminalDialog } from "@/terminal/CloseTerminalDialog";
-import { CustomCommandDialog } from "@/terminal/CustomCommandDialog";
 import { handleTerminalExit } from "@/terminal/terminal-actions";
 import { useTerminalStore } from "@/terminal/terminal-store";
+
+// The side panel brings its file explorer with it, so it loads when first shown.
+const RightSidebar = lazy(() =>
+  import("@/right-panel/RightSidebar").then((m) => ({
+    default: m.RightSidebar,
+  })),
+);
 import { TerminalWorkspace } from "@/terminal/TerminalWorkspace";
 import { copy } from "@/ui-copy";
 import { useAppShortcuts } from "@/use-app-shortcuts";
-import { AddProjectDialog } from "@/workspace/AddProjectDialog";
-import { NewWorktreeDialog } from "@/workspace/NewWorktreeDialog";
-import { DeleteFolderDialog } from "@/workspace/DeleteFolderDialog";
-import { FolderDialog } from "@/workspace/FolderDialog";
-import { MoveDialog } from "@/workspace/MoveDialog";
-import { RemoveRepoDialog } from "@/workspace/RemoveRepoDialog";
-import { RemoveWorktreeDialog } from "@/workspace/RemoveWorktreeDialog";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import { NavigationSidebar } from "@/navigation/NavigationSidebar";
 import { useNavigationStore } from "@/navigation/navigation-store";
-import { SettingsDialog } from "@/settings/SettingsDialog";
 
 /** Below this width the sidebar becomes a drawer so the terminal keeps the room. */
 const WIDE_LAYOUT_QUERY = "(min-width: 900px)";
@@ -119,7 +116,9 @@ function App() {
             aria-label={copy.rightPanel.label}
             className="w-72 shrink-0 border-l border-sidebar-border"
           >
-            <RightSidebar />
+            <Suspense fallback={null}>
+              <RightSidebar />
+            </Suspense>
           </aside>
         )}
       </div>
@@ -167,21 +166,14 @@ function App() {
             className="gap-0 p-0 data-[side=right]:w-80 data-[side=right]:sm:max-w-80"
           >
             <SheetTitle className="sr-only">{copy.rightPanel.label}</SheetTitle>
-            <RightSidebar />
+            <Suspense fallback={null}>
+              <RightSidebar />
+            </Suspense>
           </SheetContent>
         </Sheet>
       )}
 
-      <SettingsDialog />
-      <AddProjectDialog />
-      <CloseTerminalDialog />
-      <FolderDialog />
-      <MoveDialog />
-      <DeleteFolderDialog />
-      <NewWorktreeDialog />
-      <RemoveWorktreeDialog />
-      <RemoveRepoDialog />
-      <CustomCommandDialog />
+      <DialogHost />
       <Toaster position="bottom-right" />
     </TooltipProvider>
   );

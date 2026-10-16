@@ -29,7 +29,7 @@ describe("exact names beat extensions", () => {
     ["pyproject.toml", "package"],
     ["Gemfile", "package"],
     ["package-lock.json", "lockfile"],
-    ["pnpm-lock.yaml", "lockfile"],
+    ["bun.lock", "lockfile"],
     ["Cargo.lock", "lockfile"],
     ["Dockerfile", "docker"],
     [".dockerignore", "docker"],

@@ -67,11 +67,11 @@ mod tests {
         let committed = std::fs::read_to_string(BINDINGS_PATH).unwrap_or_default();
         assert_eq!(
             generated, committed,
-            "src/bindings.ts is out of date; run `pnpm bindings`"
+            "src/bindings.ts is out of date; run `bun run bindings`"
         );
     }
 
-    // Run through `pnpm bindings`; ignored so a plain `cargo test` never writes files.
+    // Run through `bun run bindings`; ignored so a plain `cargo test` never writes files.
     #[test]
     #[ignore = "writes src/bindings.ts"]
     fn write_bindings() {

@@ -1,10 +1,11 @@
 /**
  * Drives the interface in headless Chrome against the in-memory backend
- * (`?mock=`), so no desktop window is involved. Run with `pnpm e2e`.
+ * (`?mock=`), so no desktop window is involved. Run with `bun run e2e`.
  * Set CHROME_PATH when Chrome is not at a standard location.
  */
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 
@@ -25,9 +26,15 @@ if (!chromePath) {
   process.exit(2);
 }
 
+// Run vite with node itself so killing the child also stops the server.
+const viteBin = join(
+  dirname(require.resolve("vite/package.json")),
+  "bin",
+  "vite.js",
+);
 const vite = spawn(
-  "pnpm",
-  ["exec", "vite", "--port", String(PORT), "--strictPort"],
+  process.execPath,
+  [viteBin, "--port", String(PORT), "--strictPort"],
   {
     stdio: "ignore",
   },
@@ -55,12 +62,25 @@ const results = [];
 const check = (name, ok, detail = "") =>
   results.push(`${ok ? "PASS" : "FAIL"}  ${name}${ok ? "" : "  -> " + detail}`);
 
+// The DOM renderer keeps terminal text in the page, which many checks read. So sessions
+// run without WebGL unless they ask for it; the WebGL session below covers that path.
 async function session(query, width, height, run, contextOptions = {}) {
+  const { webgl = false, ...options } = contextOptions;
   const context = await browser.newContext({
     viewport: { width, height },
-    ...contextOptions,
+    ...options,
   });
   const page = await context.newPage();
+  if (!webgl) {
+    await page.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
+        return /^webgl/.test(type)
+          ? null
+          : getContext.call(this, type, ...rest);
+      };
+    });
+  }
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
@@ -77,6 +97,52 @@ async function session(query, width, height, run, contextOptions = {}) {
 const tabs = (page) => page.getByRole("tab").count();
 const overflow = (page) =>
   page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+
+// Under WebGL the terminal's text is drawn on a canvas, so the page cannot read it.
+// With copy-on-select on, a drag over the screen copies the buffer text instead.
+const setTerminalSwitch = async (p, id, on) => {
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  await p.getByRole("tab", { name: "Behavior", exact: true }).click();
+  const toggle = p.locator(`#${id}`);
+  if ((await toggle.getAttribute("aria-checked")) !== String(on)) {
+    await toggle.click();
+  }
+  await p.waitForTimeout(300);
+  await p.getByRole("button", { name: "Close settings" }).click();
+  await p.waitForTimeout(300);
+};
+const selectTerminalScreen = async (p) => {
+  const box = await p.evaluate(() => {
+    const screen = [...document.querySelectorAll(".xterm-screen")].find(
+      (el) => el.offsetParent !== null,
+    );
+    const r = screen.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  });
+  await p.mouse.move(box.x + 2, box.y + 2);
+  await p.mouse.down();
+  await p.mouse.move(box.x + box.width - 2, box.y + box.height - 2, {
+    steps: 8,
+  });
+  await p.mouse.up();
+  await p.waitForTimeout(200);
+};
+const readTerminal = async (p) => {
+  await p.evaluate(() => {
+    window.__copied = [];
+    navigator.clipboard.writeText = async (text) => {
+      window.__copied.push(text);
+    };
+  });
+  await setTerminalSwitch(p, "terminal-copy-on-select", true);
+  await selectTerminalScreen(p);
+  const text = await p.evaluate(() => window.__copied.at(-1) ?? "");
+  await setTerminalSwitch(p, "terminal-copy-on-select", false);
+  // Later checks read the real clipboard, so the stub must not outlive this read.
+  await p.evaluate(() => delete navigator.clipboard.writeText);
+  return text;
+};
 
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
@@ -242,15 +308,15 @@ await session("?mock=full", 1200, 760, async (p) => {
     JSON.stringify(fit),
   );
 
+  // There are no DOM rows under WebGL; the screen box holds every row of output.
   const lastRowVisible = await p.evaluate(() => {
-    const rows = [...document.querySelectorAll(".xterm-rows > div")].filter(
-      (r) => r.textContent?.trim(),
+    const screen = [...document.querySelectorAll(".xterm-screen")].find(
+      (el) => el.offsetParent !== null,
     );
-    const last = rows.at(-1);
-    const holder = document.querySelector(".xterm")?.parentElement;
-    if (!last || !holder) return false;
+    const holder = screen?.closest(".xterm")?.parentElement;
+    if (!screen || !holder) return false;
     return (
-      last.getBoundingClientRect().bottom <=
+      screen.getBoundingClientRect().bottom <=
       holder.getBoundingClientRect().bottom + 0.5
     );
   });
@@ -396,11 +462,19 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 });
 
+// The font the visible terminal was given. WebGL draws the text on a canvas, so
+// TerminalView mirrors the font on its host element where the page can read it.
 const termFont = (p) =>
   p.evaluate(() => {
-    const rows = document.querySelector(".xterm-rows");
-    const cs = rows && getComputedStyle(rows);
-    return cs ? { size: cs.fontSize, family: cs.fontFamily } : null;
+    const host = [
+      ...document.querySelectorAll("[data-terminal-font-size]"),
+    ].find((el) => el.offsetParent !== null);
+    return host
+      ? {
+          size: `${host.dataset.terminalFontSize}px`,
+          family: host.dataset.terminalFontFamily,
+        }
+      : null;
   });
 
 await session("?mock=full", 1200, 760, async (p) => {
@@ -709,35 +783,9 @@ await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("tab", { name: /claude/ }).click();
   await p.waitForTimeout(500);
 
-  const setSwitch = async (id, on) => {
-    await p.keyboard.press("Control+,");
-    await p.waitForTimeout(300);
-    await p.getByRole("tab", { name: "Behavior", exact: true }).click();
-    const toggle = p.locator(`#${id}`);
-    if ((await toggle.getAttribute("aria-checked")) !== String(on)) {
-      await toggle.click();
-    }
-    await p.waitForTimeout(300);
-    await p.getByRole("button", { name: "Close settings" }).click();
-    await p.waitForTimeout(300);
-  };
-  const dragAcrossFiller = async () => {
-    const row = await p.evaluate(() => {
-      const target = [...document.querySelectorAll(".xterm-rows > div")].find(
-        (r) => r.textContent?.includes("filler") && r.offsetParent !== null,
-      );
-      if (!target) return null;
-      const box = target.getBoundingClientRect();
-      return { x: box.x, y: box.y + box.height / 2 };
-    });
-    await p.mouse.move(row.x + 2, row.y);
-    await p.mouse.down();
-    await p.mouse.move(row.x + 160, row.y, { steps: 8 });
-    await p.mouse.up();
-    await p.waitForTimeout(200);
-  };
+  const dragAcrossFiller = () => selectTerminalScreen(p);
 
-  await setSwitch("terminal-copy-on-select", true);
+  await setTerminalSwitch(p, "terminal-copy-on-select", true);
   await dragAcrossFiller();
   const copied = await p.evaluate(() => window.__copied.at(-1) ?? "");
   check(
@@ -745,7 +793,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     copied.includes("filler"),
     copied,
   );
-  await setSwitch("terminal-copy-on-select", false);
+  await setTerminalSwitch(p, "terminal-copy-on-select", false);
   const copiesBefore = await p.evaluate(() => window.__copied.length);
   await dragAcrossFiller();
   check(
@@ -776,7 +824,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     (await p.locator(".terminal-bell").count()) === 0,
   );
 
-  await setSwitch("terminal-confirm-close", true);
+  await setTerminalSwitch(p, "terminal-confirm-close", true);
   await p
     .getByRole("tab", { name: /claude/ })
     .locator("[data-close]")
@@ -805,7 +853,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     (await p.getByRole("tab", { name: /claude/ }).count()) === 0,
   );
 
-  await setSwitch("terminal-close-on-exit", true);
+  await setTerminalSwitch(p, "terminal-close-on-exit", true);
   await p.evaluate(() => window.__lynxMock.endAllTerminals());
   await p.waitForTimeout(500);
   check(
@@ -965,27 +1013,22 @@ await session(
     await p.getByRole("button", { name: "Actions for README.md" }).click();
     await p.getByRole("menuitem", { name: "Send path to terminal" }).click();
     await p.waitForTimeout(400);
-    // Every session stays mounted; the one on screen is the one with a layout box.
-    const typed = async () =>
-      p.evaluate(
-        () =>
-          [...document.querySelectorAll(".xterm-rows")].find(
-            (el) => el.offsetParent !== null,
-          )?.textContent ?? "",
-      );
+    // Every session stays mounted; readTerminal reads the one on screen.
+    const typed = await readTerminal(p);
     check(
       "Send path to terminal types the path at the prompt",
-      (await typed()).includes("README.md"),
-      (await typed()).slice(-120),
+      typed.includes("README.md"),
+      typed.slice(-120),
     );
 
     await item(/^a file with spaces\.md$/).click({ button: "right" });
     await p.getByRole("menuitem", { name: "Send path to terminal" }).click();
     await p.waitForTimeout(400);
+    const typedWithSpaces = await readTerminal(p);
     check(
       "a path with spaces is quoted for the shell",
-      (await typed()).includes("'a file with spaces.md'"),
-      (await typed()).slice(-160),
+      typedWithSpaces.includes("'a file with spaces.md'"),
+      typedWithSpaces.slice(-160),
     );
 
     await item(/^docs$/).click({ button: "right" });
@@ -1099,6 +1142,71 @@ await session("?mock=full", 1200, 760, async (p) => {
     ),
   );
 });
+
+await session(
+  "?mock=full",
+  1200,
+  760,
+  async (p) => {
+    await p.getByRole("button", { name: /^feat\/auth/ }).click();
+    await p.getByRole("tab", { name: /claude/ }).click();
+    await p.waitForTimeout(600);
+    const renderer = () =>
+      p.evaluate(() => {
+        const visible = [...document.querySelectorAll(".xterm")].find(
+          (x) => x.offsetParent !== null,
+        );
+        return {
+          canvas: visible
+            ? [...visible.querySelectorAll("canvas")].some(
+                (c) => c.className === "",
+              )
+            : false,
+          domRows: visible ? visible.querySelectorAll(".xterm-rows").length : 0,
+        };
+      });
+    const drawn = await renderer();
+    check(
+      "with WebGL the terminal draws on a canvas, not DOM rows",
+      drawn.canvas && drawn.domRows === 0,
+      JSON.stringify(drawn),
+    );
+
+    // Losing the GPU context must hand the terminal back to the DOM renderer.
+    await p.evaluate(() => {
+      const visible = [...document.querySelectorAll(".xterm")].find(
+        (x) => x.offsetParent !== null,
+      );
+      const canvas = [...visible.querySelectorAll("canvas")].find(
+        (c) => c.className === "",
+      );
+      canvas
+        .getContext("webgl2")
+        .getExtension("WEBGL_lose_context")
+        .loseContext();
+    });
+    // The addon waits 3 s for the context to come back before it hands over to the DOM renderer.
+    await p
+      .waitForFunction(
+        () => {
+          const visible = [...document.querySelectorAll(".xterm")].find(
+            (x) => x.offsetParent !== null,
+          );
+          return visible?.querySelectorAll(".xterm-rows").length > 0;
+        },
+        null,
+        { timeout: 6000 },
+      )
+      .catch(() => undefined);
+    const fallback = await renderer();
+    check(
+      "losing the WebGL context falls back to the DOM renderer",
+      fallback.domRows > 0,
+      JSON.stringify(fallback),
+    );
+  },
+  { webgl: true },
+);
 
 await session("?mock=empty", 1400, 700, async (p) => {
   await p.keyboard.press("Control+Shift+E");

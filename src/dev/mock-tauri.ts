@@ -159,7 +159,7 @@ const MOCK_FILES: Record<string, MockEntry[]> = {
     file("Makefile"),
     file("notes.pdf"),
     file("package.json"),
-    file("pnpm-lock.yaml"),
+    file("bun.lock"),
     file("README.md"),
     file("run.sh"),
     file("tsconfig.json"),

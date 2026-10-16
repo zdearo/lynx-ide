@@ -41,7 +41,6 @@ const BY_NAME: Record<string, FileIconKind> = {
   "deno.json": "package",
 
   "package-lock.json": "lockfile",
-  "pnpm-lock.yaml": "lockfile",
   "yarn.lock": "lockfile",
   "bun.lockb": "lockfile",
   "bun.lock": "lockfile",

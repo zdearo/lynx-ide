@@ -13,6 +13,7 @@ import {
   terminalFontsReady,
 } from "@/terminal/terminal-appearance";
 import { resolveTerminalTheme } from "@/terminal/terminal-color-schemes";
+import { loadWebglRenderer } from "@/terminal/terminal-renderer";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalStreamGate } from "@/terminal/terminal-stream-gate";
 
@@ -51,6 +52,7 @@ function mountTerminal(
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(container);
+  loadWebglRenderer(terminal);
 
   // A hidden container measures 0x0 and would collapse the terminal.
   const fitIfVisible = () => {
@@ -237,7 +239,13 @@ export function TerminalView({
       className={cn("size-full p-2", !active && "hidden", className)}
       style={{ backgroundColor: resolveTerminalTheme(settings).background }}
     >
-      <div ref={containerRef} className="size-full" />
+      {/* WebGL draws the text on a canvas, so the applied font is mirrored here for the page to read. */}
+      <div
+        ref={containerRef}
+        className="size-full"
+        data-terminal-font-family={terminalFontFamily(settings.fontFamily)}
+        data-terminal-font-size={settings.fontSize}
+      />
     </div>
   );
 }

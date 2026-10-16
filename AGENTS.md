@@ -69,7 +69,7 @@ A direção visual é a família do Orca, com acabamento no nível de Orca, Line
 - Atalhos: Cmd no macOS e, nos demais, Ctrl+Shift para as letras que o shell usa (T/W/N/B) e Ctrl puro para as outras (configurações: Cmd/Ctrl+`,`). Eles são capturados na fase de captura da janela, antes do terminal.
 - Toda ação por ícone usa `TooltipIconButton` (nome acessível e dica). Listas dentro de `ScrollArea` já têm `[&>div]:block!` para truncar com reticências.
 - Abas de terminal: o "×" fica dentro da aba (uma `tablist` só pode conter abas) e o teclado fecha com `Delete` ou com o atalho.
-- O contrato visual é verificado com `pnpm e2e` (Chrome headless contra o backend simulado, inclui axe WCAG A/AA). Rode-o ao mexer na interface. Não capture a tela do monitor: a captura pode pegar outras janelas do usuário.
+- O contrato visual é verificado com `bun run e2e` (Chrome headless contra o backend simulado, inclui axe WCAG A/AA). Rode-o ao mexer na interface. Não capture a tela do monitor: a captura pode pegar outras janelas do usuário.
 
 ## Configuração
 
@@ -107,7 +107,7 @@ O estado do app fica em SQLite (`rusqlite` com SQLite embutido), no arquivo `app
 - O backend guarda 1 MiB de scrollback por sessão e numera os chunks (`seq`). A view se anexa com `terminal_snapshot` e `TerminalStreamGate` (`src/terminal/`) junta o snapshot com os eventos ao vivo. Não escreva saída no xterm fora do gate.
 - O comando de um agente é digitado num shell de login, nunca executado no lugar dele.
 - Fontes: o terminal usa JetBrains Mono e Symbols Nerd Font Mono, embutidas (`terminal-appearance.ts`, `terminal-fonts.css`), para ser igual em qualquer máquina e mostrar os ícones de prompts e agentes. O terminal só é criado depois que as fontes de texto carregam: o xterm mede a célula ao abrir e mediria errado com uma fonte de reserva. Licenças em `THIRD_PARTY_NOTICES.md`.
-- Padding nunca vai no elemento onde o xterm é aberto: o `FitAddon` mede o pai e não desconta o padding dele, então a última linha passa do limite. O padding fica num contêiner por fora (`TerminalView`). O `pnpm e2e` verifica isso.
+- Padding nunca vai no elemento onde o xterm é aberto: o `FitAddon` mede o pai e não desconta o padding dele, então a última linha passa do limite. O padding fica num contêiner por fora (`TerminalView`). O `bun run e2e` verifica isso.
 - Encerrar sessão: nunca envie sinal a um PID de sessão que já saiu (o PID pode ter sido reaproveitado). `TerminalSession::terminate` já faz essa checagem.
 - Os testes de `terminal_manager_tests.rs` usam shells reais e só rodam em Unix. Os `seq` do contrato são `u32` porque o specta não exporta `u64` para TypeScript.
 
@@ -124,30 +124,30 @@ O estado do app fica em SQLite (`rusqlite` com SQLite embutido), no arquivo `app
 - **Frontend:**
   - Antes de criar um componente, verifique se o shadcn já cobre o caso.
   - Cores, raios e espaçamentos vêm dos tokens do tema (variáveis CSS), não de valores fixos.
-- **Contrato IPC:** os tipos de comandos e eventos são definidos só no Rust (`tauri-specta`) e o TypeScript é gerado em `src/bindings.ts`. Nunca edite esse arquivo à mão e não chame `invoke("...")` direto: use `commands.*` de `@/bindings`. Para criar um comando: derive `serde::Serialize` e `specta::Type` nos tipos, anote a função com `#[tauri::command]` e `#[specta::specta]`, registre em `src-tauri/src/ipc.rs` (`collect_commands!`) e rode `pnpm bindings`. O teste `committed_bindings_match_rust_contract` falha se o arquivo ficar desatualizado. As versões de `specta` e `tauri-specta` estão fixadas com `=` porque ainda são release candidates: atualize-as juntas e deliberadamente.
+- **Contrato IPC:** os tipos de comandos e eventos são definidos só no Rust (`tauri-specta`) e o TypeScript é gerado em `src/bindings.ts`. Nunca edite esse arquivo à mão e não chame `invoke("...")` direto: use `commands.*` de `@/bindings`. Para criar um comando: derive `serde::Serialize` e `specta::Type` nos tipos, anote a função com `#[tauri::command]` e `#[specta::specta]`, registre em `src-tauri/src/ipc.rs` (`collect_commands!`) e rode `bun run bindings`. O teste `committed_bindings_match_rust_contract` falha se o arquivo ficar desatualizado. As versões de `specta` e `tauri-specta` estão fixadas com `=` porque ainda são release candidates: atualize-as juntas e deliberadamente.
 - **Testes:** a lógica de Git é testada com repositórios temporários criados dentro do próprio teste (crate `tempfile`).
 - **Commits:** só quando o dono do projeto pedir.
 
 ## Estado atual
 
 - Fase 0 concluída. Fase 1: backend de worktrees, persistência e terminais prontos; interface mínima pronta (sidebar por repositório, abas de terminal, diálogos). Faltam o estado dos agentes (1.4) e a verificação na janela real do Tauri. Ver TODO.md.
-- Ambiente de desenvolvimento: Arch Linux (Hyprland), Node 24 e pnpm. O Rust padrão da máquina é nightly, mas o projeto usa a estável via `rust-toolchain.toml`. As bibliotecas GTK e WebKit 4.1 já estão instaladas.
+- Ambiente de desenvolvimento: Arch Linux (Hyprland), Node 24 e Bun. O Rust padrão da máquina é nightly, mas o projeto usa a estável via `rust-toolchain.toml`. As bibliotecas GTK e WebKit 4.1 já estão instaladas.
 
 ## Comandos
 
-Gerenciador de pacotes: pnpm.
+Gerenciador de pacotes: Bun (`bun install`, lockfile `bun.lock`).
 
-- `pnpm tauri dev`: sobe o Vite e o app desktop com hot reload.
-- `pnpm tauri build`: gera o pacote de release. `pnpm tauri build --no-bundle` só compila o binário.
-- `pnpm e2e`: sobe o Vite numa porta própria e roda `e2e/ui-smoke.mjs` no Chrome headless (precisa de Chrome; use `CHROME_PATH` se não estiver no caminho padrão).
-- `pnpm check`: typecheck, ESLint, Prettier (verificação) e Vitest do frontend. Rode antes de concluir uma tarefa no frontend.
-- `pnpm rust:check`: `cargo fmt --check` e `cargo clippy -D warnings`.
-- `pnpm rust:test`: testes do backend (inclui a checagem de sincronia dos bindings).
-- `pnpm bindings`: regenera `src/bindings.ts` a partir do Rust.
-- `pnpm format`: formata o projeto com Prettier.
-- Adicionar componente shadcn: `pnpm dlx shadcn@latest add <componente>`.
+- `bun run tauri dev`: sobe o Vite e o app desktop com hot reload.
+- `bun run tauri build`: gera o pacote de release. `bun run tauri build --no-bundle` só compila o binário.
+- `bun run e2e`: sobe o Vite numa porta própria e roda `e2e/ui-smoke.mjs` no Chrome headless (precisa de Chrome; use `CHROME_PATH` se não estiver no caminho padrão).
+- `bun run check`: typecheck, ESLint, Prettier (verificação) e Vitest do frontend. Rode antes de concluir uma tarefa no frontend.
+- `bun run rust:check`: `cargo fmt --check` e `cargo clippy -D warnings`.
+- `bun run rust:test`: testes do backend (inclui a checagem de sincronia dos bindings).
+- `bun run bindings`: regenera `src/bindings.ts` a partir do Rust.
+- `bun run format`: formata o projeto com Prettier.
+- Adicionar componente shadcn: `bunx shadcn@latest add <componente>`.
 
-`pnpm tauri dev` abre uma janela na tela do usuário. Evite rodá-lo sem necessidade e nunca tire capturas de tela do monitor para validar a UI: a captura pode pegar outras janelas do usuário.
+`bun run tauri dev` abre uma janela na tela do usuário. Evite rodá-lo sem necessidade e nunca tire capturas de tela do monitor para validar a UI: a captura pode pegar outras janelas do usuário.
 
 ## Fora de escopo por enquanto
 

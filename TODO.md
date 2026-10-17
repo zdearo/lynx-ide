@@ -85,7 +85,12 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 
 ### Pendências da Fase 1
 
-- [ ] Explorador de arquivos: abrir o arquivo (viewer/editor, Fase 3), arrastar um item para o terminal, decorar com o status do Git (M/U) e atualizar sozinho com um vigia de arquivos (hoje atualiza ao voltar para a janela e no botão)
+- [x] Abrir e editar arquivos: clique seleciona, duplo clique (ou Enter) abre no editor CodeMirror 6, que ocupa a área central; os arquivos abertos ficam numa faixa abaixo das abas de terminal. Salva com Cmd/Ctrl+S, com detecção de mudança no disco (hash) e aviso de conflito. Realce para JS/TS/JSX/TSX, JSON, CSS, HTML, Markdown, Python e Rust
+- [x] Aba Changes no painel da direita: lista de arquivos alterados (conflitos, staged, changes, untracked), diff do HEAD com a árvore de trabalho (Unified ou Split), aba de arquivo temporária com um clique e permanente com duplo clique, e botões Edit/Diff no topo do arquivo
+- [ ] Changes: stage/unstage, descartar, commit, contagem de linhas (+/−) por arquivo, diff por commit e por branch, e comparar staged contra o índice (hoje sempre contra o HEAD)
+- [ ] Editor: busca em todos os arquivos, desfazer ao reabrir, abas de arquivo fixas/em prévia, abrir imagem e arquivo grande em modo leitura, salvar automático opcional
+- [ ] LSP: ponte em Rust (política A+D: servidor vivo só com o worktree em foco e um editor da linguagem aberto, para após ~10 min; limite LRU de segurança; servidores instalados pelo usuário) e `@codemirror/lsp-client` no editor
+- [ ] Explorador de arquivos: arrastar um item para o terminal, decorar com o status do Git (M/U) e atualizar sozinho com um vigia de arquivos (hoje atualiza ao voltar para a janela e no botão)
 - [ ] Painel da direita: largura ajustável e novas abas (busca, source control)
 
 - [ ] Exportar um JSON Schema do `config.json` para autocompletar no editor
@@ -144,6 +149,10 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 ---
 
 ## Fase 3 — Produtividade
+
+- [x] Rodapé de status (24px), começando depois da barra de atividades e por baixo do painel de projetos, com o status do LSP à direita (vazio até o bridge existir)
+- [ ] LSP: bridge no Rust que sobe e desce os servidores pela regra A+D (10 minutos, worktree em foco) e alimenta `lsp-status-store.ts`, que o rodapé já lê
+- [ ] Limites de uso dos agentes no lado esquerdo do rodapé (acompanhamento de uso da Fase 4)
 
 - [ ] Quick open de arquivos do worktree
 - [ ] Jump palette entre worktrees, abas e sessões

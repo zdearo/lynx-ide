@@ -1,10 +1,12 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 
 import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
 
 import { Button } from "@/components/ui/button";
 import { useDialogStore } from "@/dialog-store";
 import { shortcutLabel } from "@/platform-shortcuts";
+import { FileTabs } from "@/editor/FileTabs";
+import { activeFileOf, useEditorStore } from "@/editor/editor-store";
 import { useVisiblePresets } from "@/agents/agent-catalog-store";
 import { PresetIcon } from "@/terminal/PresetIcon";
 import { startPreset } from "@/terminal/terminal-actions";
@@ -19,6 +21,11 @@ import {
 } from "@/workspace/use-selected-worktree";
 import { worktreeLabel } from "@/workspace/worktree-label";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
+
+// CodeMirror loads the first time a file opens, not at startup.
+const FileEditor = lazy(() =>
+  import("@/editor/FileEditor").then((m) => ({ default: m.FileEditor })),
+);
 
 interface TerminalWorkspaceProps {
   sidebarVisible: boolean;
@@ -42,6 +49,7 @@ export function TerminalWorkspace({
   const path = selected?.worktree.path ?? null;
   const activeId = activeSessionId(sessions, activeByWorktree, path);
   const hasSessions = sessions.some((session) => session.worktreePath === path);
+  const openFile = useEditorStore((state) => activeFileOf(state, path));
 
   // Looking at a finished agent is what clears its "done" mark.
   const activeFinished = sessions.some(
@@ -61,6 +69,7 @@ export function TerminalWorkspace({
         rightPanelOpen={rightPanelOpen}
         onToggleRightPanel={onToggleRightPanel}
       />
+      {path && <FileTabs worktreePath={path} />}
       <div className="relative min-h-0 flex-1">
         {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. */}
         {sessions.map((session) => (
@@ -69,17 +78,24 @@ export function TerminalWorkspace({
             key={session.id}
             className={cn(
               "absolute inset-0",
-              session.id !== activeId && "hidden",
+              (session.id !== activeId || openFile) && "hidden",
             )}
           >
             <TerminalView
               terminalId={session.id}
-              active={session.id === activeId}
+              active={session.id === activeId && !openFile}
             />
           </div>
         ))}
         {loaded && repoCount === 0 && <Welcome />}
-        {loaded && selected && !hasSessions && (
+        {path && openFile && (
+          <div className="absolute inset-0 bg-background">
+            <Suspense fallback={null}>
+              <FileEditor worktreePath={path} file={openFile} />
+            </Suspense>
+          </div>
+        )}
+        {loaded && selected && !hasSessions && !openFile && (
           <EmptyWorktree selected={selected} />
         )}
       </div>

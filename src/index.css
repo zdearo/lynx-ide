@@ -20,6 +20,9 @@
   --color-live: var(--live);
   --color-agent: var(--agent);
   --color-attention: var(--attention);
+  --color-diff-added: var(--diff-added);
+  --color-diff-removed: var(--diff-removed);
+  --color-diff-modified: var(--diff-modified);
   --font-mono:
     ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --font-heading: var(--font-sans);
@@ -206,4 +209,38 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Syntax colours for the file editor; the editor theme reads these and nothing else. */
+:root {
+  --code-keyword: oklch(0.45 0.18 300);
+  --code-string: oklch(0.45 0.12 150);
+  --code-number: oklch(0.5 0.14 60);
+  --code-comment: oklch(0.44 0 0);
+  --code-function: oklch(0.45 0.13 245);
+  --code-type: oklch(0.45 0.1 195);
+  --code-property: oklch(0.5 0.14 20);
+}
+
+.dark {
+  --code-keyword: oklch(0.86 0.12 300);
+  --code-string: oklch(0.8 0.12 150);
+  --code-number: oklch(0.8 0.12 60);
+  --code-comment: oklch(0.78 0 0);
+  --code-function: oklch(0.78 0.1 240);
+  --code-type: oklch(0.8 0.1 190);
+  --code-property: oklch(0.78 0.12 20);
+}
+
+/* Diff colours: the text of a status letter, and the same hue as a faint line background. */
+:root {
+  --diff-added: oklch(0.5 0.14 150);
+  --diff-modified: oklch(0.55 0.13 70);
+  --diff-removed: oklch(0.52 0.19 25);
+}
+
+.dark {
+  --diff-added: oklch(0.78 0.15 150);
+  --diff-modified: oklch(0.82 0.13 85);
+  --diff-removed: oklch(0.74 0.15 25);
 }

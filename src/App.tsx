@@ -22,10 +22,15 @@ const RightSidebar = lazy(() =>
   })),
 );
 import { TerminalWorkspace } from "@/terminal/TerminalWorkspace";
+import { StatusBar } from "@/status-bar/StatusBar";
 import { copy } from "@/ui-copy";
 import { useAppShortcuts } from "@/use-app-shortcuts";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
-import { NavigationSidebar } from "@/navigation/NavigationSidebar";
+import {
+  NavigationPanel,
+  NavigationRail,
+  NavigationSidebar,
+} from "@/navigation/NavigationSidebar";
 import { useNavigationStore } from "@/navigation/navigation-store";
 
 /** Below this width the sidebar becomes a drawer so the terminal keeps the room. */
@@ -115,23 +120,29 @@ function App() {
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full bg-background text-foreground">
-        {wide && <NavigationSidebar wide panelVisible={panelVisible} />}
-        <TerminalWorkspace
-          sidebarVisible={panelVisible}
-          onToggleSidebar={toggleSidebar}
-          rightPanelOpen={rightPanelOpen}
-          onToggleRightPanel={toggleRightPanel}
-        />
-        {canDockRight && rightDocked && (
-          <aside
-            aria-label={copy.rightPanel.label}
-            className="w-72 shrink-0 border-l border-sidebar-border"
-          >
-            <Suspense fallback={null}>
-              <RightSidebar />
-            </Suspense>
-          </aside>
-        )}
+        {wide && <NavigationRail wide panelVisible={panelVisible} />}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1">
+            {wide && panelVisible && <NavigationPanel />}
+            <TerminalWorkspace
+              sidebarVisible={panelVisible}
+              onToggleSidebar={toggleSidebar}
+              rightPanelOpen={rightPanelOpen}
+              onToggleRightPanel={toggleRightPanel}
+            />
+            {canDockRight && rightDocked && (
+              <aside
+                aria-label={copy.rightPanel.label}
+                className="w-72 shrink-0 border-l border-sidebar-border"
+              >
+                <Suspense fallback={null}>
+                  <RightSidebar />
+                </Suspense>
+              </aside>
+            )}
+          </div>
+          <StatusBar />
+        </div>
       </div>
 
       {!wide && (

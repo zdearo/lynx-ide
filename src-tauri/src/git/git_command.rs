@@ -61,6 +61,14 @@ impl GitCommand<'_> {
 
     /// Returns stdout without the trailing newline.
     pub fn run(self) -> Result<String, GitError> {
+        let stdout = self.run_bytes()?;
+        Ok(String::from_utf8_lossy(&stdout)
+            .trim_end_matches(['\n', '\r'])
+            .to_owned())
+    }
+
+    /// Returns stdout exactly as git wrote it, for content where every byte counts.
+    pub fn run_bytes(self) -> Result<Vec<u8>, GitError> {
         if !self.cwd.is_dir() {
             return Err(GitError::Io(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -103,8 +111,7 @@ impl GitCommand<'_> {
         };
 
         if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return Ok(stdout.trim_end_matches(['\n', '\r']).to_owned());
+            return Ok(output.stdout);
         }
 
         Err(GitError::Failed {

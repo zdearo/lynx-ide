@@ -23,6 +23,8 @@ interface DialogState {
   addProjectOpen: boolean;
   /** Terminal session the user is asked to confirm closing. */
   closeTerminalId: string | null;
+  /** A file with unsaved changes the user is asked to confirm closing. */
+  closeFileTarget: { worktreePath: string; path: string } | null;
 
   askCustomCommand: (worktreePath: string | null) => void;
   askRemoveWorktree: (
@@ -34,6 +36,7 @@ interface DialogState {
   askDeleteFolder: (folder: Folder | null) => void;
   askAddProject: (open: boolean) => void;
   askCloseTerminal: (id: string | null) => void;
+  askCloseFile: (target: { worktreePath: string; path: string } | null) => void;
 }
 
 export const useDialogStore = create<DialogState>((set) => ({
@@ -45,6 +48,7 @@ export const useDialogStore = create<DialogState>((set) => ({
   deleteFolderTarget: null,
   addProjectOpen: false,
   closeTerminalId: null,
+  closeFileTarget: null,
 
   askCustomCommand: (customCommandFor) => set({ customCommandFor }),
   askRemoveWorktree: (removeWorktreeTarget) => set({ removeWorktreeTarget }),
@@ -54,4 +58,5 @@ export const useDialogStore = create<DialogState>((set) => ({
   askDeleteFolder: (deleteFolderTarget) => set({ deleteFolderTarget }),
   askAddProject: (addProjectOpen) => set({ addProjectOpen }),
   askCloseTerminal: (closeTerminalId) => set({ closeTerminalId }),
+  askCloseFile: (closeFileTarget) => set({ closeFileTarget }),
 }));

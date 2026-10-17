@@ -5,6 +5,7 @@ use crate::error::{AppError, IpcError};
 use crate::workspace::workspace_service::WorkspaceService;
 
 use super::directory_listing::{DirectoryListing, list_directory as list};
+use super::file_content::{FileText, read_text, write_text};
 use super::files_error::FilesError;
 use super::path_inside_worktree::resolve_inside;
 
@@ -20,6 +21,46 @@ pub async fn list_directory(
     run_blocking(move || {
         let root = workspace.resolve_worktree(&worktree_path)?;
         Ok(list(&root, &relative_path)?)
+    })
+    .await
+}
+
+/// The text of one file, for the editor. Refuses what it cannot show as text.
+#[tauri::command]
+#[specta::specta]
+pub async fn read_file(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    relative_path: String,
+) -> Result<FileText, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        Ok(read_text(&root, &relative_path)?)
+    })
+    .await
+}
+
+/// Saves the editor's text. `expected_hash` is the hash from the read; a file that changed since is
+/// refused, and `None` overwrites it.
+#[tauri::command]
+#[specta::specta]
+pub async fn write_file(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    relative_path: String,
+    content: String,
+    expected_hash: Option<String>,
+) -> Result<FileText, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        Ok(write_text(
+            &root,
+            &relative_path,
+            &content,
+            expected_hash.as_deref(),
+        )?)
     })
     .await
 }

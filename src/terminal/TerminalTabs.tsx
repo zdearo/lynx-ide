@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from "react";
+import { useEditorStore } from "@/editor/editor-store";
 import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
 import { SidebarLeftGlyph18 } from "@/components/icons/SidebarLeftGlyph18";
 import { SidebarRightGlyph18 } from "@/components/icons/SidebarRightGlyph18";
@@ -36,6 +37,10 @@ export function TerminalTabs({
   const setActive = useTerminalStore((state) => state.setActive);
 
   const path = selected?.worktree.path ?? null;
+  // While a file is on screen no terminal tab is the current one.
+  const fileShown = useEditorStore((state) =>
+    path ? Boolean(state.active[path]) : false,
+  );
   const sessions = allSessions.filter(
     (session) => session.worktreePath === path,
   );
@@ -51,6 +56,7 @@ export function TerminalTabs({
     if (!next) return;
     event.preventDefault();
     setActive(path, next.id);
+    useEditorStore.getState().show(path, null);
     document.getElementById(`tab-${next.id}`)?.focus();
   }
 
@@ -82,7 +88,7 @@ export function TerminalTabs({
         className="flex min-w-0 items-stretch overflow-x-auto"
       >
         {sessions.map((session) => {
-          const active = session.id === activeId;
+          const active = session.id === activeId && !fileShown;
           return (
             // A tablist owns only tabs, so the close "x" lives inside the tab: a mouse
             // target here, and Delete (or the shortcut) for the keyboard.
@@ -93,7 +99,7 @@ export function TerminalTabs({
               id={`tab-${session.id}`}
               aria-selected={active}
               aria-keyshortcuts="Delete"
-              tabIndex={active ? 0 : -1}
+              tabIndex={session.id === activeId ? 0 : -1}
               onClick={(event) => {
                 if (
                   event.target instanceof Element &&
@@ -102,6 +108,7 @@ export function TerminalTabs({
                   requestCloseTerminal(session.id);
                 } else if (path) {
                   setActive(path, session.id);
+                  useEditorStore.getState().show(path, null);
                 }
               }}
               onKeyDown={(event) => {

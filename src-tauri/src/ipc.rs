@@ -5,6 +5,7 @@ use tauri_specta::{Builder, collect_commands, collect_events};
 
 use crate::agents::agent_commands as agents;
 use crate::app_info;
+use crate::changes::changes_commands as changes;
 use crate::config::config_commands as config;
 use crate::config::config_events::ConfigChanged;
 use crate::files::files_commands as files;
@@ -47,7 +48,11 @@ pub fn builder() -> Builder<tauri::Wry> {
             config::list_shells,
             config::open_config_file,
             files::list_directory,
+            files::read_file,
+            files::write_file,
             files::reveal_in_file_manager,
+            changes::list_changes,
+            changes::read_file_diff,
         ])
         .events(collect_events![
             TerminalOutput,

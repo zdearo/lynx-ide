@@ -1084,8 +1084,8 @@ await session(
     check(
       "the tree lists the worktree's files",
       (await tree.count()) === 1 &&
-        (await item(/^src$/).count()) === 1 &&
-        (await item(/^README\.md$/).count()) === 1,
+        (await item(/^src(,|$)/).count()) === 1 &&
+        (await item(/^README\.md(,|$)/).count()) === 1,
     );
     check(
       "git's own folder is not listed",
@@ -1093,22 +1093,30 @@ await session(
     );
     check(
       "a folder starts collapsed",
-      (await item(/^src$/).getAttribute("aria-expanded")) === "false",
+      (await item(/^src(,|$)/).getAttribute("aria-expanded")) === "false",
     );
 
-    await item(/^src$/).click();
+    await item(/^src(,|$)/).click();
     await p.waitForTimeout(400);
     check(
       "opening a folder loads and shows its children one level deeper",
-      (await item(/^src$/).getAttribute("aria-expanded")) === "true" &&
-        (await item(/^App\.tsx$/).count()) === 1 &&
-        (await item(/^App\.tsx$/).getAttribute("aria-level")) === "2",
+      (await item(/^src(,|$)/).getAttribute("aria-expanded")) === "true" &&
+        (await item(/^App\.tsx(,|$)/).count()) === 1 &&
+        (await item(/^App\.tsx(,|$)/).getAttribute("aria-level")) === "2",
     );
-    await item(/^src$/).click();
+    check(
+      "a changed file shows its status letter and says the change in its name",
+      (await item(/^App\.tsx, modified$/).count()) === 1 &&
+        (await item(/^App\.tsx, modified$/)
+          .locator("span[aria-hidden]")
+          .last()
+          .innerText()) === "M",
+    );
+    await item(/^src(,|$)/).click();
     await p.waitForTimeout(200);
     check(
       "clicking it again closes it",
-      (await item(/^App\.tsx$/).count()) === 0,
+      (await item(/^App\.tsx(,|$)/).count()) === 0,
     );
 
     check(
@@ -1124,7 +1132,7 @@ await session(
     await item(/^empty-folder$/).click();
 
     // Keyboard: the tree behaves like a tree.
-    await item(/^docs$/).click();
+    await item(/^docs(,|$)/).click();
     await p.waitForTimeout(400);
     await p.keyboard.press("ArrowDown");
     await p.waitForTimeout(120);
@@ -1146,13 +1154,13 @@ await session(
     await p.waitForTimeout(200);
     check(
       "ArrowLeft on an open folder closes it",
-      (await item(/^docs$/).getAttribute("aria-expanded")) === "false",
+      (await item(/^docs(,|$)/).getAttribute("aria-expanded")) === "false",
     );
     await p.keyboard.press("ArrowRight");
     await p.waitForTimeout(300);
     check(
       "ArrowRight opens it again",
-      (await item(/^docs$/).getAttribute("aria-expanded")) === "true",
+      (await item(/^docs(,|$)/).getAttribute("aria-expanded")) === "true",
     );
     await p.keyboard.press("End");
     await p.waitForTimeout(120);
@@ -1176,7 +1184,7 @@ await session(
     );
 
     // Actions.
-    await item(/^README\.md$/).hover();
+    await item(/^README\.md(,|$)/).hover();
     await p.getByRole("button", { name: "Actions for README.md" }).click();
     await p.getByRole("menuitem", { name: "Send path to terminal" }).click();
     await p.waitForTimeout(400);
@@ -1198,14 +1206,14 @@ await session(
       typedWithSpaces.slice(-160),
     );
 
-    await item(/^docs$/).click({ button: "right" });
+    await item(/^docs(,|$)/).click({ button: "right" });
     await p.getByRole("menuitem", { name: "Copy relative path" }).click();
     await p.waitForTimeout(300);
     check(
       "Copy relative path puts it on the clipboard",
       (await p.evaluate(() => navigator.clipboard.readText())) === "docs",
     );
-    await item(/^docs$/).click({ button: "right" });
+    await item(/^docs(,|$)/).click({ button: "right" });
     await p.getByRole("menuitem", { name: "Copy path", exact: true }).click();
     await p.waitForTimeout(300);
     check(
@@ -1215,7 +1223,7 @@ await session(
       ),
       await p.evaluate(() => navigator.clipboard.readText()),
     );
-    await item(/^README\.md$/).click({ button: "right" });
+    await item(/^README\.md(,|$)/).click({ button: "right" });
     await p.getByRole("menuitem", { name: "Open containing folder" }).click();
     await p.waitForTimeout(200);
     check(
@@ -1226,7 +1234,7 @@ await session(
     );
 
     // The menu is reachable without a mouse.
-    await item(/^README\.md$/).focus();
+    await item(/^README\.md(,|$)/).focus();
     await p.keyboard.press("Shift+F10");
     await p.waitForTimeout(300);
     check(
@@ -1269,6 +1277,329 @@ await session(
   { permissions: ["clipboard-read", "clipboard-write"] },
 );
 
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  const item = (name) => p.getByRole("treeitem", { name });
+  const fileTabs = p.getByRole("tablist", { name: "Open files" });
+
+  await item(/^src(,|$)/).click();
+  await p.waitForTimeout(300);
+  await item(/^App\.tsx(,|$)/).click();
+  check(
+    "one click selects a file without opening it",
+    (await fileTabs.count()) === 0 &&
+      (await p.locator(".cm-editor").count()) === 0,
+  );
+  await item(/^App\.tsx(,|$)/).dblclick();
+  await p.locator(".cm-editor").waitFor({ timeout: 5000 });
+  check(
+    "double click opens the file in the editor under the terminal tabs",
+    (await fileTabs.getByRole("tab", { name: /App\.tsx/ }).count()) === 1 &&
+      (await p.locator(".cm-content").innerText()).includes(
+        "export function App",
+      ),
+  );
+  const tabsBox = await p
+    .getByRole("tablist", { name: "Terminals" })
+    .boundingBox();
+  const filesBox = await fileTabs.boundingBox();
+  check(
+    "the file strip sits below the terminal strip",
+    !!tabsBox && !!filesBox && filesBox.y >= tabsBox.y + tabsBox.height - 1,
+    JSON.stringify({ tabsBox, filesBox }),
+  );
+  check(
+    "no terminal tab is selected while a file is shown",
+    (await p
+      .getByRole("tablist", { name: "Terminals" })
+      .getByRole("tab", { selected: true })
+      .count()) === 0,
+  );
+  check(
+    "the file tab uses colours from the highlighting tokens",
+    await p.evaluate(() => {
+      const probe = document.querySelector(".cm-line span");
+      return !!probe && getComputedStyle(probe).color !== "";
+    }),
+  );
+
+  await p.locator(".cm-content").click();
+  await p.keyboard.press("End");
+  await p.keyboard.type(" // edited");
+  check(
+    "typing marks the file as unsaved",
+    (await fileTabs.getByText("unsaved changes").count()) === 1,
+  );
+  await p.keyboard.press("Control+s");
+  await p.waitForTimeout(300);
+  check(
+    "Ctrl+S saves it",
+    (await fileTabs.getByText("unsaved changes").count()) === 0,
+  );
+
+  // Another program changes the file; the next save must not overwrite it silently.
+  await p.evaluate(() => {
+    window.__lynxMock.touchFile(
+      "/home/dev/lynx-ide-worktrees/feat-auth",
+      "src/App.tsx",
+      "changed elsewhere\n",
+    );
+  });
+  await p.keyboard.type("x");
+  await p.keyboard.press("Control+s");
+  await p.waitForTimeout(300);
+  check(
+    "a file changed on disk shows the conflict instead of saving",
+    (await p
+      .getByRole("alert")
+      .filter({ hasText: "changed on disk" })
+      .count()) === 1,
+  );
+  await p.getByRole("button", { name: "Reload from disk" }).click();
+  await p.waitForTimeout(300);
+  check(
+    "reloading takes the text from disk",
+    (await p.locator(".cm-content").innerText()).includes("changed elsewhere"),
+  );
+
+  const axeEditor = await p.evaluate(async (src) => {
+    window.eval(src);
+    const r = await window.axe.run(document, {
+      runOnly: ["wcag2a", "wcag2aa"],
+    });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 140)}`,
+    );
+  }, axeSource);
+  check(
+    "axe: no WCAG A/AA violations with the editor open",
+    axeEditor.length === 0,
+    axeEditor.join(" || "),
+  );
+
+  await item(/^package\.json(,|$)/).click();
+  await p.keyboard.press("Enter");
+  await p.waitForTimeout(400);
+  check(
+    "Enter opens the selected file from the keyboard",
+    (await fileTabs.getByRole("tab").count()) === 2,
+  );
+
+  await p
+    .getByRole("tablist", { name: "Terminals" })
+    .getByRole("tab")
+    .first()
+    .click();
+  await p.waitForTimeout(300);
+  check(
+    "choosing a terminal tab brings the terminal back, and the files stay open",
+    (await p.locator(".cm-editor").count()) === 0 &&
+      (await fileTabs.getByRole("tab").count()) === 2,
+  );
+
+  await item(/^logo\.png$/).dblclick();
+  await p.waitForTimeout(400);
+  check(
+    "a file that is not text says so instead of opening",
+    (await p.getByRole("alert").filter({ hasText: "not text" }).count()) === 1,
+  );
+
+  await fileTabs.getByRole("tab", { name: /App\.tsx/ }).click();
+  await p.locator(".cm-content").click();
+  await p.keyboard.type("y");
+  await fileTabs.getByRole("tab", { name: /App\.tsx/ }).press("Delete");
+  await p.waitForTimeout(300);
+  check(
+    "closing a file with unsaved changes asks first",
+    (await p.getByRole("alertdialog").count()) === 1,
+  );
+  await p.getByRole("button", { name: "Close without saving" }).click();
+  await p.waitForTimeout(300);
+  check(
+    "confirming closes the file",
+    (await fileTabs.getByRole("tab", { name: /App\.tsx/ }).count()) === 0,
+  );
+});
+
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(400);
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(500);
+  const list = p.getByRole("group", {
+    name: "Changed files in the selected worktree",
+  });
+  const row = (name) => list.getByRole("option", { name });
+  const fileTabs = p.getByRole("tablist", { name: "Open files" });
+  const group = (name) => p.getByRole("listbox", { name });
+
+  check(
+    "the Changes tab lists the sections in Git's order",
+    (await list.locator("h3").allInnerTexts())
+      .map((t) => t.replace(/\s+/g, " ").trim())
+      .join("|") === "STAGED CHANGES 3|CHANGES 3|UNTRACKED FILES 1",
+    (await list.locator("h3").allInnerTexts()).join("|"),
+  );
+  check(
+    "a file with staged and unstaged changes is in both sections",
+    (await group(/^Staged changes/)
+      .getByRole("option", { name: /^README\.md/ })
+      .count()) === 1 &&
+      (await group(/^Changes/)
+        .getByRole("option", { name: /^README\.md/ })
+        .count()) === 1,
+  );
+  check(
+    "the row says what happened to the file, not only by colour",
+    (await row(/^Legacy\.tsx, deleted$/).count()) === 1 &&
+      (await row(/^setup\.md, untracked$/).count()) === 1,
+  );
+
+  const changesToggle = list.getByRole("button", { name: /^Changes/ });
+  await changesToggle.click();
+  check(
+    "a foldable section hides its files and keeps its count",
+    (await changesToggle.getAttribute("aria-expanded")) === "false" &&
+      (await group(/^Changes/).count()) === 0 &&
+      (await changesToggle.innerText()).includes("3"),
+  );
+  await changesToggle.click();
+  check(
+    "clicking the section again shows its files",
+    (await changesToggle.getAttribute("aria-expanded")) === "true" &&
+      (await row(/^App\.tsx, modified$/).count()) === 1,
+  );
+  const untrackedToggle = list.getByRole("button", {
+    name: /^Untracked files/,
+  });
+  await untrackedToggle.click();
+  check(
+    "untracked files fold the same way",
+    (await untrackedToggle.getAttribute("aria-expanded")) === "false" &&
+      (await row(/^setup\.md, untracked$/).count()) === 0,
+  );
+  await untrackedToggle.click();
+
+  await row(/^App\.tsx, modified$/).click();
+  await p.locator(".cm-editor").waitFor({ timeout: 5000 });
+  await p.waitForTimeout(300);
+  const appTab = fileTabs.getByRole("tab", { name: /App\.tsx/ });
+  check(
+    "one click opens the file as a temporary tab in diff view",
+    (await appTab.count()) === 1 &&
+      (await appTab.locator("span.italic").count()) === 1 &&
+      (await p.locator(".cm-changedLine, .cm-deletedChunk").count()) > 0,
+  );
+  check(
+    "the toolbar shows the file, its status and Diff selected",
+    (await p
+      .getByRole("toolbar", { name: "File view" })
+      .getByRole("button", { name: "Diff", pressed: true })
+      .count()) === 1 &&
+      (await p.getByRole("toolbar").getByText("modified").count()) >= 1,
+  );
+
+  await row(/^Button\.tsx, renamed$/).click();
+  await p.waitForTimeout(500);
+  check(
+    "another single click replaces the temporary tab",
+    (await fileTabs.getByRole("tab").count()) === 1 &&
+      (await fileTabs.getByRole("tab", { name: /Button\.tsx/ }).count()) === 1,
+  );
+
+  await row(/^package\.json, modified$/).dblclick();
+  await p.waitForTimeout(500);
+  const pkgTab = fileTabs.getByRole("tab", { name: /package\.json/ });
+  check(
+    "double click opens it as a permanent tab",
+    (await pkgTab.locator("span.italic").count()) === 0,
+  );
+  await row(/^App\.tsx, modified$/).click();
+  await p.waitForTimeout(500);
+  check(
+    "a permanent tab survives the next temporary one",
+    (await fileTabs.getByRole("tab").count()) === 2 &&
+      (await pkgTab.count()) === 1 &&
+      (await fileTabs.getByRole("tab", { name: /Button\.tsx/ }).count()) === 0,
+  );
+
+  const toolbar = p.getByRole("toolbar", { name: "File view" });
+  await toolbar.getByRole("button", { name: "Split" }).click();
+  await p.waitForTimeout(400);
+  check(
+    "Split shows the original and the new text side by side",
+    (await p.locator(".cm-merge-a").count()) === 1 &&
+      (await p.locator(".cm-merge-b").count()) === 1,
+  );
+  await toolbar.getByRole("button", { name: "Unified" }).click();
+  await toolbar.getByRole("button", { name: "Edit" }).click();
+  await p.waitForTimeout(400);
+  check(
+    "Edit switches the same tab to the editor",
+    (await p.locator(".cm-content[contenteditable=true]").count()) === 1 &&
+      (await p.locator(".cm-mergeView").count()) === 0,
+  );
+  await p.locator(".cm-content").click();
+  await p.keyboard.type("// local");
+  await toolbar.getByRole("button", { name: "Diff" }).click();
+  await p.waitForTimeout(400);
+  check(
+    "the diff includes text that is not saved yet",
+    (await p.locator(".cm-line", { hasText: "// local" }).count()) >= 1,
+  );
+
+  await row(/^Legacy\.tsx, deleted$/).click();
+  await p.waitForTimeout(500);
+  check(
+    "a deleted file opens as a diff, and Edit is off because there is nothing to edit",
+    (await p.locator(".cm-deletedLine, .cm-deletedChunk").count()) >= 0 &&
+      (await toolbar.getByRole("button", { name: "Edit" }).isDisabled()),
+  );
+
+  await p.getByRole("tab", { name: "Files", exact: true }).click();
+  await p.waitForTimeout(300);
+  await p.getByRole("treeitem", { name: /^README\.md(,|$)/ }).dblclick();
+  await p.waitForTimeout(400);
+  check(
+    "a file opened from Files starts in the editor, and Diff is on because it changed",
+    (await toolbar
+      .getByRole("button", { name: "Edit", pressed: true })
+      .count()) === 1 &&
+      (await toolbar.getByRole("button", { name: "Diff" }).isEnabled()),
+  );
+  await p.getByRole("treeitem", { name: /^LICENSE$/ }).dblclick();
+  await p.waitForTimeout(400);
+  check(
+    "Diff is off for a file that did not change",
+    await toolbar.getByRole("button", { name: "Diff" }).isDisabled(),
+  );
+
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(300);
+  await row(/^App\.tsx, modified$/).click();
+  await p.waitForTimeout(500);
+  const axeDiff = await p.evaluate(async (src) => {
+    window.eval(src);
+    const r = await window.axe.run(document, {
+      runOnly: ["wcag2a", "wcag2aa"],
+    });
+    return r.violations.map(
+      (v) =>
+        `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 140)} ${v.nodes[0].any[0]?.message ?? ""}`,
+    );
+  }, axeSource);
+  check(
+    "axe: no WCAG A/AA violations with the changes list and a diff open",
+    axeDiff.length === 0,
+    axeDiff.join(" || "),
+  );
+});
+
 await session("?mock=full", 1000, 700, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await p.keyboard.press("Control+Shift+E");
@@ -1281,7 +1612,7 @@ await session("?mock=full", 1000, 700, async (p) => {
   );
   check(
     "the drawer shows the same tree",
-    (await p.getByRole("treeitem", { name: /^README\.md$/ }).count()) === 1,
+    (await p.getByRole("treeitem", { name: /^README\.md(,|$)/ }).count()) === 1,
   );
   await p.keyboard.press("Escape");
   await p.waitForTimeout(300);
@@ -2196,6 +2527,60 @@ await session("?mock=full", 1200, 760, async (p) => {
     "picking a searched branch makes it the base",
     (await base.textContent()).includes("feature/topic-0042"),
     await base.textContent(),
+  );
+});
+
+// The status bar is a low strip under the whole window, and says no language server runs yet.
+await session("?mock=full", 1200, 760, async (p) => {
+  const bar = p.getByRole("contentinfo", { name: "Status bar" });
+  check(
+    "the status bar is a footer landmark named Status bar",
+    (await bar.count()) === 1,
+  );
+  check(
+    "the status bar says no language server runs",
+    ((await bar.textContent()) ?? "").includes("No language server running"),
+  );
+  const box = await bar.boundingBox();
+  const viewport = p.viewportSize();
+  check(
+    "the status bar is low and sits at the bottom of the window",
+    box !== null &&
+      box.height <= 28 &&
+      Math.abs(box.y + box.height - viewport.height) < 2,
+    JSON.stringify(box),
+  );
+
+  // The primary bar runs the full height on the left. The status bar starts at its right edge and
+  // stops at the top of the status bar, so the project panel sits above it.
+  const rail = await p
+    .getByRole("navigation", { name: "Primary navigation" })
+    .boundingBox();
+  const projectPanel = await p
+    .getByRole("complementary", { name: "Projects" })
+    .boundingBox();
+  check(
+    "the status bar starts at the edge of the primary bar and the project panel stays above it",
+    rail !== null &&
+      projectPanel !== null &&
+      box !== null &&
+      Math.abs(box.x - (rail.x + rail.width)) < 2 &&
+      Math.abs(rail.y + rail.height - viewport.height) < 2 &&
+      projectPanel.y + projectPanel.height <= box.y + 1,
+    `${JSON.stringify(rail)} ${JSON.stringify(projectPanel)} ${JSON.stringify(box)}`,
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the status bar in view",
+    axe.length === 0,
+    axe.join(" || "),
   );
 });
 

@@ -10,6 +10,14 @@ pub enum FilesError {
     NotADirectory(String),
     #[error("{0} points outside the worktree")]
     OutsideWorktree(String),
+    #[error("{0} is not a file")]
+    NotAFile(String),
+    #[error("{path} is larger than the {limit} bytes Lynx opens as text")]
+    TooLarge { path: String, limit: u64 },
+    #[error("{0} is not a text file Lynx can edit")]
+    Binary(String),
+    #[error("{0} changed on disk since it was opened")]
+    Changed(String),
     #[error("could not read {path}: {source}")]
     Io {
         path: String,

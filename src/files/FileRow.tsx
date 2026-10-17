@@ -11,6 +11,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { ChangeKind } from "@/bindings";
+import { ChangeMark, FolderChangeMark } from "@/changes/ChangeMark";
 import {
   absolutePath,
   copyToClipboard,
@@ -23,8 +25,14 @@ import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
 
 /** The row's accessible name: without this it would also read the actions button inside it. */
-function rowLabel(row: EntryRow): string {
+function rowLabel(
+  row: EntryRow,
+  change: ChangeKind | undefined,
+  containsChanges: boolean,
+): string {
   const notes = [
+    change ? copy.changes.kinds[change] : null,
+    containsChanges ? copy.files.containsChanges : null,
     row.symlink ? copy.files.link : null,
     row.ignored ? copy.files.ignored : null,
   ].filter(Boolean);
@@ -38,32 +46,42 @@ interface FileRowProps {
   row: EntryRow;
   worktreePath: string;
   selected: boolean;
+  /** How this file changed against HEAD, when it did. */
+  change: ChangeKind | undefined;
+  /** A folder with a changed file somewhere inside it. */
+  containsChanges: boolean;
   /** The one row that is a tab stop; the arrow keys move it. */
   focusable: boolean;
   menuOpen: boolean;
   onMenuOpenChange: (open: boolean) => void;
   onActivate: () => void;
+  /** Double click: a file opens in the editor. */
+  onOpen: () => void;
 }
 
 export function FileRow({
   row,
   worktreePath,
   selected,
+  change,
+  containsChanges,
   focusable,
   menuOpen,
   onMenuOpenChange,
   onActivate,
+  onOpen,
 }: FileRowProps) {
   return (
     <div
       role="treeitem"
-      aria-label={rowLabel(row)}
+      aria-label={rowLabel(row, change, containsChanges)}
       data-tree-path={row.path}
       aria-level={row.depth + 1}
       aria-expanded={row.isDirectory ? row.expanded : undefined}
       aria-selected={selected}
       tabIndex={focusable ? 0 : -1}
       onClick={onActivate}
+      onDoubleClick={row.isDirectory ? undefined : onOpen}
       onContextMenu={(event) => {
         event.preventDefault();
         onActivate();
@@ -112,6 +130,8 @@ export function FileRow({
           className="size-3 shrink-0 text-muted-foreground"
         />
       )}
+      {change && <ChangeMark kind={change} />}
+      {containsChanges && <FolderChangeMark />}
 
       <div
         className={cn(

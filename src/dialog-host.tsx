@@ -20,6 +20,11 @@ const CloseTerminalDialog = lazy(() =>
     default: m.CloseTerminalDialog,
   })),
 );
+const CloseFileDialog = lazy(() =>
+  import("@/editor/CloseFileDialog").then((m) => ({
+    default: m.CloseFileDialog,
+  })),
+);
 const CustomCommandDialog = lazy(() =>
   import("@/terminal/CustomCommandDialog").then((m) => ({
     default: m.CustomCommandDialog,
@@ -57,6 +62,7 @@ const DIALOG_MODULES = [
   () => import("@/settings/SettingsDialog"),
   () => import("@/workspace/AddProjectDialog"),
   () => import("@/terminal/CloseTerminalDialog"),
+  () => import("@/editor/CloseFileDialog"),
   () => import("@/terminal/CustomCommandDialog"),
   () => import("@/workspace/FolderDialog"),
   () => import("@/workspace/MoveDialog"),
@@ -86,6 +92,7 @@ export function DialogHost() {
   const settingsOpen = useNavigationStore((state) => state.settingsOpen);
   const addProjectOpen = useDialogStore((state) => state.addProjectOpen);
   const closeTerminalId = useDialogStore((state) => state.closeTerminalId);
+  const closeFileTarget = useDialogStore((state) => state.closeFileTarget);
   const customCommandFor = useDialogStore((state) => state.customCommandFor);
   const folderDialog = useDialogStore((state) => state.folderDialog);
   const moveTarget = useDialogStore((state) => state.moveTarget);
@@ -103,6 +110,7 @@ export function DialogHost() {
       {settingsOpen && <SettingsDialog />}
       {addProjectOpen && <AddProjectDialog />}
       {closeTerminalId !== null && <CloseTerminalDialog />}
+      {closeFileTarget !== null && <CloseFileDialog />}
       {customCommandFor !== null && <CustomCommandDialog />}
       {folderDialog !== null && <FolderDialog />}
       {moveTarget !== null && <MoveDialog />}

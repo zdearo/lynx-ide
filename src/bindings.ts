@@ -42,8 +42,19 @@ export const commands = {
 	openConfigFile: () => typedError<null, IpcError>(__TAURI_INVOKE("open_config_file")),
 	/**  One folder of a worktree. `relative_path` is empty for the root and uses `/`. */
 	listDirectory: (worktreePath: string, relativePath: string) => typedError<DirectoryListing, IpcError>(__TAURI_INVOKE("list_directory", { worktreePath, relativePath })),
+	/**  The text of one file, for the editor. Refuses what it cannot show as text. */
+	readFile: (worktreePath: string, relativePath: string) => typedError<FileText, IpcError>(__TAURI_INVOKE("read_file", { worktreePath, relativePath })),
+	/**
+	 *  Saves the editor's text. `expected_hash` is the hash from the read; a file that changed since is
+	 *  refused, and `None` overwrites it.
+	 */
+	writeFile: (worktreePath: string, relativePath: string, content: string, expectedHash: string | null) => typedError<FileText, IpcError>(__TAURI_INVOKE("write_file", { worktreePath, relativePath, content, expectedHash })),
 	/**  Opens the folder that holds the item in the system file manager. */
 	revealInFileManager: (worktreePath: string, relativePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("reveal_in_file_manager", { worktreePath, relativePath })),
+	/**  The files with changes in a worktree: staged, unstaged and untracked. */
+	listChanges: (worktreePath: string) => typedError<ChangedFile[], IpcError>(__TAURI_INVOKE("list_changes", { worktreePath })),
+	/**  HEAD and the working tree for one file. `original_path` is the old path of a renamed file. */
+	readFileDiff: (worktreePath: string, relativePath: string, originalPath: string | null) => typedError<FileDiff, IpcError>(__TAURI_INVOKE("read_file_diff", { worktreePath, relativePath, originalPath })),
 };
 
 /** Events */
@@ -101,6 +112,20 @@ export type AppInfo = {
 /**  What a bell from a program does. Sound is left out: the terminal engine only reports the bell. */
 export type BellStyle = "none" | "visual";
 
+export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "typeChanged" | "untracked" | "conflicted";
+
+/**  One path as Git reports it: what is staged and what is not, which can differ. */
+export type ChangedFile = {
+	/**  Relative to the worktree, with `/`. */
+	path: string,
+	/**  Where a renamed or copied file came from. */
+	originalPath: string | null,
+	/**  The change in the index (what the next commit would hold). */
+	staged: ChangeKind | null,
+	/**  The change in the working tree that is not staged yet. Untracked and conflicted files are here. */
+	unstaged: ChangeKind | null,
+};
+
 /**
  *  Themes the terminal can use. `Default` is the look the app has always had. A theme
  *  gives the background; its text palette can also be used for the text.
@@ -134,6 +159,12 @@ export type DirectoryListing = {
 	truncated: boolean,
 };
 
+/**  A side that is `None` does not exist there: a new file has no original, a deleted one no modified. */
+export type FileDiff = {
+	original: string | null,
+	modified: string | null,
+};
+
 export type FileEntry = {
 	name: string,
 	kind: FileKind,
@@ -143,6 +174,12 @@ export type FileEntry = {
 };
 
 export type FileKind = "directory" | "file";
+
+export type FileText = {
+	content: string,
+	/**  Identifies this exact content. A write names the hash it started from, to notice a change on disk. */
+	hash: string,
+};
 
 /**  A user-made folder that groups repositories and other folders in the sidebar. */
 export type Folder = {
@@ -172,7 +209,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
 
 /**
  *  How every agent starts from a new terminal: `Manual` keeps its permission prompts, and `Yolo`

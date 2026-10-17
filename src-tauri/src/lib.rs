@@ -1,6 +1,7 @@
 mod agents;
 mod app_info;
 mod blocking_task;
+mod changes;
 mod config;
 mod error;
 mod files;

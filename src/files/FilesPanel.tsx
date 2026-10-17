@@ -1,10 +1,14 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { CaretMinimizeGlyph18 } from "@/components/icons/CaretMinimizeGlyph18";
 import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { changeMarks } from "@/changes/change-marks";
+import { useChangesRefresh } from "@/changes/use-changes-refresh";
+import { useChangesStore } from "@/changes/changes-store";
+import { useEditorStore } from "@/editor/editor-store";
 import { useExplorerStore } from "@/files/explorer-store";
 import { FileRow } from "@/files/FileRow";
 import { visibleRows, type EntryRow } from "@/files/file-tree-rows";
@@ -30,12 +34,17 @@ export function FilesPanel() {
   const tree = useExplorerStore((state) =>
     worktreePath ? state.trees[worktreePath] : undefined,
   );
+  const changedFiles = useChangesStore((state) =>
+    worktreePath ? state.byWorktree[worktreePath]?.files : undefined,
+  );
+  const marks = useMemo(() => changeMarks(changedFiles ?? []), [changedFiles]);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [treeElement, setTreeElement] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (worktreePath) void useExplorerStore.getState().load(worktreePath, "");
   }, [worktreePath]);
+  useChangesRefresh(worktreePath);
 
   if (!selectedWorktree || !worktreePath) {
     return (
@@ -59,6 +68,10 @@ export function FilesPanel() {
   const activate = (row: EntryRow) => {
     store.select(path, row.path);
     if (row.isDirectory) void store.toggle(path, row.path);
+  };
+
+  const openFile = (row: EntryRow) => {
+    if (!row.isDirectory) void useEditorStore.getState().open(path, row.path);
   };
 
   const moveTo = (row: EntryRow | undefined) => {
@@ -110,6 +123,7 @@ export function FilesPanel() {
       case "Enter":
       case " ":
         if (current.isDirectory) void store.toggle(path, current.path);
+        else openFile(current);
         break;
       case "ContextMenu":
         setMenuFor(current.path);
@@ -190,12 +204,17 @@ export function FilesPanel() {
                   row={row}
                   worktreePath={path}
                   selected={row.path === selectedPath}
+                  change={marks.files.get(row.path)}
+                  containsChanges={
+                    row.isDirectory && marks.folders.has(row.path)
+                  }
                   focusable={row.path === tabStop}
                   menuOpen={menuFor === row.path}
                   onMenuOpenChange={(open) =>
                     setMenuFor(open ? row.path : null)
                   }
                   onActivate={() => activate(row)}
+                  onOpen={() => openFile(row)}
                 />
               ) : (
                 <p

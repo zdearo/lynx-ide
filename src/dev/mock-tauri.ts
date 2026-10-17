@@ -185,6 +185,75 @@ const MOCK_FILES: Record<string, MockEntry[]> = {
   "link-to-src": [file("App.tsx")],
 };
 
+/** What the sample files contain; every other file is a short line of text. */
+const MOCK_CONTENT: Record<string, string> = {
+  "src/App.tsx": `import { Button } from "./ui/Button";
+
+// The sample app of the mock backend.
+export function App() {
+  const count = 3;
+  return <Button label={"Clicked " + count} />;
+}
+`,
+  "package.json": `{\n  "name": "sample",\n  "version": "1.0.0"\n}\n`,
+  "README.md": "# Sample\n\nA project for the mock backend.\n",
+};
+const MOCK_BINARY = new Set([
+  "logo.png",
+  "bundle.zip",
+  "data.sqlite",
+  "track.mp3",
+  "notes.pdf",
+]);
+
+/** The changed files of every mock worktree, as `git status` would report them. */
+const MOCK_CHANGES = [
+  {
+    path: "README.md",
+    originalPath: null,
+    staged: "modified",
+    unstaged: "modified",
+  },
+  {
+    path: "docs/setup.md",
+    originalPath: null,
+    staged: null,
+    unstaged: "untracked",
+  },
+  {
+    path: "package.json",
+    originalPath: null,
+    staged: "modified",
+    unstaged: null,
+  },
+  {
+    path: "src/App.tsx",
+    originalPath: null,
+    staged: null,
+    unstaged: "modified",
+  },
+  {
+    path: "src/ui/Button.tsx",
+    originalPath: "src/ui/Btn.tsx",
+    staged: "renamed",
+    unstaged: null,
+  },
+  {
+    path: "src/ui/Legacy.tsx",
+    originalPath: null,
+    staged: null,
+    unstaged: "deleted",
+  },
+];
+/** What HEAD holds for the files above that exist there. */
+const MOCK_ORIGINAL: Record<string, string> = {
+  "README.md": "# Sample\n\nA project.\n",
+  "package.json": `{\n  "name": "sample"\n}\n`,
+  "src/App.tsx": `import { Button } from "./ui/Button";\n\nexport function App() {\n  return <Button label="Click" />;\n}\n`,
+  "src/ui/Btn.tsx": "export const Btn = 1;\n",
+  "src/ui/Legacy.tsx": "export const legacy = true;\n",
+};
+
 const DEFAULT_CONFIG: AppConfig = {
   terminal: {
     fontFamily: null,
@@ -239,6 +308,8 @@ export function installMockTauri(scenario: string): void {
     fileExists: scenario === "broken",
     fileBroken: scenario === "broken",
   };
+  const fileContents = new Map<string, { content: string; hash: string }>();
+  let writeCounter = 0;
   const probe: { configFileOpened: boolean; revealed: string | null } = {
     configFileOpened: false,
     revealed: null,
@@ -506,6 +577,62 @@ export function installMockTauri(scenario: string): void {
             truncated: false,
           };
         }
+        case "list_changes":
+          await delay(60);
+          return structuredClone(MOCK_CHANGES);
+        case "read_file_diff": {
+          const relative = String(args.relativePath);
+          const change = MOCK_CHANGES.find((entry) => entry.path === relative);
+          const key = `${args.worktreePath}::${relative}`;
+          const original = MOCK_ORIGINAL[String(args.originalPath ?? relative)];
+          await delay(60);
+          if (change?.unstaged === "deleted") {
+            return { original: original ?? null, modified: null };
+          }
+          const stored = fileContents.get(key);
+          return {
+            original: original ?? null,
+            modified:
+              stored?.content ?? MOCK_CONTENT[relative] ?? `${relative}\n`,
+          };
+        }
+        case "read_file": {
+          const relative = String(args.relativePath);
+          if (
+            MOCK_CHANGES.some(
+              (e) => e.path === relative && e.unstaged === "deleted",
+            )
+          ) {
+            throw {
+              kind: "pathNotFound",
+              message: `${relative} does not exist`,
+            };
+          }
+          if (MOCK_BINARY.has(relative)) {
+            throw { kind: "binaryFile", message: `${relative} is not text` };
+          }
+          await delay(60);
+          const stored = fileContents.get(`${args.worktreePath}::${relative}`);
+          const content =
+            stored?.content ?? MOCK_CONTENT[relative] ?? `${relative}\n`;
+          return { content, hash: stored?.hash ?? `h-${content.length}` };
+        }
+        case "write_file": {
+          const key = `${args.worktreePath}::${String(args.relativePath)}`;
+          const stored = fileContents.get(key);
+          if (
+            args.expectedHash != null &&
+            args.expectedHash !==
+              (stored?.hash ??
+                `h-${(MOCK_CONTENT[String(args.relativePath)] ?? `${String(args.relativePath)}\n`).length}`)
+          ) {
+            throw { kind: "fileChanged", message: "the file changed on disk" };
+          }
+          const content = String(args.content);
+          const next = { content, hash: `w-${++writeCounter}` };
+          fileContents.set(key, next);
+          return next;
+        }
         case "reveal_in_file_manager":
           probe.revealed = `${String(args.worktreePath)}::${String(args.relativePath)}`;
           return null;
@@ -736,6 +863,13 @@ export function installMockTauri(scenario: string): void {
   Object.assign(window, {
     __lynxMock: {
       probe,
+      /** Changes a file as if another program had written it. */
+      touchFile(worktreePath: string, relative: string, content: string) {
+        fileContents.set(`${worktreePath}::${relative}`, {
+          content,
+          hash: `ext-${++writeCounter}`,
+        });
+      },
       /** Ends every running program, as if each one had exited with code 0. */
       endAllTerminals() {
         for (const session of sessions) {

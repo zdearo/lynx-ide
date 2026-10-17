@@ -208,6 +208,82 @@ export const copy = {
     openFolderFailed: "Could not open the folder",
     ignored: "ignored by Git",
     link: "link",
+    containsChanges: "contains changed files",
+  },
+
+  editor: {
+    tabs: "Open files",
+    preview: "preview",
+    toolbar: "File view",
+    viewEdit: "Edit",
+    viewDiff: "Diff",
+    viewGroup: "View",
+    modified: "modified",
+    label: (name: string) => `Editor for ${name}`,
+    close: "Close file",
+    closeNamed: (name: string) => `Close ${name}`,
+    unsaved: "unsaved changes",
+    loading: "Opening file…",
+    saving: "Saving…",
+    saveFailed: "Could not save the file",
+    openFailed: "Could not open the file",
+    tooLarge: "This file is too large to edit here.",
+    binary: "This file is not text, so it cannot be edited here.",
+    notAFile: "This is not a regular file.",
+    retry: "Retry",
+    conflictTitle: "This file changed on disk",
+    conflictBody: "Saving now would replace the newer version.",
+    overwrite: "Overwrite",
+    reload: "Reload from disk",
+    closeDialog: {
+      title: (name: string) => `Close ${name}?`,
+      body: "Its unsaved changes will be lost.",
+      keep: "Keep editing",
+      confirm: "Close without saving",
+    },
+  },
+
+  diff: {
+    label: (name: string) => `Changes in ${name}`,
+    loading: "Reading changes…",
+    noChanges: "No changes against HEAD.",
+    binary: "This file is not text, so its changes cannot be shown.",
+    tooLarge: "This file is too large to compare here.",
+    failed: "Could not read the changes",
+    retry: "Retry",
+    modeGroup: "Diff layout",
+    unified: "Unified",
+    split: "Split",
+    // CodeMirror puts the number of hidden lines where the $ is.
+    unchanged: "$ unchanged lines",
+  },
+
+  changes: {
+    title: "Changes",
+    list: "Changed files in the selected worktree",
+    noWorktree: "Select a worktree to see its changes.",
+    loading: "Reading changes…",
+    loadFailed: "Could not read the changes",
+    retry: "Retry",
+    refresh: "Refresh",
+    clean: "No changes in this worktree.",
+    sections: {
+      conflicts: "Merge conflicts",
+      staged: "Staged changes",
+      changes: "Changes",
+      untracked: "Untracked files",
+    },
+    kinds: {
+      added: "added",
+      modified: "modified",
+      deleted: "deleted",
+      renamed: "renamed",
+      copied: "copied",
+      typeChanged: "type changed",
+      untracked: "untracked",
+      conflicted: "conflict",
+    },
+    renamedFrom: (path: string) => `renamed from ${path}`,
   },
 
   summary: {
@@ -395,6 +471,20 @@ export const copy = {
   welcome: {
     title: "Add a project to get started",
     body: "Each task gets its own git worktree, with its agents and terminals next to it.",
+  },
+
+  statusBar: {
+    label: "Status bar",
+    lsp: {
+      none: "No language server running",
+      running: (list: string) => `Language servers: ${list}`,
+      state: {
+        starting: "starting",
+        indexing: "indexing",
+        ready: "ready",
+        stopping: "stopping",
+      },
+    },
   },
 
   shortcuts: {

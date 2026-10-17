@@ -16,6 +16,26 @@ export default defineConfig(() => ({
     },
   },
 
+  // CodeMirror loads on first use; listing it here stops the dev server from re-optimizing (and reloading the page) at that moment.
+  optimizeDeps: {
+    include: [
+      "@codemirror/commands",
+      "@codemirror/lang-css",
+      "@codemirror/lang-html",
+      "@codemirror/lang-javascript",
+      "@codemirror/lang-json",
+      "@codemirror/lang-markdown",
+      "@codemirror/lang-python",
+      "@codemirror/lang-rust",
+      "@codemirror/language",
+      "@codemirror/merge",
+      "@codemirror/search",
+      "@codemirror/state",
+      "@codemirror/view",
+      "@lezer/highlight",
+    ],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

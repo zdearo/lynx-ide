@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { commands, type IpcErrorKind } from "@/bindings";
+import { commands, type DiffSource, type IpcErrorKind } from "@/bindings";
 import { documentKey, forgetDocument } from "@/editor/editor-documents";
 import { errorMessage } from "@/lib/error-message";
 import { IpcRequestError, unwrap } from "@/lib/ipc-result";
@@ -18,6 +18,10 @@ export interface OpenFile {
   view: FileView;
   /** Where a renamed file was in HEAD, for its diff. */
   originalPath: string | null;
+  /** What the diff compares: the working tree with HEAD, with the index, with the base branch. */
+  diffSource: DiffSource;
+  /** Set for a file of an old commit: its real path and the commit. Such a tab only shows a diff. */
+  commit: { hash: string; path: string } | null;
   status: "loading" | "ready" | "error";
   /** The text the editor starts from. The editor itself holds what is typed after. */
   text: string;
@@ -40,6 +44,8 @@ export interface OpenOptions {
   preview?: boolean;
   view?: FileView;
   originalPath?: string | null;
+  /** Opens a file of an old commit, as a diff against its parent. `path` is then the tab's id. */
+  commit?: { hash: string; path: string };
 }
 
 interface EditorStoreState {
@@ -55,6 +61,11 @@ interface EditorStoreState {
   /** Turns a preview tab into a permanent one. */
   pin: (worktreePath: string, path: string) => void;
   setView: (worktreePath: string, path: string, view: FileView) => void;
+  setDiffSource: (
+    worktreePath: string,
+    path: string,
+    source: DiffSource,
+  ) => void;
   /** Shows a file, or with null the terminals again. */
   show: (worktreePath: string, path: string | null) => void;
   markDirty: (worktreePath: string, path: string) => void;
@@ -131,11 +142,15 @@ export const useEditorStore = create<EditorStoreState>((set, get) => {
       }
       const entry: OpenFile = {
         path,
-        name: fileName(path),
         preview,
-        view: options.view ?? "edit",
+        view: options.commit ? "diff" : (options.view ?? "edit"),
         originalPath: options.originalPath ?? null,
-        status: "loading",
+        diffSource: { kind: "head" },
+        commit: options.commit ?? null,
+        name: options.commit
+          ? `${fileName(options.commit.path)} @ ${options.commit.hash.slice(0, 7)}`
+          : fileName(path),
+        status: options.commit ? "ready" : "loading",
         text: "",
         hash: null,
         dirty: false,
@@ -160,7 +175,8 @@ export const useEditorStore = create<EditorStoreState>((set, get) => {
           active: { ...state.active, [worktreePath]: path },
         };
       });
-      await load(worktreePath, path);
+      // A file of an old commit has no text to read: only its diff is shown.
+      if (!options.commit) await load(worktreePath, path);
     },
 
     pin(worktreePath, path) {
@@ -171,6 +187,10 @@ export const useEditorStore = create<EditorStoreState>((set, get) => {
 
     setView(worktreePath, path, view) {
       patch(worktreePath, path, { view });
+    },
+
+    setDiffSource(worktreePath, path, diffSource) {
+      patch(worktreePath, path, { diffSource });
     },
 
     show(worktreePath, path) {

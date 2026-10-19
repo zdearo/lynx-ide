@@ -1,4 +1,4 @@
-import type { ChangeKind, ChangedFile } from "@/bindings";
+import type { ChangeKind, ChangedFile, LineCounts } from "@/bindings";
 
 export type ChangeSectionId = "conflicts" | "staged" | "changes" | "untracked";
 
@@ -6,6 +6,8 @@ export interface ChangeEntry {
   file: ChangedFile;
   /** The change this row shows: the staged one in "staged", the unstaged one elsewhere. */
   kind: ChangeKind;
+  /** Lines added and removed on this side of the file, when git could count them. */
+  lines: LineCounts | null;
 }
 
 export interface ChangeSection {
@@ -28,16 +30,24 @@ export function changeSections(files: readonly ChangedFile[]): ChangeSection[] {
   );
   for (const file of files) {
     if (file.unstaged === "conflicted") {
-      sections.get("conflicts")?.push({ file, kind: "conflicted" });
+      sections
+        .get("conflicts")
+        ?.push({ file, kind: "conflicted", lines: file.unstagedLines });
       continue;
     }
     if (file.staged) {
-      sections.get("staged")?.push({ file, kind: file.staged });
+      sections
+        .get("staged")
+        ?.push({ file, kind: file.staged, lines: file.stagedLines });
     }
     if (file.unstaged === "untracked") {
-      sections.get("untracked")?.push({ file, kind: "untracked" });
+      sections
+        .get("untracked")
+        ?.push({ file, kind: "untracked", lines: file.unstagedLines });
     } else if (file.unstaged) {
-      sections.get("changes")?.push({ file, kind: file.unstaged });
+      sections
+        .get("changes")
+        ?.push({ file, kind: file.unstaged, lines: file.unstagedLines });
     }
   }
   return ORDER.map((id) => ({ id, entries: sections.get(id) ?? [] })).filter(

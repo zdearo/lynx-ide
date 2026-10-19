@@ -3,6 +3,9 @@ use std::io;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use crate::bounded_command::{BoundedError, run_bounded};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
@@ -12,6 +15,8 @@ pub enum GitError {
     Failed { args: String, stderr: String },
     #[error("could not run git: {0}")]
     Io(#[source] io::Error),
+    #[error("git {args} did not finish in time")]
+    TimedOut { args: String },
 }
 
 impl GitError {
@@ -27,6 +32,7 @@ pub struct GitCommand<'a> {
     cwd: &'a Path,
     args: Vec<OsString>,
     stdin: Option<Vec<u8>>,
+    timeout: Option<Duration>,
 }
 
 pub fn git(cwd: &Path) -> GitCommand<'_> {
@@ -34,6 +40,7 @@ pub fn git(cwd: &Path) -> GitCommand<'_> {
         cwd,
         args: Vec::new(),
         stdin: None,
+        timeout: None,
     }
 }
 
@@ -53,10 +60,24 @@ impl GitCommand<'_> {
         self
     }
 
+    /// Stops git after `timeout`. For commands that wait on the network, which can hang.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
     /// Bytes fed to git's standard input.
     pub fn stdin(mut self, input: Vec<u8>) -> Self {
         self.stdin = Some(input);
         self
+    }
+
+    fn args_text(&self) -> String {
+        self.args
+            .iter()
+            .map(|a| a.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Returns stdout without the trailing newline.
@@ -88,9 +109,16 @@ impl GitCommand<'_> {
             io::ErrorKind::NotFound => GitError::NotInstalled,
             _ => GitError::Io(error),
         };
-        let output = match self.stdin.clone() {
-            None => command.output().map_err(to_git_error)?,
-            Some(input) => {
+        let output = match (self.timeout, self.stdin.clone()) {
+            (Some(limit), input) => run_bounded(&mut command, &input.unwrap_or_default(), limit)
+                .map_err(|error| match error {
+                    BoundedError::TimedOut => GitError::TimedOut {
+                        args: self.args_text(),
+                    },
+                    BoundedError::Spawn(source) => to_git_error(source),
+                })?,
+            (None, None) => command.output().map_err(to_git_error)?,
+            (None, Some(input)) => {
                 command
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
@@ -115,12 +143,7 @@ impl GitCommand<'_> {
         }
 
         Err(GitError::Failed {
-            args: self
-                .args
-                .iter()
-                .map(|a| a.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" "),
+            args: self.args_text(),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         })
     }
@@ -139,6 +162,26 @@ fn hide_console_window(_command: &mut Command) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_command_with_a_time_limit_still_returns_its_output_and_its_errors() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let limit = Duration::from_secs(30);
+
+        let version = git(dir.path())
+            .arg("--version")
+            .timeout(limit)
+            .run()
+            .expect("version");
+        assert!(version.starts_with("git version"));
+
+        let error = git(dir.path())
+            .args(["rev-parse", "--show-toplevel"])
+            .timeout(limit)
+            .run()
+            .expect_err("not a repo");
+        assert!(error.stderr_contains("not a git repository"));
+    }
 
     #[test]
     fn failed_command_reports_args_and_stderr() {

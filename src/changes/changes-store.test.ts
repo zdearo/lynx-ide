@@ -13,6 +13,8 @@ const wt = "/work/api";
 const modified = (path: string): ChangedFile => ({
   path,
   originalPath: null,
+  stagedLines: null,
+  unstagedLines: null,
   staged: null,
   unstaged: "modified",
 });

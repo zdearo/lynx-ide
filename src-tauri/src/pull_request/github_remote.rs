@@ -161,9 +161,19 @@ pub fn classify_failure(stderr: &str) -> GitHubRemoteError {
     GitHubRemoteError::Failed(stderr.trim().to_owned())
 }
 
-fn run_gh<S: AsRef<str>>(
+pub(super) fn run_gh<S: AsRef<str>>(
     args: &[S],
     dir: Option<&Path>,
+    timeout: Duration,
+) -> Result<String, GitHubRemoteError> {
+    run_gh_with_input(args, dir, &[], timeout)
+}
+
+/// Like `run_gh`, with `input` on gh's stdin: where a long comment goes, away from the command line.
+pub(super) fn run_gh_with_input<S: AsRef<str>>(
+    args: &[S],
+    dir: Option<&Path>,
+    input: &[u8],
     timeout: Duration,
 ) -> Result<String, GitHubRemoteError> {
     let mut command = Command::new("gh");
@@ -174,7 +184,7 @@ fn run_gh<S: AsRef<str>>(
     if let Some(dir) = dir {
         command.current_dir(dir);
     }
-    let output = run_bounded(&mut command, &[], timeout).map_err(|error| match error {
+    let output = run_bounded(&mut command, input, timeout).map_err(|error| match error {
         BoundedError::TimedOut => GitHubRemoteError::TimedOut,
         BoundedError::Spawn(source) if source.kind() == std::io::ErrorKind::NotFound => {
             GitHubRemoteError::NotInstalled

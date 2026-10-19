@@ -46,3 +46,14 @@ pub async fn remove_hooks(
     let targets = targets.inner().clone();
     run_blocking(move || Ok(targets.remove(harness)?)).await
 }
+
+/// Saves a long prompt to a file and returns its path, for an agent to be told to read.
+#[tauri::command]
+#[specta::specta]
+pub async fn write_agent_prompt(prompt: String) -> Result<String, IpcError> {
+    run_blocking(move || {
+        let path = super::agent_prompt_file::write(&prompt)?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
+}

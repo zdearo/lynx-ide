@@ -11,7 +11,14 @@ const file = (
   path: string,
   staged: ChangedFile["staged"],
   unstaged: ChangedFile["unstaged"],
-): ChangedFile => ({ path, originalPath: null, staged, unstaged });
+): ChangedFile => ({
+  path,
+  originalPath: null,
+  staged,
+  unstaged,
+  stagedLines: null,
+  unstagedLines: null,
+});
 
 describe("changeSections", () => {
   it("splits staged, changed and untracked files, in that order", () => {

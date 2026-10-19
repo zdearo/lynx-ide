@@ -41,6 +41,9 @@ export function FileDiffView({
   const modified = useChangesStore((state) =>
     Boolean(changeOf(state.byWorktree[worktreePath], file.path)),
   );
+  // A tab of an old commit compares that commit with its parent; the others follow the picked source.
+  const isHead = !file.commit && file.diffSource.kind === "head";
+  const realPath = file.commit?.path ?? file.path;
   const [state, setState] = useState<DiffState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -49,7 +52,14 @@ export function FileDiffView({
     void (async () => {
       try {
         const read = await unwrap(
-          commands.readFileDiff(worktreePath, file.path, file.originalPath),
+          commands.readFileDiff(
+            worktreePath,
+            file.commit?.path ?? file.path,
+            file.originalPath,
+            file.commit
+              ? { kind: "commit", hash: file.commit.hash }
+              : file.diffSource,
+          ),
         );
         if (!current) return;
         const next = {
@@ -81,6 +91,8 @@ export function FileDiffView({
     worktreePath,
     file.path,
     file.originalPath,
+    file.commit,
+    file.diffSource,
     file.revision,
     tick,
     attempt,
@@ -116,15 +128,16 @@ export function FileDiffView({
   }
 
   // Unsaved edits belong in the diff: it answers "what will my change look like".
-  const kept = file.dirty
-    ? getDocument(documentKey(worktreePath, file.path))
-    : undefined;
+  const kept =
+    file.dirty && isHead
+      ? getDocument(documentKey(worktreePath, file.path))
+      : undefined;
   const modifiedText =
     kept?.revision === file.revision
       ? kept.state.doc.toString()
       : state.modified;
 
-  if (state.original === modifiedText && !modified) {
+  if (state.original === modifiedText && (!isHead || !modified)) {
     return (
       <p className="px-4 pt-3 text-ui text-muted-foreground">
         {copy.diff.noChanges}
@@ -134,7 +147,7 @@ export function FileDiffView({
 
   return (
     <DiffEditor
-      path={file.path}
+      path={realPath}
       original={state.original}
       modified={modifiedText}
       mode={mode}

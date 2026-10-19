@@ -1,3 +1,4 @@
+import type { DiffSource } from "@/bindings";
 import { changeLetter } from "@/changes/change-sections";
 import { changeOf, useChangesStore } from "@/changes/changes-store";
 import { useDiffModeStore, type DiffMode } from "@/editor/diff-mode";
@@ -47,6 +48,12 @@ function Segment<T extends string>({
   );
 }
 
+const COMPARE_KINDS = ["head", "staged", "unstaged", "base"] as const;
+
+function compareSource(kind: DiffSource["kind"]): DiffSource {
+  return kind === "commit" ? { kind: "head" } : { kind };
+}
+
 /** The strip above a file: where it is, whether it changed, and edit/diff switching. */
 export function FileToolbar({
   worktreePath,
@@ -62,8 +69,11 @@ export function FileToolbar({
   const setMode = useDiffModeStore((state) => state.setMode);
   const kind = change?.unstaged ?? change?.staged ?? null;
 
-  const slash = file.path.lastIndexOf("/");
-  const folder = slash >= 0 ? file.path.slice(0, slash + 1) : "";
+  // A tab of an old commit has an internal id; the toolbar shows the real path.
+  const shownPath = file.commit?.path ?? file.path;
+  const slash = shownPath.lastIndexOf("/");
+  const folder = slash >= 0 ? shownPath.slice(0, slash + 1) : "";
+  const shownName = slash >= 0 ? shownPath.slice(slash + 1) : shownPath;
 
   return (
     <div
@@ -73,11 +83,11 @@ export function FileToolbar({
     >
       <span
         className="flex min-w-0 flex-1 items-center gap-2"
-        title={file.path}
+        title={shownPath}
       >
         <span className="min-w-0 truncate">
           <span className="text-muted-foreground">{folder}</span>
-          {file.name}
+          {shownName}
         </span>
         {kind && (
           <span
@@ -95,6 +105,26 @@ export function FileToolbar({
         )}
       </span>
 
+      {file.commit && (
+        <span className="shrink-0 rounded-sm bg-muted px-1.5 text-meta font-mono text-muted-foreground">
+          {copy.diff.commitTab(file.commit.hash)}
+        </span>
+      )}
+      {file.view === "diff" && !file.commit && (
+        <Segment<DiffSource["kind"]>
+          label={copy.diff.compareGroup}
+          value={file.diffSource.kind}
+          onChange={(kind) =>
+            useEditorStore
+              .getState()
+              .setDiffSource(worktreePath, file.path, compareSource(kind))
+          }
+          options={COMPARE_KINDS.map((id) => ({
+            id,
+            label: copy.diff.compare[id],
+          }))}
+        />
+      )}
       {file.view === "diff" && (
         <Segment<DiffMode>
           label={copy.diff.modeGroup}
@@ -116,12 +146,14 @@ export function FileToolbar({
           {
             id: "edit",
             label: copy.editor.viewEdit,
-            disabled: file.status === "error" && file.view !== "edit",
+            disabled:
+              Boolean(file.commit) ||
+              (file.status === "error" && file.view !== "edit"),
           },
           {
             id: "diff",
             label: copy.editor.viewDiff,
-            disabled: !change && file.view !== "diff",
+            disabled: !change && file.view !== "diff" && !file.commit,
           },
         ]}
       />

@@ -6,6 +6,8 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::git::GitError;
+
+use super::line_counts::{LineCounts, attach as attach_line_counts};
 use crate::git::git_command::git;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
@@ -33,6 +35,10 @@ pub struct ChangedFile {
     pub staged: Option<ChangeKind>,
     /// The change in the working tree that is not staged yet. Untracked and conflicted files are here.
     pub unstaged: Option<ChangeKind>,
+    /// Lines added and removed by the staged change. `None` for a binary file or a failed read.
+    pub staged_lines: Option<LineCounts>,
+    /// The same for the change that is not staged. An untracked file counts as all added.
+    pub unstaged_lines: Option<LineCounts>,
 }
 
 fn kind_of(code: char) -> Option<ChangeKind> {
@@ -85,6 +91,8 @@ pub fn parse_status(output: &str) -> Vec<ChangedFile> {
             original_path,
             staged,
             unstaged,
+            staged_lines: None,
+            unstaged_lines: None,
         });
     }
     files
@@ -101,7 +109,9 @@ pub fn list_changes(root: &Path) -> Result<Vec<ChangedFile>, GitError> {
             "--untracked-files=all",
         ])
         .run()?;
-    Ok(parse_status(&output))
+    let mut files = parse_status(&output);
+    attach_line_counts(root, &mut files);
+    Ok(files)
 }
 
 #[cfg(test)]

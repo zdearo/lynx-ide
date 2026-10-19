@@ -215,6 +215,51 @@ function stageMockChange(path: string): void {
   }
 }
 
+/** The conversation of the mock pull request #42: comments, reviews and one inline thread. */
+const mockDiscussion = {
+  comments: [
+    {
+      id: "IC_1",
+      author: "ana",
+      body: "Could we also cover the refresh path in a test?",
+      createdAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+      url: "https://github.com/acme/app/pull/42#issuecomment-1",
+    },
+  ],
+  reviews: [
+    {
+      author: "bruno",
+      verdict: "changesRequested",
+      body: "The token should be refreshed before the request, not after.",
+      submittedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+    },
+  ],
+  threads: [
+    {
+      id: "PRRT_mock1",
+      path: "src/App.tsx",
+      line: 12,
+      resolved: false,
+      outdated: false,
+      comments: [
+        {
+          id: "C_1",
+          author: "bruno",
+          body: "Why is this call made twice?",
+          createdAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+          url: "https://github.com/acme/app/pull/42#discussion_r1",
+        },
+      ],
+    },
+  ],
+};
+
+/** What GitHub holds for each mock pull request: an action on it changes what is read back. */
+const mockPrStates = new Map<
+  number,
+  { state: string; isDraft: boolean; autoMerge: boolean }
+>([[42, { state: "open", isDraft: false, autoMerge: false }]]);
+
 /** Pull requests created from the form during this session, by worktree. */
 const createdPullRequests = new Map<
   string,
@@ -223,6 +268,10 @@ const createdPullRequests = new Map<
 
 /** Worktrees whose repository got a GitHub remote from the dialog during this session. */
 const remoteCreated = new Set<string>();
+
+/** Commits only the remote has, and whether they are old copies of commits rewritten here. */
+let mockBehind = 0;
+let mockRewritten = false;
 
 const NOW_SECONDS = Math.floor(Date.now() / 1000);
 
@@ -248,11 +297,18 @@ const mockCommits = [
   },
 ];
 
+interface MockLines {
+  added: number;
+  removed: number;
+}
+
 interface MockChange {
   path: string;
   originalPath: string | null;
   staged: string | null;
   unstaged: string | null;
+  stagedLines: MockLines | null;
+  unstagedLines: MockLines | null;
 }
 
 /** The changed files of every mock worktree, as `git status` would report them. */
@@ -262,36 +318,48 @@ let MOCK_CHANGES: MockChange[] = [
     originalPath: null,
     staged: "modified",
     unstaged: "modified",
+    stagedLines: { added: 1, removed: 0 },
+    unstagedLines: { added: 2, removed: 1 },
   },
   {
     path: "docs/setup.md",
     originalPath: null,
     staged: null,
     unstaged: "untracked",
+    stagedLines: null,
+    unstagedLines: { added: 12, removed: 0 },
   },
   {
     path: "package.json",
     originalPath: null,
     staged: "modified",
     unstaged: null,
+    stagedLines: { added: 1, removed: 1 },
+    unstagedLines: null,
   },
   {
     path: "src/App.tsx",
     originalPath: null,
     staged: null,
     unstaged: "modified",
+    stagedLines: null,
+    unstagedLines: { added: 3, removed: 1 },
   },
   {
     path: "src/ui/Button.tsx",
     originalPath: "src/ui/Btn.tsx",
     staged: "renamed",
     unstaged: null,
+    stagedLines: null,
+    unstagedLines: null,
   },
   {
     path: "src/ui/Legacy.tsx",
     originalPath: null,
     staged: null,
     unstaged: "deleted",
+    stagedLines: null,
+    unstagedLines: { added: 0, removed: 8 },
   },
 ];
 /** What HEAD holds for the files above that exist there. */
@@ -517,6 +585,9 @@ export function installMockTauri(scenario: string): void {
     "pi",
     "omp",
   ] as const;
+  // What the last "Fix with AI" wrote and typed, for the e2e to read.
+  let lastAgentPrompt = "";
+  let lastTerminalCommand: string | null = null;
   const onThisMachine = new Set([
     "claude",
     "codex",
@@ -638,6 +709,17 @@ export function installMockTauri(scenario: string): void {
           await delay(60);
           stageMockChange(String(args.relativePath));
           return null;
+        case "discard_changes":
+          await delay(60);
+          // The unstaged change is gone; what was staged stays, and a file with nothing left leaves the list.
+          MOCK_CHANGES = MOCK_CHANGES.flatMap((change) => {
+            if (!(args.relativePaths as string[]).includes(change.path)) {
+              return [change];
+            }
+            const rest = { ...change, unstaged: null };
+            return rest.staged ? [rest] : [];
+          });
+          return null;
         case "stage_changes":
           await delay(60);
           for (const path of args.relativePaths as string[]) {
@@ -666,20 +748,55 @@ export function installMockTauri(scenario: string): void {
               ahead: 0,
               behind: 0,
               remote: remoteCreated.has(path) ? "origin" : null,
+              rewritten: false,
             };
           }
           return {
             branch: "feat/auth",
             upstream: "origin/feat/auth",
             ahead: mockCommits.filter((commit) => !commit.pushed).length,
-            behind: 0,
+            behind: mockBehind,
             remote: "origin",
+            rewritten: mockRewritten,
           };
         }
-        case "push_branch":
+        case "fetch_remote":
+          await delay(30);
+          return null;
+        case "pull_branch":
+          await delay(150);
+          mockBehind = 0;
+          return null;
+        case "force_push_branch":
           await delay(200);
+          mockBehind = 0;
+          mockRewritten = false;
           for (const commit of mockCommits) commit.pushed = true;
           return null;
+        case "push_branch":
+          await delay(200);
+          mockBehind = 0;
+          for (const commit of mockCommits) commit.pushed = true;
+          return null;
+        case "list_commit_files":
+          await delay(40);
+          return [
+            {
+              path: "src/App.tsx",
+              originalPath: null,
+              kind: "modified",
+              lines: { added: 3, removed: 1 },
+            },
+            {
+              path: "docs/notes.md",
+              originalPath: null,
+              kind: "added",
+              lines: { added: 12, removed: 0 },
+            },
+          ];
+        case "get_last_commit_message":
+          await delay(30);
+          return { summary: mockCommits[0].subject, description: "" };
         case "list_commits":
           await delay(40);
           return mockCommits.map((commit, index) => {
@@ -717,8 +834,19 @@ export function installMockTauri(scenario: string): void {
             title: request.title,
             draft: request.draft,
           });
+          mockPrStates.set(77, {
+            state: "open",
+            isDraft: request.draft,
+            autoMerge: false,
+          });
           return { url: "https://github.com/acme/api/pull/77" };
         }
+        case "get_check_log":
+          await delay(80);
+          return {
+            text: "## Run tests\n$ cargo test\nerror: test failed, to rerun pass `--lib`",
+            truncated: true,
+          };
         case "get_github_account":
           await delay(60);
           return { login: "zdearo", organizations: ["acme"] };
@@ -735,34 +863,107 @@ export function installMockTauri(scenario: string): void {
           }
           const created = createdPullRequests.get(path);
           if (created) {
+            const held = mockPrStates.get(77) ?? {
+              state: "open",
+              isDraft: created.draft,
+              autoMerge: false,
+            };
             return {
               number: 77,
               title: created.title,
               url: "https://github.com/acme/api/pull/77",
-              state: "open",
-              isDraft: created.draft,
+              state: held.state,
+              isDraft: held.isDraft,
               review: null,
               headBranch: "refactor/db-pool",
+              baseBranch: "main",
+              mergeState: "clean",
+              autoMerge: held.autoMerge,
               checks: [],
             };
           }
           // Only the feat/auth worktree has a pull request in the mock; the others have none.
           if (!path.endsWith("feat-auth")) return null;
+          const held42 = mockPrStates.get(42);
           return {
             number: 42,
             title: "fix(auth): refresh the token before it expires",
             url: "https://github.com/acme/app/pull/42",
-            state: "open",
-            isDraft: false,
+            state: held42?.state ?? "open",
+            isDraft: held42?.isDraft ?? false,
             review: "reviewRequired",
             headBranch: "feat/auth",
+            baseBranch: "main",
+            mergeState: "unstable",
+            autoMerge: held42?.autoMerge ?? false,
             checks: [
-              { name: "CI / test", state: "failed" },
-              { name: "CI / build", state: "pending" },
-              { name: "CI / lint", state: "passed" },
-              { name: "CI / docs", state: "skipped" },
+              {
+                name: "CI / test",
+                state: "failed",
+                detailsUrl:
+                  "https://github.com/acme/app/actions/runs/9/job/123",
+              },
+              { name: "CI / build", state: "pending", detailsUrl: null },
+              { name: "CI / lint", state: "passed", detailsUrl: null },
+              { name: "CI / docs", state: "skipped", detailsUrl: null },
             ],
           };
+        }
+        case "get_merge_methods":
+          await delay(40);
+          return ["squash", "merge"];
+        case "run_pull_request_action": {
+          await delay(150);
+          const held = mockPrStates.get(Number(args.number));
+          const action = args.action as {
+            kind: string;
+            auto?: boolean;
+          };
+          if (held) {
+            if (action.kind === "merge") {
+              if (action.auto) held.autoMerge = true;
+              else held.state = "merged";
+            } else if (action.kind === "close") held.state = "closed";
+            else if (action.kind === "reopen") held.state = "open";
+            else if (action.kind === "markReady") held.isDraft = false;
+            else if (action.kind === "markDraft") held.isDraft = true;
+          }
+          return null;
+        }
+        case "get_pull_request_discussion":
+          await delay(60);
+          return structuredClone(mockDiscussion);
+        case "comment_on_pull_request":
+          await delay(100);
+          mockDiscussion.comments.push({
+            id: `IC_${mockDiscussion.comments.length + 1}`,
+            author: "Dev User",
+            body: String(args.body),
+            createdAt: new Date().toISOString(),
+            url: "https://github.com/acme/app/pull/42#issuecomment-2",
+          });
+          return null;
+        case "reply_to_review_thread": {
+          await delay(100);
+          const thread = mockDiscussion.threads.find(
+            (item) => item.id === args.threadId,
+          );
+          thread?.comments.push({
+            id: `C_${(thread?.comments.length ?? 0) + 1}`,
+            author: "Dev User",
+            body: String(args.body),
+            createdAt: new Date().toISOString(),
+            url: "https://github.com/acme/app/pull/42#discussion_r2",
+          });
+          return null;
+        }
+        case "resolve_review_thread": {
+          await delay(80);
+          const thread = mockDiscussion.threads.find(
+            (item) => item.id === args.threadId,
+          );
+          if (thread) thread.resolved = Boolean(args.resolved);
+          return null;
         }
         case "open_pull_request_url":
           await delay(40);
@@ -776,12 +977,37 @@ export function installMockTauri(scenario: string): void {
           };
         case "commit_changes":
           await delay(120);
-          mockCommits.unshift({
-            subject: String(args.summary),
-            author: "Dev User",
-            ago: 5,
-            pushed: false,
-          });
+          // A summary that says so makes a pre-commit hook reject the commit.
+          if (String(args.summary).includes("hook fails")) {
+            throw {
+              kind: "git",
+              message: "pre-commit hook failed: eslint found 2 errors",
+            };
+          }
+          if (args.amend) {
+            const last = mockCommits[0];
+            // The mock remote has the commit when it is pushed: only a yes lets it be rewritten.
+            if (last.pushed && !args.allowPushed) {
+              throw {
+                kind: "changeRefused",
+                message: "the last commit is already on the remote",
+              };
+            }
+            // The remote still holds the old copy: the branch now reads as rewritten.
+            if (last.pushed) {
+              mockBehind = 1;
+              mockRewritten = true;
+            }
+            last.subject = String(args.summary);
+            last.pushed = false;
+          } else {
+            mockCommits.unshift({
+              subject: String(args.summary),
+              author: "Dev User",
+              ago: 5,
+              pushed: false,
+            });
+          }
           // What was staged is now in a commit: it leaves the list unless the working tree changed it again.
           MOCK_CHANGES = MOCK_CHANGES.flatMap((change) => {
             if (!change.staged) return [change];
@@ -795,15 +1021,29 @@ export function installMockTauri(scenario: string): void {
           const key = `${args.worktreePath}::${relative}`;
           const original = MOCK_ORIGINAL[String(args.originalPath ?? relative)];
           await delay(60);
+          const source = args.source as { kind: string; hash?: string };
+          // An old commit: the same two small texts for every file, marked with the hash.
+          if (source.kind === "commit") {
+            return {
+              original: `// before ${source.hash}\nconst value = 1;\n`,
+              modified: `// after ${source.hash}\nconst value = 2;\n`,
+            };
+          }
           if (change?.unstaged === "deleted") {
             return { original: original ?? null, modified: null };
           }
           const stored = fileContents.get(key);
-          return {
-            original: original ?? null,
-            modified:
-              stored?.content ?? MOCK_CONTENT[relative] ?? `${relative}\n`,
-          };
+          const working =
+            stored?.content ?? MOCK_CONTENT[relative] ?? `${relative}\n`;
+          // The index sits between HEAD and the working tree: HEAD plus one staged line.
+          const staged = `${original ?? ""}// staged line\n`;
+          if (source.kind === "staged") {
+            return { original: original ?? null, modified: staged };
+          }
+          if (source.kind === "unstaged") {
+            return { original: staged, modified: working };
+          }
+          return { original: original ?? null, modified: working };
         }
         case "read_file": {
           const relative = String(args.relativePath);
@@ -1020,7 +1260,11 @@ export function installMockTauri(scenario: string): void {
         case "remove_hooks":
           hookStates[String(args.harness)] = "notInstalled";
           return hookStatusOf(String(args.harness));
+        case "write_agent_prompt":
+          lastAgentPrompt = String(args.prompt);
+          return "/tmp/lynx-prompts/prompt-mock.md";
         case "create_terminal": {
+          lastTerminalCommand = (args.command as string | null) ?? null;
           const id = addSession(
             String(args.worktreePath),
             (args.command as string | null) ?? null,
@@ -1072,6 +1316,15 @@ export function installMockTauri(scenario: string): void {
   Object.assign(window, {
     __lynxMock: {
       probe,
+      /** The prompt file the last agent was given, and the command typed to start it. */
+      lastAgentRun: () => ({
+        prompt: lastAgentPrompt,
+        command: lastTerminalCommand,
+      }),
+      /** Pretends the remote has this many commits the branch lacks. */
+      setBehind(count: number) {
+        mockBehind = count;
+      },
       /** Changes a file as if another program had written it. */
       touchFile(worktreePath: string, relative: string, content: string) {
         fileContents.set(`${worktreePath}::${relative}`, {

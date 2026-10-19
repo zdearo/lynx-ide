@@ -37,3 +37,10 @@ export function sortChecks(
     (a, b) => ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name),
   );
 }
+
+/** Whether a check's page is a job of GitHub Actions, which has a log to read. */
+export function hasJobLog(check: PullRequestCheck): boolean {
+  return /^https:\/\/.+\/actions\/runs\/\d+\/job\/\d+/.test(
+    check.detailsUrl ?? "",
+  );
+}

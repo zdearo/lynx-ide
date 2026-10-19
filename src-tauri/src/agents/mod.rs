@@ -4,6 +4,7 @@ pub mod activity;
 pub mod agent_catalog;
 pub mod agent_commands;
 pub mod agent_monitor;
+pub mod agent_prompt_file;
 pub mod agent_title;
 pub mod claude_hooks;
 pub mod codex_hooks;

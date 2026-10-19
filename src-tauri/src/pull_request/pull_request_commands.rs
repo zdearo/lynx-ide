@@ -9,10 +9,15 @@ use crate::error::{AppError, IpcError};
 use crate::workspace::workspace_service::WorkspaceService;
 
 use super::github_remote::{CreateRemoteRequest, GitHubAccount, account, create_remote};
+use super::pull_request_actions::{MergeMethod, PullRequestAction, merge_methods, run_action};
 use super::pull_request_create::{
     CreatePullRequestRequest, CreatedPullRequest, PullRequestForm, create, form,
 };
+use super::pull_request_discussion::{
+    Discussion, add_comment, read as read_discussion, reply_to_thread, set_thread_resolved,
+};
 use super::pull_request_draft::{DraftedPullRequest, draft};
+use super::pull_request_logs::{CheckLog, read as read_check_log};
 use super::pull_request_lookup::{PullRequest, lookup};
 
 /// The pull request of a worktree's branch, or `None` when the branch has none.
@@ -104,6 +109,122 @@ pub async fn create_pull_request(
     run_blocking(move || {
         let root = workspace.resolve_worktree(&worktree_path)?;
         create(&root, &request)
+    })
+    .await
+}
+
+/// The merge methods the repository allows, for the merge button's picker.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_merge_methods(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+) -> Result<Vec<MergeMethod>, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        merge_methods(&root).map_err(AppError::from)
+    })
+    .await
+}
+
+/// Merges, closes, reopens or changes the draft state of a pull request. The interface confirms a merge.
+#[tauri::command]
+#[specta::specta]
+pub async fn run_pull_request_action(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    number: u32,
+    action: PullRequestAction,
+) -> Result<(), IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        run_action(&root, number, &action).map_err(AppError::from)
+    })
+    .await
+}
+
+/// The conversation, reviews and inline threads of a pull request.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_pull_request_discussion(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    number: u32,
+) -> Result<Discussion, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        read_discussion(&root, number).map_err(AppError::from)
+    })
+    .await
+}
+
+/// A new comment on the conversation of a pull request.
+#[tauri::command]
+#[specta::specta]
+pub async fn comment_on_pull_request(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    number: u32,
+    body: String,
+) -> Result<(), IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        add_comment(&root, number, &body).map_err(AppError::from)
+    })
+    .await
+}
+
+/// A reply in an inline review thread.
+#[tauri::command]
+#[specta::specta]
+pub async fn reply_to_review_thread(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    thread_id: String,
+    body: String,
+) -> Result<(), IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        reply_to_thread(&root, &thread_id, &body).map_err(AppError::from)
+    })
+    .await
+}
+
+/// Marks an inline review thread resolved, or open again.
+#[tauri::command]
+#[specta::specta]
+pub async fn resolve_review_thread(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    thread_id: String,
+    resolved: bool,
+) -> Result<(), IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        set_thread_resolved(&root, &thread_id, resolved).map_err(AppError::from)
+    })
+    .await
+}
+
+/// The log of the GitHub Actions job a check points at. Only its end is returned.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_check_log(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    details_url: String,
+    failed_only: bool,
+) -> Result<CheckLog, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        read_check_log(&root, &details_url, failed_only).map_err(AppError::from)
     })
     .await
 }

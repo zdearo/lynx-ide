@@ -134,6 +134,43 @@ pub fn is_valid_base(base: &str) -> bool {
             .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c))
 }
 
+/// The branches a pull request can go into, and the one it goes into by default.
+pub struct BaseInfo {
+    pub remote: String,
+    pub bases: Vec<String>,
+    pub default_base: String,
+}
+
+/// The remote's branches and its default one, skipping `head_branch` as the default.
+pub fn base_info(root: &Path, remote: &str, head_branch: &str) -> Result<BaseInfo, AppError> {
+    let refs = git(root)
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short)",
+            &format!("refs/remotes/{remote}/"),
+        ])
+        .run()?;
+    let bases = parse_bases(&refs, remote);
+    let remote_head = git(root)
+        .args([
+            "symbolic-ref",
+            "--short",
+            &format!("refs/remotes/{remote}/HEAD"),
+        ])
+        .run()
+        .ok();
+    let default_base = avoid_head(
+        pick_default_base(remote_head.as_deref(), remote, &bases),
+        head_branch,
+        &bases,
+    );
+    Ok(BaseInfo {
+        remote: remote.to_owned(),
+        bases,
+        default_base,
+    })
+}
+
 pub fn form(root: &Path) -> Result<PullRequestForm, AppError> {
     let sync = branch_sync::read(root)?;
     let Some(head_branch) = sync.branch.clone() else {
@@ -144,27 +181,11 @@ pub fn form(root: &Path) -> Result<PullRequestForm, AppError> {
             "there is no remote to open a pull request on",
         ));
     };
-    let refs = git(root)
-        .args([
-            "for-each-ref",
-            "--format=%(refname:short)",
-            &format!("refs/remotes/{remote}/"),
-        ])
-        .run()?;
-    let bases = parse_bases(&refs, &remote);
-    let remote_head = git(root)
-        .args([
-            "symbolic-ref",
-            "--short",
-            &format!("refs/remotes/{remote}/HEAD"),
-        ])
-        .run()
-        .ok();
-    let default_base = avoid_head(
-        pick_default_base(remote_head.as_deref(), &remote, &bases),
-        &head_branch,
-        &bases,
-    );
+    let BaseInfo {
+        remote,
+        bases,
+        default_base,
+    } = base_info(root, &remote, &head_branch)?;
 
     // The subjects ahead of the base are only a hint for the title: without the base ref there are none.
     let subjects: Vec<String> = git(root)

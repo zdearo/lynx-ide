@@ -9,6 +9,7 @@ const sync = (change: Partial<BranchSync>): BranchSync => ({
   ahead: 0,
   behind: 0,
   remote: "origin",
+  rewritten: false,
   ...change,
 });
 
@@ -42,5 +43,28 @@ describe("primaryAction", () => {
       kind: "commit",
     });
     expect(primaryAction(0, undefined)).toEqual({ kind: "commit" });
+  });
+
+  it("pulls when the remote has commits and the branch has none of its own", () => {
+    expect(primaryAction(0, sync({ behind: 2 }))).toEqual({
+      kind: "pull",
+      remote: "origin",
+      behind: 2,
+    });
+  });
+
+  it("syncs when both sides moved, because someone else pushed", () => {
+    expect(primaryAction(0, sync({ ahead: 1, behind: 3 }))).toEqual({
+      kind: "sync",
+      remote: "origin",
+      ahead: 1,
+      behind: 3,
+    });
+  });
+
+  it("offers a force push with lease, never a sync, when the remote holds old copies", () => {
+    expect(
+      primaryAction(0, sync({ ahead: 1, behind: 1, rewritten: true })),
+    ).toEqual({ kind: "forcePush", remote: "origin", replaced: 1 });
   });
 });

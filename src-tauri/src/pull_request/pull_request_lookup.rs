@@ -10,7 +10,7 @@ use specta::Type;
 use crate::bounded_command::{BoundedError, run_bounded};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
-const FIELDS: &str = "number,title,url,state,isDraft,reviewDecision,headRefName,statusCheckRollup";
+const FIELDS: &str = "number,title,url,state,isDraft,reviewDecision,headRefName,baseRefName,mergeStateStatus,autoMergeRequest,statusCheckRollup";
 
 #[derive(Debug, thiserror::Error)]
 pub enum PullRequestError {
@@ -44,6 +44,21 @@ pub enum ReviewDecision {
     ReviewRequired,
 }
 
+/// Whether GitHub would let the pull request merge now, from `mergeStateStatus`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum MergeState {
+    /// Nothing stands in the way.
+    Clean,
+    /// A required check or review is missing, or the branch is behind a protected base.
+    Blocked,
+    /// Merge conflicts with the base.
+    Conflicting,
+    /// A draft, or checks are still running or failing.
+    Unstable,
+    Unknown,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum CheckState {
@@ -59,6 +74,8 @@ pub struct PullRequestCheck {
     /// `workflow / job` for a GitHub Actions job, or the context name for a commit status.
     pub name: String,
     pub state: CheckState,
+    /// The page of the check on GitHub: a job of GitHub Actions, or a commit status's own link.
+    pub details_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -72,6 +89,11 @@ pub struct PullRequest {
     /// `None` when nobody has reviewed it yet, or the repository does not require reviews.
     pub review: Option<ReviewDecision>,
     pub head_branch: String,
+    /// The branch the pull request merges into.
+    pub base_branch: String,
+    pub merge_state: MergeState,
+    /// GitHub will merge it by itself once the requirements pass.
+    pub auto_merge: bool,
     pub checks: Vec<PullRequestCheck>,
 }
 
@@ -86,6 +108,10 @@ struct RawPullRequest {
     review_decision: Option<String>,
     head_ref_name: String,
     #[serde(default)]
+    base_ref_name: String,
+    merge_state_status: Option<String>,
+    auto_merge_request: Option<serde_json::Value>,
+    #[serde(default)]
     status_check_rollup: Vec<RawCheck>,
 }
 
@@ -99,6 +125,8 @@ struct RawCheck {
     status: Option<String>,
     conclusion: Option<String>,
     state: Option<String>,
+    details_url: Option<String>,
+    target_url: Option<String>,
 }
 
 /// The pull request of the branch checked out in `root`, or `None` when the branch has none.
@@ -151,6 +179,9 @@ pub fn parse_pull_request(json: &str) -> Result<PullRequest, PullRequestError> {
         is_draft: raw.is_draft,
         review: review_of(raw.review_decision.as_deref()),
         head_branch: raw.head_ref_name,
+        base_branch: raw.base_ref_name,
+        merge_state: merge_state_of(raw.merge_state_status.as_deref()),
+        auto_merge: raw.auto_merge_request.is_some_and(|value| !value.is_null()),
         checks: raw
             .status_check_rollup
             .into_iter()
@@ -165,6 +196,16 @@ fn state_of(raw: &str) -> Result<PullRequestState, PullRequestError> {
         "CLOSED" => Ok(PullRequestState::Closed),
         "MERGED" => Ok(PullRequestState::Merged),
         _ => Err(PullRequestError::Unreadable),
+    }
+}
+
+fn merge_state_of(raw: Option<&str>) -> MergeState {
+    match raw {
+        Some("CLEAN" | "HAS_HOOKS") => MergeState::Clean,
+        Some("BLOCKED" | "BEHIND") => MergeState::Blocked,
+        Some("DIRTY") => MergeState::Conflicting,
+        Some("UNSTABLE" | "DRAFT") => MergeState::Unstable,
+        _ => MergeState::Unknown,
     }
 }
 
@@ -187,7 +228,15 @@ fn check_of(raw: RawCheck) -> Option<PullRequestCheck> {
         Some(status) => commit_status_state(status),
         None => check_run_state(raw.status.as_deref(), raw.conclusion.as_deref()),
     };
-    Some(PullRequestCheck { name, state })
+    let details_url = raw
+        .details_url
+        .or(raw.target_url)
+        .filter(|url| !url.is_empty());
+    Some(PullRequestCheck {
+        name,
+        state,
+        details_url,
+    })
 }
 
 fn commit_status_state(state: &str) -> CheckState {
@@ -224,9 +273,13 @@ mod tests {
         "isDraft": true,
         "reviewDecision": "",
         "headRefName": "feat/auth",
+        "baseRefName": "main",
+        "mergeStateStatus": "UNSTABLE",
+        "autoMergeRequest": null,
         "statusCheckRollup": [
             {"__typename": "CheckRun", "name": "lint", "workflowName": "CI",
-             "status": "COMPLETED", "conclusion": "SUCCESS"},
+             "status": "COMPLETED", "conclusion": "SUCCESS",
+             "detailsUrl": "https://github.com/acme/app/actions/runs/1/job/2"},
             {"__typename": "CheckRun", "name": "test", "workflowName": "CI",
              "status": "COMPLETED", "conclusion": "FAILURE"},
             {"__typename": "CheckRun", "name": "build", "workflowName": "CI",
@@ -245,7 +298,15 @@ mod tests {
         assert_eq!(pr.state, PullRequestState::Open);
         assert!(pr.is_draft);
         assert_eq!(pr.review, None);
+        assert_eq!(
+            pr.checks[0].details_url.as_deref(),
+            Some("https://github.com/acme/app/actions/runs/1/job/2")
+        );
+        assert_eq!(pr.checks[1].details_url, None);
         assert_eq!(pr.head_branch, "feat/auth");
+        assert_eq!(pr.base_branch, "main");
+        assert_eq!(pr.merge_state, MergeState::Unstable);
+        assert!(!pr.auto_merge);
         let states: Vec<_> = pr
             .checks
             .iter()
@@ -261,6 +322,22 @@ mod tests {
                 ("deploy/preview", CheckState::Pending),
             ]
         );
+    }
+
+    #[test]
+    fn merge_state_and_auto_merge_are_read_from_github() {
+        let json = r#"{"number": 7, "title": "t", "url": "u", "state": "OPEN",
+            "isDraft": false, "reviewDecision": "", "headRefName": "b", "baseRefName": "main",
+            "mergeStateStatus": "DIRTY", "autoMergeRequest": {"enabledBy": {"login": "a"}},
+            "statusCheckRollup": []}"#;
+
+        let pr = parse_pull_request(json).expect("parse");
+
+        assert_eq!(pr.merge_state, MergeState::Conflicting);
+        assert!(pr.auto_merge);
+        assert_eq!(merge_state_of(Some("CLEAN")), MergeState::Clean);
+        assert_eq!(merge_state_of(Some("BEHIND")), MergeState::Blocked);
+        assert_eq!(merge_state_of(None), MergeState::Unknown);
     }
 
     #[test]

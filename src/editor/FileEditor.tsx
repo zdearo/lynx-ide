@@ -37,7 +37,7 @@ export function FileEditor({
       <div className="min-h-0 flex-1">
         {file.view === "diff" ? (
           <FileDiffView
-            key={file.path}
+            key={`${file.path}:${file.diffSource.kind}`}
             worktreePath={worktreePath}
             file={file}
           />

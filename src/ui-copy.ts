@@ -275,6 +275,20 @@ export const copy = {
     tooLarge: "This file is too large to compare here.",
     failed: "Could not read the changes",
     retry: "Retry",
+    compareGroup: "Compare with",
+    compare: {
+      head: "HEAD",
+      staged: "Staged",
+      unstaged: "Unstaged",
+      base: "Base",
+    },
+    compareHints: {
+      head: "Everything changed since the last commit",
+      staged: "What the next commit would hold",
+      unstaged: "What is not staged yet",
+      base: "Everything since the branch left the default branch",
+    },
+    commitTab: (hash: string) => `Commit ${hash.slice(0, 7)}`,
     modeGroup: "Diff layout",
     unified: "Unified",
     split: "Split",
@@ -287,6 +301,12 @@ export const copy = {
     loading: "Reading commits…",
     empty: "No commits on this branch yet.",
     notPushed: "Not pushed",
+    files: {
+      loading: "Reading the files…",
+      none: "No files in this commit.",
+      failed: "Could not read the files of this commit",
+      list: (hash: string) => `Files in commit ${hash.slice(0, 7)}`,
+    },
     ago: {
       now: "just now",
       minutes: (count: number) => `${count} min ago`,
@@ -326,6 +346,16 @@ export const copy = {
       failed: "Failed",
       pending: "Pending",
       skipped: "Skipped",
+      log: "Log",
+      hideLog: "Hide log",
+      open: "Open",
+      logOf: (name: string) => `Log of ${name}`,
+      openOf: (name: string) => `Open ${name} on GitHub`,
+      logText: (name: string) => `Log text of ${name}`,
+      logLoading: "Reading the log…",
+      logFailed: "Could not read the log",
+      logTruncated: "Only the end of the log is shown.",
+      logEmpty: "The log is empty.",
     },
     error: {
       title: "Could not read the pull request",
@@ -365,6 +395,73 @@ export const copy = {
         failed: "Could not create the pull request",
         generateFailed: "Could not generate the text",
       },
+    },
+    discussion: {
+      checksTab: "Checks",
+      tab: "Discussion",
+      viewGroup: "Show",
+      composerLabel: "Add a comment",
+      composerPlaceholder: "Leave a comment",
+      send: "Comment",
+      sending: "Sending…",
+      sent: "Comment posted",
+      cancel: "Cancel",
+      failed: "Could not post the comment",
+      loading: "Reading the conversation…",
+      loadFailed: "Could not read the conversation",
+      empty: "No comments yet.",
+      threads: "Inline threads",
+      conversation: "Conversation",
+      reply: "Reply",
+      replyLabel: (path: string) => `Reply in ${path}`,
+      resolveThread: "Resolve thread",
+      reopenThread: "Reopen thread",
+      resolved: "Resolved",
+      outdated: "Outdated",
+      showMore: "Show more",
+      showLess: "Show less",
+      verdict: {
+        approved: "approved",
+        changesRequested: "requested changes",
+        commented: "reviewed",
+        dismissed: "had a review dismissed",
+        pending: "has a pending review",
+      },
+    },
+    actions: {
+      mergeState: {
+        clean: (base: string) => `Ready to merge into ${base}`,
+        blocked: (base: string) =>
+          `Merging into ${base} is blocked: a required check or review is missing`,
+        conflicting: (base: string) => `Has conflicts with ${base}`,
+        unstable: (base: string) =>
+          `Merging into ${base}: checks are failing or still running`,
+        unknown: (base: string) => `Merging into ${base}`,
+      },
+      methodLabel: "Merge method",
+      methods: {
+        squash: "Squash and merge",
+        merge: "Create a merge commit",
+        rebase: "Rebase and merge",
+      },
+      merge: "Merge",
+      confirmMerge: "Confirm merge",
+      mergeWarning: (number: number, base: string) =>
+        `Merges #${number} into ${base}. This cannot be undone from here.`,
+      autoMerge: "Enable auto-merge",
+      autoMergeOn:
+        "Auto-merge is on: GitHub merges it once the requirements pass.",
+      autoMergeEnabled: "Auto-merge enabled",
+      merged: "Pull request merged",
+      markReady: "Ready for review",
+      markedReady: "Marked ready for review",
+      markDraft: "Convert to draft",
+      markedDraft: "Converted to draft",
+      close: "Close pull request",
+      closed: "Pull request closed",
+      reopen: "Reopen pull request",
+      reopened: "Pull request reopened",
+      failed: "Could not complete the action",
     },
     createRemote: {
       button: "Create remote",
@@ -445,6 +542,39 @@ export const copy = {
     commitFailed: "Could not commit",
     nothingStaged: "Stage a file to commit.",
     views: { label: "Show", changes: "Changes", commits: "Commits" },
+    lines: (added: number, removed: number) =>
+      `${added} lines added, ${removed} lines removed`,
+    discard: {
+      file: (name: string) => `Discard ${name}`,
+      all: (section: string) => `Discard all ${section.toLowerCase()}`,
+      title: (count: number) =>
+        count === 1 ? "Discard this change?" : `Discard ${count} changes?`,
+      body: "Changed files go back to their last staged or committed version, and untracked files are deleted. This cannot be undone.",
+      confirm: "Discard",
+      cancel: "Cancel",
+      failed: "Could not discard the changes",
+    },
+    pull: "Pull",
+    pulling: "Pulling…",
+    pullFailed: "Could not pull",
+    pulled: (remote: string) => `Pulled from ${remote}.`,
+    commitsToPull: (count: number, remote: string) =>
+      `${count} ${count === 1 ? "commit" : "commits"} to pull from ${remote}`,
+    sync: "Sync",
+    syncing: "Syncing…",
+    syncFailed: "Could not sync",
+    synced: (remote: string) => `Synced with ${remote}.`,
+    divergedHint: (ahead: number, behind: number, remote: string) =>
+      `${ahead} to push, ${behind} to pull. Sync puts your commits on top of ${remote}'s.`,
+    forcePush: "Force push",
+    forcePushAnyway: "Force push anyway",
+    forcePushing: "Pushing…",
+    forcePushFailed: "Could not force push",
+    forcePushed: (remote: string) => `Replaced the branch on ${remote}.`,
+    forcePushHint: (remote: string) =>
+      `${remote} holds old copies of commits you rewrote. A plain push is refused.`,
+    forcePushWarning: (count: number, remote: string) =>
+      `This replaces ${count} ${count === 1 ? "commit" : "commits"} on ${remote} with your rewritten history. If someone pushed in the meantime, git refuses it.`,
     push: "Push",
     pushing: "Pushing…",
     pushFailed: "Could not push",
@@ -453,6 +583,13 @@ export const copy = {
       `${count} ${count === 1 ? "commit" : "commits"} to push to ${remote}`,
     publishTo: (remote: string) =>
       `This branch is not on ${remote} yet. Push creates it there.`,
+    amend: {
+      label: "Amend last commit",
+      button: "Amend",
+      anyway: "Amend anyway",
+      pushedWarning: (remote: string) =>
+        `That commit is already on ${remote}. Amending rewrites it, and the branch will need a force push.`,
+    },
     generate: "Generate message with AI",
     generating: "Generating a message…",
     generateNeedsStaged:
@@ -460,6 +597,16 @@ export const copy = {
     generateFailed: "Could not generate a message",
     draftedWith: (agent: string) =>
       `Drafted with ${agent}. Review it before committing.`,
+  },
+
+  fixWithAi: {
+    button: "Fix with AI",
+    hint: "Starts an agent in this worktree with the error and what to do.",
+    noAgent:
+      "Turn on Claude Code, Codex or OpenCode in Agents settings to fix this with an agent.",
+    started: (agent: string) => `${agent} is on it. Follow it in the new tab.`,
+    failed: "Could not start the agent",
+    fixChecks: "Fix broken checks",
   },
 
   summary: {

@@ -87,7 +87,7 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 
 - [x] Abrir e editar arquivos: clique seleciona, duplo clique (ou Enter) abre no editor CodeMirror 6, que ocupa a área central; os arquivos abertos ficam numa faixa abaixo das abas de terminal. Salva com Cmd/Ctrl+S, com detecção de mudança no disco (hash) e aviso de conflito. Realce para JS/TS/JSX/TSX, JSON, CSS, HTML, Markdown, Python e Rust
 - [x] Aba Changes no painel da direita: lista de arquivos alterados (conflitos, staged, changes, untracked), diff do HEAD com a árvore de trabalho (Unified ou Split), aba de arquivo temporária com um clique e permanente com duplo clique, e botões Edit/Diff no topo do arquivo
-- [ ] Changes: descartar, contagem de linhas (+/−) por arquivo, diff por commit e por branch, e comparar staged contra o índice (hoje sempre contra o HEAD)
+- [x] Changes: descartar (com confirmação), contagem de linhas (+/−) por arquivo, diff por commit e por branch, comparar staged e unstaged, amend, pull/sync, force push com lease e arquivos de cada commit
 - [ ] Editor: busca em todos os arquivos, desfazer ao reabrir, abas de arquivo fixas/em prévia, abrir imagem e arquivo grande em modo leitura, salvar automático opcional
 - [ ] LSP: ponte em Rust (política A+D: servidor vivo só com o worktree em foco e um editor da linguagem aberto, para após ~10 min; limite LRU de segurança; servidores instalados pelo usuário) e `@codemirror/lsp-client` no editor
 - [ ] Explorador de arquivos: arrastar um item para o terminal, decorar com o status do Git (M/U) e atualizar sozinho com um vigia de arquivos (hoje atualiza ao voltar para a janela e no botão)
@@ -138,13 +138,15 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 
 ## Fase 2 — Revisão e Git
 
-- [ ] Diff de cada worktree contra a base ref (staged, unstaged e arquivos não rastreados)
+- [x] Diff de cada worktree contra a base ref (staged, unstaged e arquivos não rastreados)
 - [x] Stage por arquivo
 - [x] Commit com a mensagem escrita pelo usuário
-- [ ] Push com upstream; nunca force-push automático
+- [x] Push com upstream; force push só com lease e depois de um segundo clique
 - [ ] Annotate AI Diff: comentário em linha que vira prompt para o agente
 - [ ] Conflito de merge: visualização básica
-- [x] Mensagem de commit sugerida por IA, com o CLI do Claude Code ou do Codex instalado (sem escolha de agente nem de modelo ainda)
+- [x] Mensagem de commit sugerida por IA, com o CLI do Claude Code, do Codex ou do OpenCode instalado (agente e estilo na aba Git das configurações; sem escolha de modelo ainda)
+- [x] Fix with AI: entrega a um agente o erro de um commit rejeitado por hook, ou os checks que falharam no PR
+- [x] Amend, descartar, pull/sync e arquivos de cada commit (ver Pendências da Fase 1)
 
 ---
 
@@ -156,8 +158,9 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 
 - [ ] Quick open de arquivos do worktree
 - [ ] Jump palette entre worktrees, abas e sessões
-- [ ] Integração com GitHub: PR e checks ligados ao worktree. Identificação feita (aba Pull request, via `gh`); criar, mesclar e comentar ficam para depois
-- [ ] Integração com GitLab, Linear e Jira **(?)** ordem de prioridade
+- [x] Integração com GitHub: PR e checks ligados ao worktree (aba Pull request, via `gh`): criar, mesclar/fechar/reabrir, auto-merge, discussão e respostas, log dos checks e Fix with AI
+- [ ] PRs empilhados (acompanhar e reordenar a pilha; abrir um PR sobre outro branch já funciona)
+- [ ] Integração com GitLab (`glab`), Linear e Jira **(?)** ordem de prioridade
 - [ ] Visualizador de arquivos e preview de markdown e imagens
 - [ ] Arrastar arquivo para o terminal do agente
 - [ ] Notificações do sistema e marcação de "não lido"

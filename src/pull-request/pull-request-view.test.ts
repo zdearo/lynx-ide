@@ -4,6 +4,7 @@ import type { PullRequest, PullRequestCheck } from "@/bindings";
 import {
   badgeOf,
   countChecks,
+  hasJobLog,
   sortChecks,
 } from "@/pull-request/pull-request-view";
 
@@ -18,6 +19,9 @@ const pullRequest = (
   isDraft,
   review: null,
   headBranch: "feat/x",
+  baseBranch: "main",
+  mergeState: "clean",
+  autoMerge: false,
   checks: [],
 });
 
@@ -27,6 +31,7 @@ const check = (
 ): PullRequestCheck => ({
   name,
   state,
+  detailsUrl: null,
 });
 
 describe("badgeOf", () => {
@@ -74,5 +79,24 @@ describe("sortChecks", () => {
     const original = [check("b", "passed"), check("a", "failed")];
     sortChecks(original);
     expect(original.map((item) => item.name)).toEqual(["b", "a"]);
+  });
+});
+
+describe("hasJobLog", () => {
+  it("is true only for the page of a GitHub Actions job", () => {
+    const withUrl = (detailsUrl: string | null): PullRequestCheck => ({
+      name: "n",
+      state: "failed",
+      detailsUrl,
+    });
+
+    expect(
+      hasJobLog(withUrl("https://github.com/a/b/actions/runs/1/job/2")),
+    ).toBe(true);
+    expect(hasJobLog(withUrl("https://github.com/a/b/actions/runs/1"))).toBe(
+      false,
+    );
+    expect(hasJobLog(withUrl("https://ci.example.com/build/9"))).toBe(false);
+    expect(hasJobLog(withUrl(null))).toBe(false);
   });
 });

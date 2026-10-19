@@ -34,6 +34,8 @@ export const commands = {
 	/**  Writes a harness's config. The frontend asks the user first; nothing here runs on its own. */
 	installHooks: (harness: HarnessId) => typedError<HookInstallStatus, IpcError>(__TAURI_INVOKE("install_hooks", { harness })),
 	removeHooks: (harness: HarnessId) => typedError<HookInstallStatus, IpcError>(__TAURI_INVOKE("remove_hooks", { harness })),
+	/**  Saves a long prompt to a file and returns its path, for an agent to be told to read. */
+	writeAgentPrompt: (prompt: string) => typedError<string, IpcError>(__TAURI_INVOKE("write_agent_prompt", { prompt })),
 	getConfig: () => typedError<ConfigSnapshot, IpcError>(__TAURI_INVOKE("get_config")),
 	updateConfig: (config: AppConfig) => typedError<ConfigSnapshot, IpcError>(__TAURI_INVOKE("update_config", { config })),
 	/**  Shells the settings can offer for new terminals. */
@@ -53,16 +55,29 @@ export const commands = {
 	revealInFileManager: (worktreePath: string, relativePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("reveal_in_file_manager", { worktreePath, relativePath })),
 	/**  The files with changes in a worktree: staged, unstaged and untracked. */
 	listChanges: (worktreePath: string) => typedError<ChangedFile[], IpcError>(__TAURI_INVOKE("list_changes", { worktreePath })),
-	/**  HEAD and the working tree for one file. `original_path` is the old path of a renamed file. */
-	readFileDiff: (worktreePath: string, relativePath: string, originalPath: string | null) => typedError<FileDiff, IpcError>(__TAURI_INVOKE("read_file_diff", { worktreePath, relativePath, originalPath })),
+	/**
+	 *  The two sides of one file's diff for a source: HEAD, the index, a commit or the base branch.
+	 *  `original_path` is the old path of a renamed file.
+	 */
+	readFileDiff: (worktreePath: string, relativePath: string, originalPath: string | null, source: DiffSource) => typedError<FileDiff, IpcError>(__TAURI_INVOKE("read_file_diff", { worktreePath, relativePath, originalPath, source })),
 	/**  Stages one changed file: a deletion stages the removal, an untracked file gets tracked. */
 	stageChange: (worktreePath: string, relativePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("stage_change", { worktreePath, relativePath })),
 	/**  Stages several changed files in one step: a section's "stage all" button. */
 	stageChanges: (worktreePath: string, relativePaths: string[]) => typedError<null, IpcError>(__TAURI_INVOKE("stage_changes", { worktreePath, relativePaths })),
+	/**
+	 *  Throws away the unstaged changes of these files: tracked ones go back to the index, untracked
+	 *  ones are deleted. The interface confirms first.
+	 */
+	discardChanges: (worktreePath: string, relativePaths: string[]) => typedError<null, IpcError>(__TAURI_INVOKE("discard_changes", { worktreePath, relativePaths })),
 	/**  Takes one file out of the index. `original_path` is the old path of a renamed file. */
 	unstageChange: (worktreePath: string, relativePath: string, originalPath: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("unstage_change", { worktreePath, relativePath, originalPath })),
-	/**  Commits what is staged with the message the user wrote. */
-	commitChanges: (worktreePath: string, summary: string, description: string) => typedError<null, IpcError>(__TAURI_INVOKE("commit_changes", { worktreePath, summary, description })),
+	/**
+	 *  Commits what is staged with the message the user wrote, or amends the last commit.
+	 *  Amending a commit that is already on the remote needs `allow_pushed`: the user's yes.
+	 */
+	commitChanges: (worktreePath: string, summary: string, description: string, amend: boolean, allowPushed: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("commit_changes", { worktreePath, summary, description, amend, allowPushed })),
+	/**  The last commit's summary and description, to start an amend from. */
+	getLastCommitMessage: (worktreePath: string) => typedError<LastCommitMessage, IpcError>(__TAURI_INVOKE("get_last_commit_message", { worktreePath })),
 	/**
 	 *  A commit message written by the user's agent CLI from what is staged. Nothing is committed.
 	 *  The agent and the style come from the Git settings, read when the draft starts.
@@ -72,8 +87,19 @@ export const commands = {
 	getBranchSync: (worktreePath: string) => typedError<BranchSync, IpcError>(__TAURI_INVOKE("get_branch_sync", { worktreePath })),
 	/**  Pushes the worktree's branch, publishing it first when it has no upstream. Never forces. */
 	pushBranch: (worktreePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("push_branch", { worktreePath })),
+	/**  Reads the remote's news (refs only), so "behind" is up to date. Runs about once a minute. */
+	fetchRemote: (worktreePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("fetch_remote", { worktreePath })),
+	/**  Brings the upstream's commits into the branch: a fast-forward, or a rebase that is undone on conflict. */
+	pullBranch: (worktreePath: string, kind: PullKind) => typedError<null, IpcError>(__TAURI_INVOKE("pull_branch", { worktreePath, kind })),
+	/**
+	 *  Replaces the remote's copy of the branch, guarded by a lease. Only for a branch whose history
+	 *  was rewritten here. The interface confirms first.
+	 */
+	forcePushBranch: (worktreePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("force_push_branch", { worktreePath })),
 	/**  The latest commits of the worktree's branch, newest first, with whether the remote has each. */
 	listCommits: (worktreePath: string, limit: number) => typedError<CommitEntry[], IpcError>(__TAURI_INVOKE("list_commits", { worktreePath, limit })),
+	/**  The files one commit touched, against its first parent. */
+	listCommitFiles: (worktreePath: string, hash: string) => typedError<CommitFile[], IpcError>(__TAURI_INVOKE("list_commit_files", { worktreePath, hash })),
 	/**  The pull request of a worktree's branch, or `None` when the branch has none. */
 	getPullRequest: (worktreePath: string) => typedError<{
 	number: number,
@@ -84,10 +110,29 @@ export const commands = {
 	/**  `None` when nobody has reviewed it yet, or the repository does not require reviews. */
 	review: ReviewDecision | null,
 	headBranch: string,
+	/**  The branch the pull request merges into. */
+	baseBranch: string,
+	mergeState: MergeState,
+	/**  GitHub will merge it by itself once the requirements pass. */
+	autoMerge: boolean,
 	checks: PullRequestCheck[],
 } | null, IpcError>(__TAURI_INVOKE("get_pull_request", { worktreePath })),
 	/**  Opens a pull request's page in the browser. Only `https` links are opened. */
 	openPullRequestUrl: (url: string) => typedError<null, IpcError>(__TAURI_INVOKE("open_pull_request_url", { url })),
+	/**  The log of the GitHub Actions job a check points at. Only its end is returned. */
+	getCheckLog: (worktreePath: string, detailsUrl: string, failedOnly: boolean) => typedError<CheckLog, IpcError>(__TAURI_INVOKE("get_check_log", { worktreePath, detailsUrl, failedOnly })),
+	/**  The conversation, reviews and inline threads of a pull request. */
+	getPullRequestDiscussion: (worktreePath: string, number: number) => typedError<Discussion, IpcError>(__TAURI_INVOKE("get_pull_request_discussion", { worktreePath, number })),
+	/**  A new comment on the conversation of a pull request. */
+	commentOnPullRequest: (worktreePath: string, number: number, body: string) => typedError<null, IpcError>(__TAURI_INVOKE("comment_on_pull_request", { worktreePath, number, body })),
+	/**  A reply in an inline review thread. */
+	replyToReviewThread: (worktreePath: string, threadId: string, body: string) => typedError<null, IpcError>(__TAURI_INVOKE("reply_to_review_thread", { worktreePath, threadId, body })),
+	/**  Marks an inline review thread resolved, or open again. */
+	resolveReviewThread: (worktreePath: string, threadId: string, resolved: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("resolve_review_thread", { worktreePath, threadId, resolved })),
+	/**  The merge methods the repository allows, for the merge button's picker. */
+	getMergeMethods: (worktreePath: string) => typedError<MergeMethod[], IpcError>(__TAURI_INVOKE("get_merge_methods", { worktreePath })),
+	/**  Merges, closes, reopens or changes the draft state of a pull request. The interface confirms a merge. */
+	runPullRequestAction: (worktreePath: string, number: number, action: PullRequestAction) => typedError<null, IpcError>(__TAURI_INVOKE("run_pull_request_action", { worktreePath, number, action })),
 	/**  The login and organizations `gh` is signed in with, for the account picker of the remote dialog. */
 	getGithubAccount: () => typedError<GitHubAccount, IpcError>(__TAURI_INVOKE("get_github_account")),
 	/**  Creates the GitHub repository for a local one that has no remote, and connects it as `origin`. */
@@ -169,6 +214,12 @@ export type BranchSync = {
 	behind: number,
 	/**  The remote a push goes to: `origin` when there is one, else the first. `None` without remotes. */
 	remote: string | null,
+	/**
+	 *  The branch is both ahead and behind, and every commit only the remote has is an older copy
+	 *  of one that was rewritten here (an amend, a rebase). A plain push is refused then; a force push
+	 *  with lease is the way, and a pull would only bring the old copies back.
+	 */
+	rewritten: boolean,
 };
 
 export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "typeChanged" | "untracked" | "conflicted";
@@ -183,6 +234,16 @@ export type ChangedFile = {
 	staged: ChangeKind | null,
 	/**  The change in the working tree that is not staged yet. Untracked and conflicted files are here. */
 	unstaged: ChangeKind | null,
+	/**  Lines added and removed by the staged change. `None` for a binary file or a failed read. */
+	stagedLines: LineCounts | null,
+	/**  The same for the change that is not staged. An untracked file counts as all added. */
+	unstagedLines: LineCounts | null,
+};
+
+export type CheckLog = {
+	text: string,
+	/**  The start of the log was cut: only its end is shown. */
+	truncated: boolean,
 };
 
 export type CheckState = "passed" | "failed" | "pending" | "skipped";
@@ -205,6 +266,15 @@ export type CommitEntry = {
 	 *  known about the remote, so every commit reads as not pushed.
 	 */
 	pushed: boolean,
+};
+
+/**  One file a commit touched, with the lines it added and removed. */
+export type CommitFile = {
+	path: string,
+	/**  Where a renamed or copied file came from. */
+	originalPath: string | null,
+	kind: ChangeKind,
+	lines: LineCounts | null,
 };
 
 /**  Which agent CLI writes a commit message. `Auto` takes the first one installed. */
@@ -254,10 +324,38 @@ export type CreatedPullRequest = {
 	url: string,
 };
 
+/**  What a file's diff compares. Every source gives the two texts the interface shows side by side. */
+export type DiffSource = 
+/**  HEAD against the working tree: everything the file changed since the last commit. */
+{ kind: "head" } | 
+/**  HEAD against the index: what the next commit would hold. */
+{ kind: "staged" } | 
+/**  The index against the working tree: what is not staged yet. */
+{ kind: "unstaged" } | 
+/**  Where the branch left the remote's default branch, against the working tree. */
+{ kind: "base" } | 
+/**  A commit against its first parent. */
+{ kind: "commit"; hash: string };
+
 export type DirectoryListing = {
 	entries: FileEntry[],
 	/**  There were more than the panel shows. */
 	truncated: boolean,
+};
+
+export type Discussion = {
+	comments: DiscussionComment[],
+	reviews: ReviewSummary[],
+	threads: ReviewThread[],
+};
+
+export type DiscussionComment = {
+	id: string,
+	author: string,
+	body: string,
+	/**  When it was written, as GitHub prints it (ISO 8601). */
+	createdAt: string,
+	url: string,
 };
 
 /**  A message the user can edit before committing. */
@@ -339,13 +437,43 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+
+export type LastCommitMessage = {
+	summary: string,
+	description: string,
+};
 
 /**
  *  How every agent starts from a new terminal: `Manual` keeps its permission prompts, and `Yolo`
  *  adds each agent's own flag that skips them.
  */
 export type LaunchMode = "manual" | "yolo";
+
+export type LineCounts = {
+	added: number,
+	removed: number,
+};
+
+export type MergeMethod = "merge" | "squash" | "rebase";
+
+/**  Whether GitHub would let the pull request merge now, from `mergeStateStatus`. */
+export type MergeState = 
+/**  Nothing stands in the way. */
+"clean" | 
+/**  A required check or review is missing, or the branch is behind a protected base. */
+"blocked" | 
+/**  Merge conflicts with the base. */
+"conflicting" | 
+/**  A draft, or checks are still running or failing. */
+"unstable" | "unknown";
+
+/**  How a pull joins the remote's commits. */
+export type PullKind = 
+/**  Only moves forward: refused when the branch has commits of its own. */
+"fastForward" | 
+/**  Puts the branch's own commits on top of the remote's. A conflict stops it, and it is undone. */
+"rebase";
 
 export type PullRequest = {
 	number: number,
@@ -356,13 +484,28 @@ export type PullRequest = {
 	/**  `None` when nobody has reviewed it yet, or the repository does not require reviews. */
 	review: ReviewDecision | null,
 	headBranch: string,
+	/**  The branch the pull request merges into. */
+	baseBranch: string,
+	mergeState: MergeState,
+	/**  GitHub will merge it by itself once the requirements pass. */
+	autoMerge: boolean,
 	checks: PullRequestCheck[],
 };
+
+export type PullRequestAction = 
+/**  With `auto`, GitHub merges it by itself once its requirements pass. */
+{ kind: "merge"; method: MergeMethod; auto: boolean } | { kind: "close" } | { kind: "reopen" } | 
+/**  Takes a draft out of draft. */
+{ kind: "markReady" } | 
+/**  Puts an open pull request back to draft. */
+{ kind: "markDraft" };
 
 export type PullRequestCheck = {
 	/**  `workflow / job` for a GitHub Actions job, or the context name for a commit status. */
 	name: string,
 	state: CheckState,
+	/**  The page of the check on GitHub: a job of GitHub Actions, or a commit status's own link. */
+	detailsUrl: string | null,
 };
 
 /**  What the form starts from: where the branch can go, and what to call it. */
@@ -405,6 +548,26 @@ export type RepoRefs = {
 export type RepoVisibility = "private" | "public";
 
 export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
+
+export type ReviewSummary = {
+	author: string,
+	verdict: ReviewVerdict,
+	body: string,
+	submittedAt: string,
+};
+
+/**  A conversation on a line of the diff. */
+export type ReviewThread = {
+	id: string,
+	path: string,
+	line: number | null,
+	resolved: boolean,
+	/**  The code it was about has changed since. */
+	outdated: boolean,
+	comments: DiscussionComment[],
+};
+
+export type ReviewVerdict = "approved" | "changesRequested" | "commented" | "dismissed" | "pending";
 
 export type TerminalConfig = {
 	/**  CSS font list tried before the bundled fonts; `None` uses the bundled ones. */

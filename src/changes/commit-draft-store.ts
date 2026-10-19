@@ -3,9 +3,11 @@ import { create } from "zustand";
 export interface CommitDraft {
   summary: string;
   description: string;
+  /** The next commit replaces the last one instead of adding a new one. */
+  amend: boolean;
 }
 
-const EMPTY: CommitDraft = { summary: "", description: "" };
+const EMPTY: CommitDraft = { summary: "", description: "", amend: false };
 
 interface CommitDraftState {
   /** What the user typed for the next commit, per worktree. Kept while the app runs. */

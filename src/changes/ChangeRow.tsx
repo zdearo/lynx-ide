@@ -1,4 +1,5 @@
 import { MinusGlyph18 } from "@/components/icons/MinusGlyph18";
+import { Undo2Glyph18 } from "@/components/icons/Undo2Glyph18";
 import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ChangeMark } from "@/changes/ChangeMark";
@@ -23,6 +24,8 @@ interface ChangeRowProps {
   focusable: boolean;
   /** Absent where the file cannot be staged, such as a conflict. */
   index?: IndexAction;
+  /** Asks to throw away this file's unstaged change. Absent for staged and conflicted files. */
+  onDiscard?: () => void;
   onPreview: () => void;
   onPin: () => void;
 }
@@ -33,10 +36,11 @@ export function ChangeRow({
   open,
   focusable,
   index,
+  onDiscard,
   onPreview,
   onPin,
 }: ChangeRowProps) {
-  const { file, kind } = entry;
+  const { file, kind, lines } = entry;
   const slash = file.path.lastIndexOf("/");
   const name = slash >= 0 ? file.path.slice(slash + 1) : file.path;
   const folder = slash >= 0 ? file.path.slice(0, slash) : "";
@@ -47,7 +51,10 @@ export function ChangeRow({
       role="treeitem"
       aria-selected={open}
       aria-label={label}
-      aria-keyshortcuts={index ? "S" : undefined}
+      aria-keyshortcuts={
+        [index && "S", onDiscard && "Delete"].filter(Boolean).join(" ") ||
+        undefined
+      }
       data-change-path={file.path}
       tabIndex={focusable ? 0 : -1}
       onClick={onPreview}
@@ -62,6 +69,9 @@ export function ChangeRow({
         } else if (index && (event.key === "s" || event.key === "S")) {
           event.preventDefault();
           index.onRun();
+        } else if (onDiscard && event.key === "Delete") {
+          event.preventDefault();
+          onDiscard();
         }
       }}
       style={{ paddingLeft: INDENT_PX }}
@@ -98,6 +108,34 @@ export function ChangeRow({
         )}
       </span>
       <div className="ml-auto flex shrink-0 items-center gap-1">
+        {lines && (lines.added > 0 || lines.removed > 0) && (
+          <span
+            className="text-meta tabular-nums"
+            title={copy.changes.lines(lines.added, lines.removed)}
+          >
+            {lines.added > 0 && (
+              <span className="text-diff-added">+{lines.added}</span>
+            )}
+            {lines.added > 0 && lines.removed > 0 && " "}
+            {lines.removed > 0 && (
+              <span className="text-diff-removed">−{lines.removed}</span>
+            )}
+          </span>
+        )}
+        {onDiscard && (
+          <TooltipIconButton
+            label={copy.changes.discard.file(name)}
+            tabIndex={-1}
+            className="size-5 opacity-0 group-hover/change:opacity-100 focus-visible:opacity-100"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDiscard();
+            }}
+            onDoubleClick={(event) => event.stopPropagation()}
+          >
+            <Undo2Glyph18 />
+          </TooltipIconButton>
+        )}
         {index && (
           // Keyboard users stage with S on the row; this button is the mouse path.
           <TooltipIconButton

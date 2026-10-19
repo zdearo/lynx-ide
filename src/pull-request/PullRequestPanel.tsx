@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { toast } from "sonner";
 
+import { brokenChecksPrompt } from "@/agents/fix-prompts";
+import { fixWithAgent, useHasFixAgent } from "@/agents/fix-with-agent";
 import { commands, type PullRequest } from "@/bindings";
-import { CircleCheckGlyph18 } from "@/components/icons/CircleCheckGlyph18";
-import { CircleXmarkGlyph18 } from "@/components/icons/CircleXmarkGlyph18";
+import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
 import { CodePullRequestGlyph18 } from "@/components/icons/CodePullRequestGlyph18";
 import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
@@ -14,6 +16,10 @@ import { unwrap } from "@/lib/ipc-result";
 import { useRefreshWhileVisible } from "@/lib/use-refresh-while-visible";
 import { cn } from "@/lib/utils";
 import { CreatePullRequestForm } from "@/pull-request/CreatePullRequestForm";
+import { CheckRow } from "@/pull-request/CheckRow";
+import { PullRequestActions } from "@/pull-request/PullRequestActions";
+import { PullRequestDiscussion } from "@/pull-request/PullRequestDiscussion";
+import { usePullRequestDiscussionStore } from "@/pull-request/pull-request-discussion-store";
 import {
   usePullRequestStore,
   type PullRequestView,
@@ -127,16 +133,45 @@ export function PullRequestPanel() {
         </ScrollArea>
       ) : (
         <ScrollArea className="min-h-0 flex-1">
-          <PullRequestDetails pullRequest={view.pullRequest} />
+          <PullRequestDetails
+            worktreePath={path}
+            pullRequest={view.pullRequest}
+          />
         </ScrollArea>
       )}
     </div>
   );
 }
 
-function PullRequestDetails({ pullRequest }: { pullRequest: PullRequest }) {
+function PullRequestDetails({
+  worktreePath,
+  pullRequest,
+}: {
+  worktreePath: string;
+  pullRequest: PullRequest;
+}) {
   const badge = badgeOf(pullRequest);
   const counts = countChecks(pullRequest.checks);
+  const hasFixAgent = useHasFixAgent();
+  const [subview, setSubview] = useState<"checks" | "discussion">("checks");
+  const discussion = usePullRequestDiscussionStore(
+    (state) => state.byWorktree[worktreePath],
+  );
+  const discussionCount =
+    discussion?.status === "ready"
+      ? discussion.discussion.comments.length +
+        discussion.discussion.reviews.length +
+        discussion.discussion.threads.length
+      : 0;
+  // The conversation moves on GitHub too: read it again every minute while the tab is open.
+  useRefreshWhileVisible(
+    worktreePath,
+    (path) =>
+      void usePullRequestDiscussionStore
+        .getState()
+        .refresh(path, pullRequest.number),
+    POLL_MS,
+  );
   const review = pullRequest.review;
   const reviewText =
     review === "approved"
@@ -177,83 +212,107 @@ function PullRequestDetails({ pullRequest }: { pullRequest: PullRequest }) {
         {copy.pullRequest.openOnGitHub}
       </Button>
 
-      <section aria-labelledby="pull-request-checks" className="space-y-1">
-        <h4
-          id="pull-request-checks"
-          className="text-meta font-medium tracking-wide text-muted-foreground uppercase"
-        >
-          {copy.pullRequest.checks.title}
-        </h4>
-        {pullRequest.checks.length === 0 ? (
-          <p className="text-meta text-muted-foreground">
-            {copy.pullRequest.checks.none}
-          </p>
-        ) : (
-          <>
-            <p className="text-meta text-muted-foreground tabular-nums">
-              {copy.pullRequest.checks.summary(
-                counts.passed,
-                counts.failed,
-                counts.pending,
-              )}
+      <PullRequestActions
+        worktreePath={worktreePath}
+        pullRequest={pullRequest}
+      />
+
+      <div
+        role="group"
+        aria-label={copy.pullRequest.discussion.viewGroup}
+        className="flex gap-1 border-b border-border pb-1.5"
+      >
+        {(["checks", "discussion"] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={subview === id}
+            onClick={() => setSubview(id)}
+            className={cn(
+              "h-6 rounded-md px-2 text-meta font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              subview === id
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent/50",
+            )}
+          >
+            {id === "checks"
+              ? copy.pullRequest.discussion.checksTab
+              : copy.pullRequest.discussion.tab}
+            <span className="ml-1 font-normal tabular-nums">
+              {id === "checks" ? pullRequest.checks.length : discussionCount}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {subview === "discussion" && (
+        <PullRequestDiscussion
+          worktreePath={worktreePath}
+          number={pullRequest.number}
+        />
+      )}
+
+      {subview === "checks" && (
+        <section aria-labelledby="pull-request-checks" className="space-y-1">
+          <h4
+            id="pull-request-checks"
+            className="text-meta font-medium tracking-wide text-muted-foreground uppercase"
+          >
+            {copy.pullRequest.checks.title}
+          </h4>
+          {pullRequest.checks.length === 0 ? (
+            <p className="text-meta text-muted-foreground">
+              {copy.pullRequest.checks.none}
             </p>
-            <ul className="grid grid-cols-1 gap-0.5">
-              {sortChecks(pullRequest.checks).map((check, index) => (
-                <li
-                  key={`${check.name}-${index}`}
-                  className="flex min-w-0 items-center gap-1.5 text-ui"
+          ) : (
+            <>
+              <p className="text-meta text-muted-foreground tabular-nums">
+                {copy.pullRequest.checks.summary(
+                  counts.passed,
+                  counts.failed,
+                  counts.pending,
+                )}
+              </p>
+              {counts.failed > 0 && hasFixAgent && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  title={copy.fixWithAi.hint}
+                  onClick={() =>
+                    void fixWithAgent(
+                      worktreePath,
+                      brokenChecksPrompt({
+                        number: pullRequest.number,
+                        title: pullRequest.title,
+                        branch: pullRequest.headBranch,
+                        checks: pullRequest.checks
+                          .filter((check) => check.state === "failed")
+                          .map((check) => ({
+                            name: check.name,
+                            url: check.detailsUrl,
+                          })),
+                      }),
+                    )
+                  }
                 >
-                  <CheckMark state={check.state} />
-                  <span className="min-w-0 flex-1 truncate">{check.name}</span>
-                  <span className="shrink-0 text-meta text-muted-foreground">
-                    {copy.pullRequest.checks[check.state]}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </section>
+                  <SparkleGlyph18 aria-hidden />
+                  {copy.fixWithAi.fixChecks}
+                </Button>
+              )}
+              <ul className="grid grid-cols-1 gap-1">
+                {sortChecks(pullRequest.checks).map((check, index) => (
+                  <CheckRow
+                    key={`${check.name}-${index}`}
+                    worktreePath={worktreePath}
+                    check={check}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      )}
     </div>
   );
-}
-
-/** A shape per state, next to the word, so the state never rests on colour alone. */
-function CheckMark({
-  state,
-}: {
-  state: PullRequest["checks"][number]["state"];
-}) {
-  switch (state) {
-    case "passed":
-      return (
-        <CircleCheckGlyph18
-          aria-hidden
-          className="size-3.5 shrink-0 text-diff-added"
-        />
-      );
-    case "failed":
-      return (
-        <CircleXmarkGlyph18
-          aria-hidden
-          className="size-3.5 shrink-0 text-diff-removed"
-        />
-      );
-    case "pending":
-      return (
-        <span
-          aria-hidden
-          className="size-2.5 shrink-0 rounded-full border border-muted-foreground"
-        />
-      );
-    case "skipped":
-      return (
-        <span
-          aria-hidden
-          className={cn(
-            "size-2.5 shrink-0 rounded-full bg-muted-foreground/40",
-          )}
-        />
-      );
-  }
 }

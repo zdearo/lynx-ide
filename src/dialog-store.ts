@@ -27,6 +27,8 @@ interface DialogState {
   closeFileTarget: { worktreePath: string; path: string } | null;
   /** Worktree whose repository gets a GitHub remote, once the user confirms. */
   createRemoteFor: string | null;
+  /** Files whose unstaged changes the user is asked to confirm throwing away. */
+  discardTarget: { worktreePath: string; paths: string[] } | null;
 
   askCustomCommand: (worktreePath: string | null) => void;
   askRemoveWorktree: (
@@ -40,6 +42,9 @@ interface DialogState {
   askCloseTerminal: (id: string | null) => void;
   askCloseFile: (target: { worktreePath: string; path: string } | null) => void;
   askCreateRemote: (worktreePath: string | null) => void;
+  askDiscard: (
+    target: { worktreePath: string; paths: string[] } | null,
+  ) => void;
 }
 
 export const useDialogStore = create<DialogState>((set) => ({
@@ -53,6 +58,7 @@ export const useDialogStore = create<DialogState>((set) => ({
   closeTerminalId: null,
   closeFileTarget: null,
   createRemoteFor: null,
+  discardTarget: null,
 
   askCustomCommand: (customCommandFor) => set({ customCommandFor }),
   askRemoveWorktree: (removeWorktreeTarget) => set({ removeWorktreeTarget }),
@@ -64,4 +70,5 @@ export const useDialogStore = create<DialogState>((set) => ({
   askCloseTerminal: (closeTerminalId) => set({ closeTerminalId }),
   askCloseFile: (closeFileTarget) => set({ closeFileTarget }),
   askCreateRemote: (createRemoteFor) => set({ createRemoteFor }),
+  askDiscard: (discardTarget) => set({ discardTarget }),
 }));

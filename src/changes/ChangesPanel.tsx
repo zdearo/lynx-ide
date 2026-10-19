@@ -2,6 +2,7 @@ import type { KeyboardEvent } from "react";
 
 import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
 import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
+import { Undo2Glyph18 } from "@/components/icons/Undo2Glyph18";
 import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,10 @@ import { CommitList } from "@/changes/CommitList";
 import { useChangesViewStore } from "@/changes/changes-view-store";
 import { stageFile, stageFiles, unstageFile } from "@/changes/change-actions";
 import { useChangesRefresh } from "@/changes/use-changes-refresh";
+import { useRemoteFetch } from "@/changes/use-remote-fetch";
+import { refreshWorktreeGit } from "@/changes/refresh-worktree-git";
 import { useChangesStore } from "@/changes/changes-store";
+import { useDialogStore } from "@/dialog-store";
 import { useEditorStore } from "@/editor/editor-store";
 import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
@@ -56,6 +60,7 @@ export function ChangesPanel() {
   const toggleSection = useCollapsedChangeSections((state) => state.toggle);
 
   useChangesRefresh(worktreePath);
+  useRemoteFetch(worktreePath);
 
   if (!selected || !worktreePath) {
     return (
@@ -137,7 +142,7 @@ export function ChangesPanel() {
         </h2>
         <TooltipIconButton
           label={copy.changes.refresh}
-          onClick={() => void useChangesStore.getState().refresh(path)}
+          onClick={() => void refreshWorktreeGit(path)}
         >
           <RefreshGlyph18 />
         </TooltipIconButton>
@@ -251,6 +256,24 @@ export function ChangesPanel() {
                     </h3>
                     {STAGE_ALL.has(section.id) && (
                       <TooltipIconButton
+                        label={copy.changes.discard.all(
+                          copy.changes.sections[section.id],
+                        )}
+                        className="size-5 shrink-0"
+                        onClick={() =>
+                          useDialogStore.getState().askDiscard({
+                            worktreePath: path,
+                            paths: section.entries.map(
+                              (entry) => entry.file.path,
+                            ),
+                          })
+                        }
+                      >
+                        <Undo2Glyph18 />
+                      </TooltipIconButton>
+                    )}
+                    {STAGE_ALL.has(section.id) && (
+                      <TooltipIconButton
                         label={copy.changes.stageAll(
                           copy.changes.sections[section.id],
                         )}
@@ -281,6 +304,15 @@ export function ChangesPanel() {
                             sectionIndex === 0 && entry === section.entries[0]
                           }
                           index={indexActionFor(section.id, entry)}
+                          onDiscard={
+                            STAGE_ALL.has(section.id)
+                              ? () =>
+                                  useDialogStore.getState().askDiscard({
+                                    worktreePath: path,
+                                    paths: [entry.file.path],
+                                  })
+                              : undefined
+                          }
                           onPreview={() => show(entry, true)}
                           onPin={() => show(entry, false)}
                         />

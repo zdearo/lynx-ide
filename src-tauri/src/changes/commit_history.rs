@@ -10,6 +10,9 @@ use crate::error::AppError;
 use crate::git::git_command::git;
 
 use super::branch_sync;
+use super::change_list::ChangeKind;
+use super::file_diff::is_commit_hash;
+use super::line_counts::{LineCounts, parse_numstat};
 
 const MAX_COMMITS: u32 = 200;
 /// Unit separator: git prints it between fields, and no subject or name can contain it.
@@ -48,6 +51,75 @@ fn parse_log(text: &str) -> Vec<CommitEntry> {
             })
         })
         .collect()
+}
+
+/// One file a commit touched, with the lines it added and removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitFile {
+    pub path: String,
+    /// Where a renamed or copied file came from.
+    pub original_path: Option<String>,
+    pub kind: ChangeKind,
+    pub lines: Option<LineCounts>,
+}
+
+/// Reads `--name-status -z`: a letter, then one path, or two for a rename or a copy.
+fn parse_name_status(output: &str) -> Vec<(ChangeKind, Option<String>, String)> {
+    let mut files = Vec::new();
+    let mut tokens = output.split('\0').filter(|token| !token.is_empty());
+    while let Some(status) = tokens.next() {
+        let kind = match status.chars().next() {
+            Some('A') => ChangeKind::Added,
+            Some('M') => ChangeKind::Modified,
+            Some('D') => ChangeKind::Deleted,
+            Some('R') => ChangeKind::Renamed,
+            Some('C') => ChangeKind::Copied,
+            Some('T') => ChangeKind::TypeChanged,
+            _ => continue,
+        };
+        let moved = matches!(kind, ChangeKind::Renamed | ChangeKind::Copied);
+        let Some(first) = tokens.next() else { break };
+        if moved {
+            let Some(second) = tokens.next() else { break };
+            files.push((kind, Some(first.to_owned()), second.to_owned()));
+        } else {
+            files.push((kind, None, first.to_owned()));
+        }
+    }
+    files
+}
+
+/// The files of one commit against its first parent, in the order git lists them.
+pub fn list_files(root: &Path, hash: &str) -> Result<Vec<CommitFile>, AppError> {
+    if !is_commit_hash(hash) {
+        return Err(AppError::ChangeRefused("that is not a commit hash"));
+    }
+    let show = |flag: &str| {
+        git(root)
+            .args([
+                "show",
+                "--format=",
+                "--first-parent",
+                "-M",
+                "-z",
+                flag,
+                hash,
+            ])
+            .run_bytes()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    };
+    let statuses = parse_name_status(&show("--name-status")?);
+    let counts = parse_numstat(&show("--numstat")?);
+    Ok(statuses
+        .into_iter()
+        .map(|(kind, original_path, path)| CommitFile {
+            lines: counts.get(&path).copied(),
+            path,
+            original_path,
+            kind,
+        })
+        .collect())
 }
 
 pub fn list(root: &Path, limit: u32) -> Result<Vec<CommitEntry>, AppError> {
@@ -135,5 +207,52 @@ mod tests {
         repo.commit_file("b.txt", "b\n", "add b");
 
         assert_eq!(list(&repo.path, 2).expect("list").len(), 2);
+    }
+
+    #[test]
+    fn name_status_reads_letters_paths_and_renames() {
+        let output = "M\0src/a.rs\0R100\0old.rs\0new.rs\0D\0gone.rs\0";
+
+        let files = parse_name_status(output);
+
+        assert_eq!(files.len(), 3);
+        assert_eq!(
+            files[0],
+            (ChangeKind::Modified, None, "src/a.rs".to_owned())
+        );
+        assert_eq!(
+            files[1],
+            (
+                ChangeKind::Renamed,
+                Some("old.rs".to_owned()),
+                "new.rs".to_owned()
+            )
+        );
+        assert_eq!(files[2].0, ChangeKind::Deleted);
+    }
+
+    #[test]
+    fn a_commit_lists_its_files_with_kinds_and_counts_and_a_root_lists_what_it_added() {
+        let repo = TestRepository::new();
+        repo.commit_file("README.md", "hello\nworld\n", "edit");
+        repo.commit_file("new.txt", "a\nb\n", "add");
+        let edit = repo.git(&["rev-parse", "HEAD~1"]);
+        let root_commit = repo.git(&["rev-parse", "HEAD~2"]);
+
+        let files = list_files(&repo.path, &edit).expect("files");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "README.md");
+        assert_eq!(files[0].kind, ChangeKind::Modified);
+        assert_eq!(
+            files[0].lines,
+            Some(LineCounts {
+                added: 1,
+                removed: 0
+            })
+        );
+
+        let root = list_files(&repo.path, &root_commit).expect("root");
+        assert_eq!(root[0].kind, ChangeKind::Added);
+        assert!(list_files(&repo.path, "--oops").is_err());
     }
 }

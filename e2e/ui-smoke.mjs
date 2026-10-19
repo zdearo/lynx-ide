@@ -3002,6 +3002,29 @@ await session("?mock=full", 1400, 800, async (p) => {
     !!summaryBox && !!listBox && summaryBox.y < listBox.y,
     JSON.stringify({ summaryBox, listBox }),
   );
+  await history.getByRole("button", { name: /Fix the label/ }).click();
+  await p.waitForTimeout(300);
+  const commitFiles = p.getByRole("list", { name: /^Files in commit/ });
+  check(
+    "a commit expands into its files, each with its kind and lines",
+    (await commitFiles.getByRole("listitem").count()) === 2 &&
+      (
+        (await commitFiles.getByRole("listitem").first().textContent()) ?? ""
+      ).includes("+3"),
+  );
+  await commitFiles.getByRole("button", { name: /App\.tsx/ }).click();
+  await p.locator(".cm-editor").waitFor({ timeout: 5000 });
+  const commitToolbar = p.getByRole("toolbar", { name: "File view" });
+  check(
+    "a commit file opens as a diff tab naming the commit, with Edit off and no compare switch",
+    ((await commitToolbar.textContent()) ?? "").includes("Commit 1004") &&
+      (await commitToolbar
+        .getByRole("button", { name: "Edit" })
+        .isDisabled()) === true &&
+      (await commitToolbar
+        .getByRole("group", { name: "Compare with" })
+        .count()) === 0,
+  );
 
   await push.click();
   await p.waitForTimeout(700);
@@ -3084,6 +3107,518 @@ await session("?mock=full", 1400, 800, async (p) => {
       (await p
         .getByRole("heading", { name: "Open a pull request" })
         .count()) === 0,
+  );
+});
+
+// Discarding asks first, cancelling changes nothing, and confirming removes the file from the list.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(600);
+  const list = p.getByRole("group", {
+    name: "Changed files in the selected worktree",
+  });
+  const app = list.getByRole("treeitem", { name: /^App\.tsx, modified$/ });
+  const appText = (await app.textContent()) ?? "";
+  check(
+    "a changed row shows the lines added and removed",
+    appText.includes("+3") && appText.includes("−1"),
+    appText,
+  );
+  await app.click();
+  await p.locator(".cm-editor").waitFor({ timeout: 5000 });
+  const compare = p
+    .getByRole("toolbar", { name: "File view" })
+    .getByRole("group", { name: "Compare with" });
+  check(
+    "a changed file offers HEAD, Staged, Unstaged and Base as what to compare with",
+    (await compare.getByRole("button").allTextContents()).join("|") ===
+      "HEAD|Staged|Unstaged|Base",
+  );
+  await compare.getByRole("button", { name: "Staged", exact: true }).click();
+  await p.waitForTimeout(500);
+  check(
+    "picking Staged shows the index side of the diff",
+    ((await p.locator(".cm-content").first().innerText()) ?? "").includes(
+      "staged line",
+    ),
+  );
+  await compare.getByRole("button", { name: "HEAD", exact: true }).click();
+  await p.waitForTimeout(300);
+
+  await list
+    .getByRole("button", { name: "Discard App.tsx", exact: true })
+    .click();
+  await p.waitForTimeout(300);
+  const dialog = p.getByRole("alertdialog");
+  check(
+    "discarding asks first and says it cannot be undone",
+    (await dialog.getByText("Discard this change?").count()) === 1 &&
+      ((await dialog.textContent()) ?? "").includes("cannot be undone"),
+  );
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await p.waitForTimeout(300);
+  check("cancelling keeps the file in the list", (await app.count()) === 1);
+
+  await app.focus();
+  await p.keyboard.press("Delete");
+  await p.waitForTimeout(300);
+  await p
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Discard", exact: true })
+    .click();
+  await p.waitForTimeout(500);
+  check(
+    "confirming removes the file from the Changes section",
+    (await app.count()) === 0,
+  );
+
+  await list
+    .getByRole("button", { name: "Discard all untracked files", exact: true })
+    .click();
+  await p.waitForTimeout(300);
+  check(
+    "a section's discard button names how many files it covers",
+    (await p
+      .getByRole("alertdialog")
+      .getByText("Discard this change?")
+      .count()) === 1,
+  );
+});
+
+// Amend: the last commit's message comes back, and a commit the remote has needs a second click.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(600);
+
+  const summary = p.getByRole("textbox", { name: "Commit summary" });
+  await p.getByRole("switch", { name: "Amend last commit" }).click();
+  await p.waitForTimeout(300);
+  check(
+    "turning amend on brings back the last commit's message",
+    (await summary.inputValue()) === "feat(auth): add the login form",
+  );
+
+  await summary.fill("feat(auth): add the sign-in form");
+  await p.getByRole("button", { name: "Amend", exact: true }).click();
+  await p.waitForTimeout(300);
+  check(
+    "amending a commit the remote has asks for a second, deliberate click",
+    (await p.getByText(/already on origin\. Amending rewrites it/).count()) ===
+      1 &&
+      (await p
+        .getByRole("button", { name: "Amend anyway", exact: true })
+        .count()) === 1,
+  );
+
+  await p.getByRole("button", { name: "Amend anyway", exact: true }).click();
+  await p.waitForTimeout(600);
+  await p.getByRole("button", { name: "Commits", exact: true }).click();
+  await p.waitForTimeout(300);
+  const history = p.getByRole("list", { name: "Commits on this branch" });
+  const first =
+    (await history.getByRole("listitem").first().textContent()) ?? "";
+  check(
+    "the amended commit keeps its place, with the new subject, and is no longer on the remote",
+    first.includes("add the sign-in form") &&
+      first.includes("Not pushed") &&
+      (await history.getByRole("listitem").count()) === 3,
+    first,
+  );
+});
+
+// Keeping the branch and its remote together: Pull when behind, Sync when both moved.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(600);
+
+  await p
+    .getByRole("textbox", { name: "Commit summary" })
+    .fill("Fix the label");
+  await p.getByRole("button", { name: "Commit", exact: true }).click();
+  await p.waitForTimeout(700);
+  await p.getByRole("button", { name: "Push", exact: true }).click();
+  await p.waitForTimeout(700);
+
+  await p.evaluate(() => window.__lynxMock.setBehind(2));
+  await p.getByRole("button", { name: "Refresh", exact: true }).click();
+  await p.waitForTimeout(500);
+  check(
+    "when the remote has commits and the branch has none of its own, the button is Pull",
+    (await p.getByRole("button", { name: "Pull", exact: true }).count()) === 1,
+  );
+  await p.getByRole("button", { name: "Pull", exact: true }).click();
+  await p.waitForTimeout(600);
+  check(
+    "pulling brings the branch level and says so",
+    (await p.getByText("Pulled from origin.").count()) === 1 &&
+      (await p.getByRole("button", { name: "Commit", exact: true }).count()) ===
+        1,
+  );
+
+  // Something of its own to push, and the remote moved too: Sync.
+  await p.getByRole("button", { name: "Stage README.md", exact: true }).click();
+  await p.waitForTimeout(400);
+  await p.getByRole("textbox", { name: "Commit summary" }).fill("Second fix");
+  await p.getByRole("button", { name: "Commit", exact: true }).click();
+  await p.waitForTimeout(700);
+  await p.evaluate(() => window.__lynxMock.setBehind(1));
+  await p.getByRole("button", { name: "Refresh", exact: true }).click();
+  await p.waitForTimeout(500);
+  check(
+    "with commits on both sides the button is Sync, and says what each side has",
+    (await p.getByRole("button", { name: "Sync", exact: true }).count()) ===
+      1 && (await p.getByText(/1 to push, 1 to pull/).count()) === 1,
+  );
+  await p.getByRole("button", { name: "Sync", exact: true }).click();
+  await p.waitForTimeout(800);
+  check(
+    "syncing joins the two and ends level",
+    (await p.getByText("Synced with origin.").count()) === 1 &&
+      (await p.getByRole("button", { name: "Sync", exact: true }).count()) ===
+        0,
+  );
+});
+
+// An amended commit the remote has: a plain push would be refused, so the button is a Force push with lease.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(600);
+
+  await p.getByRole("switch", { name: "Amend last commit" }).click();
+  await p.waitForTimeout(300);
+  await p.getByRole("button", { name: "Amend", exact: true }).click();
+  await p.waitForTimeout(200);
+  await p.getByRole("button", { name: "Amend anyway", exact: true }).click();
+  await p.waitForTimeout(700);
+
+  const force = p.getByRole("button", { name: "Force push", exact: true });
+  check(
+    "after rewriting a pushed commit the button is Force push, and nothing else offers to sync",
+    (await force.count()) === 1 &&
+      (await p.getByRole("button", { name: "Sync", exact: true }).count()) ===
+        0 &&
+      (await p.getByText(/old copies of commits you rewrote/).count()) === 1,
+  );
+  await force.click();
+  await p.waitForTimeout(300);
+  check(
+    "a force push asks for a second click and says what it replaces",
+    (await p
+      .getByRole("button", { name: "Force push anyway", exact: true })
+      .count()) === 1 &&
+      (await p.getByText(/replaces 1 commit on origin/).count()) === 1,
+  );
+  await p
+    .getByRole("button", { name: "Force push anyway", exact: true })
+    .click();
+  await p.waitForTimeout(700);
+  check(
+    "after the force push the branch is level again",
+    (await p.getByText("Replaced the branch on origin.").count()) === 1 &&
+      (await p
+        .getByRole("button", { name: "Force push", exact: true })
+        .count()) === 0,
+  );
+});
+
+// Actions on the pull request: auto-merge, draft state, close and reopen, and a merge that asks twice.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Pull request", exact: true }).click();
+  await p.waitForTimeout(700);
+
+  check(
+    "an open pull request says where it merges and what stands in the way",
+    (await p
+      .getByText(/Merging into main: checks are failing or still running/)
+      .count()) === 1 &&
+      (
+        (await p.getByRole("combobox", { name: "Merge method" }).innerText()) ??
+        ""
+      ).includes("Squash and merge"),
+  );
+
+  await p.getByRole("button", { name: "Enable auto-merge" }).click();
+  await p.waitForTimeout(500);
+  check(
+    "enabling auto-merge says GitHub will merge it once the requirements pass",
+    (await p.getByText(/Auto-merge is on/).count()) === 1,
+  );
+
+  await p.getByRole("button", { name: "Convert to draft" }).click();
+  await p.waitForTimeout(500);
+  check(
+    "converting to draft shows the Draft badge and offers Ready for review",
+    (await p.getByText("Draft", { exact: true }).count()) >= 1 &&
+      (await p.getByRole("button", { name: "Ready for review" }).count()) === 1,
+  );
+  await p.getByRole("button", { name: "Ready for review" }).click();
+  await p.waitForTimeout(500);
+
+  await p.getByRole("button", { name: "Close pull request" }).click();
+  await p.waitForTimeout(500);
+  check(
+    "closing shows the Closed badge and offers to reopen",
+    (await p.getByText("Closed", { exact: true }).count()) >= 1 &&
+      (await p.getByRole("button", { name: "Reopen pull request" }).count()) ===
+        1,
+  );
+  await p.getByRole("button", { name: "Reopen pull request" }).click();
+  await p.waitForTimeout(500);
+
+  await p.getByRole("button", { name: "Merge", exact: true }).click();
+  await p.waitForTimeout(200);
+  check(
+    "a merge asks for a second click and says what it merges where",
+    (await p.getByRole("button", { name: "Confirm merge" }).count()) === 1 &&
+      (await p.getByText(/Merges #42 into main/).count()) === 1,
+  );
+  await p.getByRole("button", { name: "Confirm merge" }).click();
+  await p.waitForTimeout(600);
+  check(
+    "after the merge the badge reads Merged and the actions are gone",
+    (await p.getByText("Merged", { exact: true }).count()) >= 1 &&
+      (await p.getByRole("button", { name: "Close pull request" }).count()) ===
+        0,
+  );
+});
+
+// The Discussion view: the conversation, an inline thread to reply to and resolve, and a new comment.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Pull request", exact: true }).click();
+  await p.waitForTimeout(700);
+
+  check(
+    "the pull request offers Checks and Discussion, with counts",
+    (
+      await p.getByRole("button", { name: /^Discussion/ }).textContent()
+    )?.includes("3") === true,
+  );
+  await p.getByRole("button", { name: /^Discussion/ }).click();
+  await p.waitForTimeout(400);
+  check(
+    "the discussion shows the inline thread with its place, and the conversation in order",
+    (await p.getByText("src/App.tsx:12").count()) === 1 &&
+      (await p.getByText("Why is this call made twice?").count()) === 1 &&
+      (await p.getByText(/requested changes/).count()) === 1 &&
+      (await p
+        .getByText("Could we also cover the refresh path in a test?")
+        .count()) === 1,
+  );
+
+  await p.getByRole("button", { name: "Reply", exact: true }).click();
+  await p
+    .getByRole("textbox", { name: "Reply in src/App.tsx" })
+    .fill("It was a leftover, fixed.");
+  await p.getByRole("button", { name: "Reply", exact: true }).click();
+  await p.waitForTimeout(500);
+  check(
+    "replying adds the answer to the thread",
+    (await p.getByText("It was a leftover, fixed.").count()) === 1,
+  );
+
+  await p.getByRole("button", { name: "Resolve thread" }).click();
+  await p.waitForTimeout(400);
+  check(
+    "resolving marks the thread resolved and offers to reopen it",
+    (await p.getByText("Resolved", { exact: true }).count()) === 1 &&
+      (await p.getByRole("button", { name: "Reopen thread" }).count()) === 1,
+  );
+
+  await p
+    .getByRole("textbox", { name: "Add a comment" })
+    .fill("Thanks, looks good now.");
+  await p.getByRole("button", { name: "Comment", exact: true }).click();
+  await p.waitForTimeout(500);
+  check(
+    "a new comment joins the conversation and clears the box",
+    (await p.getByText("Thanks, looks good now.").count()) === 1 &&
+      (await p.getByRole("textbox", { name: "Add a comment" }).inputValue()) ===
+        "",
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations in the discussion",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+});
+
+// A failed check has a log to read in place.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Pull request", exact: true }).click();
+  await p.waitForTimeout(700);
+
+  check(
+    "only a GitHub Actions job offers a log, and every check with a page offers Open",
+    (await p.getByRole("button", { name: "Log of CI / test" }).count()) === 1 &&
+      (await p.getByRole("button", { name: /^Log of / }).count()) === 1 &&
+      (await p
+        .getByRole("button", { name: "Open CI / test on GitHub" })
+        .count()) === 1,
+  );
+  await p.getByRole("button", { name: "Log of CI / test" }).click();
+  await p.waitForTimeout(400);
+  const log = p.getByLabel("Log text of CI / test");
+  check(
+    "opening the log shows its end, says it was cut, and can be closed",
+    ((await log.textContent()) ?? "").includes("test failed") &&
+      (await p.getByText("Only the end of the log is shown.").count()) === 1,
+  );
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with a log open",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+  await p.getByRole("button", { name: "Log of CI / test" }).click();
+  check("hiding the log removes it", (await log.count()) === 0);
+});
+
+// Fix with AI: a rejected commit and broken checks are handed to an agent that is on.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(500);
+  const summary = p.getByRole("textbox", { name: "Commit summary" });
+  const fix = p.getByRole("button", { name: "Fix with AI" });
+  const failCommit = async () => {
+    await p
+      .getByRole("group", { name: "Changed files in the selected worktree" })
+      .getByRole("button", { name: "Stage App.tsx" })
+      .click();
+    await p.waitForTimeout(300);
+    await summary.fill("Ship it, hook fails");
+    await p.getByRole("button", { name: "Commit", exact: true }).click();
+    await p.waitForTimeout(500);
+  };
+
+  await failCommit();
+  check(
+    "a rejected commit shows git's words and no fix button while no agent is on",
+    (await p.getByText("pre-commit hook failed").count()) === 1 &&
+      (await fix.count()) === 0,
+  );
+
+  // Turn Claude Code on in Settings, then try again.
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  await p.getByRole("tab", { name: "Agents" }).click();
+  await p.waitForTimeout(300);
+  await p.getByRole("switch", { name: "Use Claude Code in Lynx" }).click();
+  await p.waitForTimeout(300);
+  await p
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Turn on", exact: true })
+    .click();
+  await p.waitForTimeout(600);
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(300);
+
+  await p.getByRole("button", { name: "Commit", exact: true }).click();
+  await p.waitForTimeout(500);
+  check(
+    "with an agent on, a rejected commit offers Fix with AI",
+    (await fix.count()) === 1,
+  );
+
+  await fix.click();
+  await p.waitForTimeout(700);
+  const run = await p.evaluate(() => window.__lynxMock.lastAgentRun());
+  check(
+    "Fix with AI writes the error, the message and the staged files to a prompt",
+    run.prompt.includes("pre-commit hook failed: eslint found 2 errors") &&
+      run.prompt.includes("Ship it, hook fails") &&
+      run.prompt.includes("- src/App.tsx") &&
+      run.prompt.includes("Do not bypass hooks"),
+    run.prompt,
+  );
+  check(
+    "and starts the agent with only a short line that points at the file",
+    run.command ===
+      "claude 'Read /tmp/lynx-prompts/prompt-mock.md and follow the instructions in it.'",
+    String(run.command),
+  );
+});
+
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Pull request", exact: true }).click();
+  await p.waitForTimeout(700);
+  check(
+    "Fix broken checks is not offered while no agent is on",
+    (await p.getByRole("button", { name: "Fix broken checks" }).count()) === 0,
+  );
+
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  await p.getByRole("tab", { name: "Agents" }).click();
+  await p.waitForTimeout(300);
+  await p.getByRole("switch", { name: "Use Claude Code in Lynx" }).click();
+  await p.waitForTimeout(300);
+  await p
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Turn on", exact: true })
+    .click();
+  await p.waitForTimeout(600);
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(300);
+
+  await p.getByRole("button", { name: "Fix broken checks" }).click();
+  await p.waitForTimeout(700);
+  const run = await p.evaluate(() => window.__lynxMock.lastAgentRun());
+  check(
+    "Fix broken checks hands the failing checks, with their links, to the agent",
+    run.prompt.includes("- CI / test: https://github.com/") &&
+      run.prompt.includes("gh run view --job") &&
+      run.command?.startsWith("claude 'Read "),
+    run.prompt,
   );
 });
 

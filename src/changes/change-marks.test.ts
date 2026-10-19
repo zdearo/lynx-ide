@@ -7,7 +7,14 @@ const file = (
   path: string,
   staged: ChangedFile["staged"],
   unstaged: ChangedFile["unstaged"],
-): ChangedFile => ({ path, originalPath: null, staged, unstaged });
+): ChangedFile => ({
+  path,
+  originalPath: null,
+  staged,
+  unstaged,
+  stagedLines: null,
+  unstagedLines: null,
+});
 
 describe("changeMarks", () => {
   it("marks a file with the kind on disk, and a conflict over everything", () => {

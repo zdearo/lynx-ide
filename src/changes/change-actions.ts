@@ -26,6 +26,18 @@ export async function stageFiles(worktreePath: string, paths: string[]) {
   await useChangesStore.getState().refresh(worktreePath);
 }
 
+/** Throws away the unstaged changes of these files. The caller has asked the user first. */
+export async function discardFiles(worktreePath: string, paths: string[]) {
+  try {
+    await unwrap(commands.discardChanges(worktreePath, paths));
+  } catch (error) {
+    toast.error(copy.changes.discard.failed, {
+      description: errorMessage(error),
+    });
+  }
+  await useChangesStore.getState().refresh(worktreePath);
+}
+
 /** Takes a file out of the index; the working tree keeps its content. */
 export async function unstageFile(worktreePath: string, file: ChangedFile) {
   try {

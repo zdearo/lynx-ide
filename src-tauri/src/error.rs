@@ -64,11 +64,15 @@ pub enum AppError {
     #[error(transparent)]
     GitHubRemote(#[from] crate::pull_request::github_remote::GitHubRemoteError),
     #[error(transparent)]
+    PromptFile(#[from] crate::agents::agent_prompt_file::PromptFileError),
+    #[error(transparent)]
     CreatePullRequest(#[from] crate::pull_request::pull_request_create::CreatePullRequestError),
     #[error("only https links can be opened")]
     InvalidLink,
     #[error("{0}")]
     PushUnavailable(&'static str),
+    #[error("{0}")]
+    ChangeRefused(&'static str),
     #[error("could not open the link: {0}")]
     OpenLink(#[source] std::io::Error),
     #[error(transparent)]
@@ -100,6 +104,7 @@ pub enum IpcErrorKind {
     PullRequest,
     InvalidLink,
     PushUnavailable,
+    ChangeRefused,
     InvalidRepoName,
     InvalidPullRequest,
     PullRequestExists,
@@ -148,7 +153,9 @@ impl From<AppError> for IpcError {
                 _ => IpcErrorKind::PullRequest,
             },
             AppError::InvalidLink => IpcErrorKind::InvalidLink,
+            AppError::PromptFile(_) => IpcErrorKind::FileSystem,
             AppError::PushUnavailable(_) => IpcErrorKind::PushUnavailable,
+            AppError::ChangeRefused(_) => IpcErrorKind::ChangeRefused,
             AppError::CreatePullRequest(error) => match error {
                 CreatePullRequestError::NotInstalled => IpcErrorKind::GhNotInstalled,
                 CreatePullRequestError::NotLoggedIn => IpcErrorKind::GhNotLoggedIn,

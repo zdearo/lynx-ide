@@ -20,6 +20,11 @@ const CloseTerminalDialog = lazy(() =>
     default: m.CloseTerminalDialog,
   })),
 );
+const DiscardDialog = lazy(() =>
+  import("@/changes/DiscardDialog").then((m) => ({
+    default: m.DiscardDialog,
+  })),
+);
 const CreateRemoteDialog = lazy(() =>
   import("@/pull-request/CreateRemoteDialog").then((m) => ({
     default: m.CreateRemoteDialog,
@@ -69,6 +74,7 @@ const DIALOG_MODULES = [
   () => import("@/terminal/CloseTerminalDialog"),
   () => import("@/editor/CloseFileDialog"),
   () => import("@/pull-request/CreateRemoteDialog"),
+  () => import("@/changes/DiscardDialog"),
   () => import("@/terminal/CustomCommandDialog"),
   () => import("@/workspace/FolderDialog"),
   () => import("@/workspace/MoveDialog"),
@@ -100,6 +106,7 @@ export function DialogHost() {
   const closeTerminalId = useDialogStore((state) => state.closeTerminalId);
   const closeFileTarget = useDialogStore((state) => state.closeFileTarget);
   const createRemoteFor = useDialogStore((state) => state.createRemoteFor);
+  const discardTarget = useDialogStore((state) => state.discardTarget);
   const customCommandFor = useDialogStore((state) => state.customCommandFor);
   const folderDialog = useDialogStore((state) => state.folderDialog);
   const moveTarget = useDialogStore((state) => state.moveTarget);
@@ -119,6 +126,7 @@ export function DialogHost() {
       {closeTerminalId !== null && <CloseTerminalDialog />}
       {closeFileTarget !== null && <CloseFileDialog />}
       {createRemoteFor !== null && <CreateRemoteDialog />}
+      {discardTarget !== null && <DiscardDialog />}
       {customCommandFor !== null && <CustomCommandDialog />}
       {folderDialog !== null && <FolderDialog />}
       {moveTarget !== null && <MoveDialog />}

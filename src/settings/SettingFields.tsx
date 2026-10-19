@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { friendlyConfigError } from "@/config/config-store";
 import { errorMessage } from "@/lib/error-message";
 import {
@@ -176,6 +177,61 @@ export function TextSetting({
           </Button>
         )}
       </div>
+    </SettingFrame>
+  );
+}
+
+interface TextAreaSettingProps {
+  id: string;
+  label: string;
+  hint: string;
+  placeholder: string;
+  /** `null` means "not set", which is the default. */
+  value: string | null;
+  disabled: boolean;
+  onCommit: (value: string | null) => Promise<void>;
+}
+
+/** A multi-line text field. Saves when it loses focus; blank text means "not set". */
+export function TextAreaSetting({
+  id,
+  label,
+  hint,
+  placeholder,
+  value,
+  disabled,
+  onCommit,
+}: TextAreaSettingProps) {
+  const { error, clearError, attempt } = useSaveError();
+
+  function commit(next: string | null) {
+    if (next === value) clearError();
+    else void attempt(() => onCommit(next));
+  }
+
+  return (
+    <SettingFrame
+      id={id}
+      label={label}
+      hint={hint}
+      error={error}
+      canReset={value !== null}
+      onReset={() => commit(null)}
+      disabled={disabled}
+    >
+      {/* Re-keyed by the saved value, so an edit made in the file shows up here. */}
+      <Textarea
+        key={value ?? ""}
+        id={id}
+        className="min-h-24"
+        defaultValue={value ?? ""}
+        placeholder={placeholder}
+        disabled={disabled}
+        spellCheck={false}
+        aria-invalid={error !== null}
+        aria-describedby={`${id}-note`}
+        onBlur={(event) => commit(event.currentTarget.value.trim() || null)}
+      />
     </SettingFrame>
   );
 }

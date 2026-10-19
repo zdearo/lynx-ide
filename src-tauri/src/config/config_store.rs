@@ -12,8 +12,8 @@ use specta::Type;
 use crate::agents::harness::{HarnessId, harness_name, supported};
 
 use super::app_config::{
-    AppConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, LaunchMode, TerminalConfig,
-    expand_home, parse_config,
+    AppConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, GitConfig, LaunchMode,
+    TerminalConfig, expand_home, parse_config,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -341,6 +341,30 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
         (config.agents.launch_mode != LaunchMode::Manual).then(|| json!("yolo")),
     );
     put_launch_arguments(root, &config.agents.launch_arguments);
+    let git = &config.git;
+    let git_defaults = GitConfig::default();
+    put(
+        root,
+        "git",
+        "commitMessageAgent",
+        (git.commit_message_agent != git_defaults.commit_message_agent)
+            .then(|| json!(git.commit_message_agent)),
+    );
+    put(
+        root,
+        "git",
+        "commitMessageStyle",
+        (git.commit_message_style != git_defaults.commit_message_style)
+            .then(|| json!(git.commit_message_style)),
+    );
+    put(
+        root,
+        "git",
+        "commitMessageInstructions",
+        git.commit_message_instructions
+            .as_ref()
+            .map(|text| json!(text)),
+    );
 }
 
 /// Writes each agent's arguments under `agents.launchArguments`. Only the names Lynx knows are
@@ -407,7 +431,10 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::config::app_config::{BellStyle, ColorScheme, TerminalConfig, WorktreesConfig};
+    use crate::config::app_config::{
+        BellStyle, ColorScheme, CommitMessageAgent, CommitMessageStyle, TerminalConfig,
+        WorktreesConfig,
+    };
 
     fn setup() -> (ConfigStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -789,5 +816,31 @@ mod tests {
             file_json(&store),
             json!({ "agents": { "launchArguments": { "codex": "" } } })
         );
+    }
+
+    #[test]
+    fn the_git_settings_are_written_only_when_they_differ_from_defaults() {
+        let (store, _dir) = setup();
+        let mut config = AppConfig::default();
+        config.git.commit_message_agent = CommitMessageAgent::Claude;
+        config.git.commit_message_style = CommitMessageStyle::Custom;
+        config.git.commit_message_instructions = Some("Write in Portuguese.".to_owned());
+
+        store.update(config).expect("update");
+        assert_eq!(
+            file_json(&store),
+            json!({
+                "git": {
+                    "commitMessageAgent": "claude",
+                    "commitMessageStyle": "custom",
+                    "commitMessageInstructions": "Write in Portuguese."
+                }
+            })
+        );
+
+        store
+            .update(AppConfig::default())
+            .expect("back to defaults");
+        assert_eq!(file_json(&store), json!({}));
     }
 }

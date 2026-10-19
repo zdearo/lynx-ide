@@ -21,6 +21,11 @@ function snapshot(fontSize: number): ConfigSnapshot {
       terminal: { ...DEFAULT_TERMINAL_CONFIG, fontSize },
       worktrees: { directory: null },
       agents: { launchMode: "manual", launchArguments: {} },
+      git: {
+        commitMessageAgent: "auto",
+        commitMessageStyle: "conventional",
+        commitMessageInstructions: null,
+      },
     },
     issues: [],
     path: "/home/dev/.lynx/config.json",

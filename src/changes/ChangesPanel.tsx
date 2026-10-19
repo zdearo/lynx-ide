@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from "react";
 
 import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
 import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,9 @@ import {
   type ChangeSectionId,
 } from "@/changes/change-sections";
 import { useCollapsedChangeSections } from "@/changes/change-section-collapse";
-import { ChangeRow } from "@/changes/ChangeRow";
+import { ChangeRow, type IndexAction } from "@/changes/ChangeRow";
+import { CommitArea } from "@/changes/CommitArea";
+import { stageFile, stageFiles, unstageFile } from "@/changes/change-actions";
 import { useChangesRefresh } from "@/changes/use-changes-refresh";
 import { useChangesStore } from "@/changes/changes-store";
 import { useEditorStore } from "@/editor/editor-store";
@@ -19,6 +22,12 @@ import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
 import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
 import { worktreeLabel } from "@/workspace/worktree-label";
+
+/** Sections whose files can all be staged at once. Conflicts are resolved by hand, not staged. */
+const STAGE_ALL: ReadonlySet<ChangeSectionId> = new Set([
+  "changes",
+  "untracked",
+]);
 
 /** Conflicts and staged files stay open: they are what needs a look before a commit. */
 const FOLDABLE: ReadonlySet<ChangeSectionId> = new Set([
@@ -93,6 +102,24 @@ export function ChangesPanel() {
   }
 
   const loadingFirstTime = !changes || (changes.status === "loading" && !count);
+  const stagedCount = changes?.files.filter((file) => file.staged).length ?? 0;
+
+  // Staged files leave the index from their own section; changes and untracked files go in.
+  function indexActionFor(
+    section: ChangeSectionId,
+    entry: ChangeEntry,
+  ): IndexAction | undefined {
+    if (section === "staged") {
+      return {
+        kind: "unstage",
+        onRun: () => void unstageFile(path, entry.file),
+      };
+    }
+    if (section === "changes" || section === "untracked") {
+      return { kind: "stage", onRun: () => void stageFile(path, entry.file) };
+    }
+    return undefined;
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -156,41 +183,59 @@ export function ChangesPanel() {
                 </>
               );
               return (
-                <div key={section.id}>
-                  <h3
-                    id={`changes-${section.id}`}
-                    className={cn(
-                      "flex h-6 items-center text-meta font-medium tracking-wide text-muted-foreground uppercase",
-                      sectionIndex > 0 && "mt-2",
-                    )}
-                  >
-                    {foldable ? (
-                      <button
-                        type="button"
-                        aria-expanded={open}
-                        aria-controls={open ? listId : undefined}
-                        onClick={() => toggleSection(section.id)}
-                        className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md pl-1.5 text-left uppercase outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
+                <div
+                  key={section.id}
+                  className={cn(sectionIndex > 0 && "mt-2")}
+                >
+                  <div className="flex h-6 items-center">
+                    <h3
+                      id={`changes-${section.id}`}
+                      className="flex h-6 min-w-0 flex-1 items-center text-meta font-medium tracking-wide text-muted-foreground uppercase"
+                    >
+                      {foldable ? (
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          aria-controls={open ? listId : undefined}
+                          onClick={() => toggleSection(section.id)}
+                          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md pl-1.5 text-left uppercase outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
+                        >
+                          <ChevronRightGlyph18
+                            aria-hidden
+                            className={cn(
+                              "size-3.5 shrink-0 transition-transform",
+                              open && "rotate-90",
+                            )}
+                          />
+                          {title}
+                        </button>
+                      ) : (
+                        <span className="flex items-center gap-1.5 pl-1.5">
+                          {title}
+                        </span>
+                      )}
+                    </h3>
+                    {STAGE_ALL.has(section.id) && (
+                      <TooltipIconButton
+                        label={copy.changes.stageAll(
+                          copy.changes.sections[section.id],
+                        )}
+                        className="mr-1 size-5 shrink-0"
+                        onClick={() =>
+                          void stageFiles(
+                            path,
+                            section.entries.map((entry) => entry.file.path),
+                          )
+                        }
                       >
-                        <ChevronRightGlyph18
-                          aria-hidden
-                          className={cn(
-                            "size-3.5 shrink-0 transition-transform",
-                            open && "rotate-90",
-                          )}
-                        />
-                        {title}
-                      </button>
-                    ) : (
-                      <span className="flex items-center gap-1.5 pl-1.5">
-                        {title}
-                      </span>
+                        <PlusGlyph18 />
+                      </TooltipIconButton>
                     )}
-                  </h3>
+                  </div>
                   {open && (
                     <div
                       id={listId}
-                      role="listbox"
+                      role="tree"
                       aria-labelledby={`changes-${section.id}`}
                     >
                       {section.entries.map((entry) => (
@@ -201,6 +246,7 @@ export function ChangesPanel() {
                           focusable={
                             sectionIndex === 0 && entry === section.entries[0]
                           }
+                          index={indexActionFor(section.id, entry)}
                           onPreview={() => show(entry, true)}
                           onPin={() => show(entry, false)}
                         />
@@ -213,6 +259,7 @@ export function ChangesPanel() {
           </div>
         </ScrollArea>
       )}
+      <CommitArea worktreePath={path} stagedCount={stagedCount} />
     </div>
   );
 }

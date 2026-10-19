@@ -1,0 +1,148 @@
+import { useState, type KeyboardEvent } from "react";
+
+import { commands } from "@/bindings";
+import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
+import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
+import { TooltipIconButton } from "@/components/TooltipIconButton";
+import { useChangesStore } from "@/changes/changes-store";
+import { draftOf, useCommitDraftStore } from "@/changes/commit-draft-store";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { errorMessage } from "@/lib/error-message";
+import { unwrap } from "@/lib/ipc-result";
+import { copy } from "@/ui-copy";
+
+interface CommitAreaProps {
+  worktreePath: string;
+  /** Files in the index: the commit holds only these. */
+  stagedCount: number;
+}
+
+/** The message box under the file list. Commit takes what is staged, with what the user wrote. */
+export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
+  const draft = useCommitDraftStore((state) =>
+    draftOf(state.drafts, worktreePath),
+  );
+  const [committing, setCommitting] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const canCommit =
+    stagedCount > 0 &&
+    draft.summary.trim() !== "" &&
+    !committing &&
+    !generating;
+  const canGenerate = stagedCount > 0 && !committing && !generating;
+
+  // Fills the summary and description from the user's agent CLI. Nothing is committed.
+  async function generate() {
+    if (!canGenerate) return;
+    setGenerating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const drafted = await unwrap(commands.draftCommitMessage(worktreePath));
+      useCommitDraftStore.getState().update(worktreePath, {
+        summary: drafted.summary,
+        description: drafted.description,
+      });
+      setNotice(copy.changes.draftedWith(drafted.agentLabel));
+    } catch (caught) {
+      setError(`${copy.changes.generateFailed}: ${errorMessage(caught)}`);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function commit() {
+    if (!canCommit) return;
+    setCommitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await unwrap(
+        commands.commitChanges(worktreePath, draft.summary, draft.description),
+      );
+      useCommitDraftStore.getState().clear(worktreePath);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setCommitting(false);
+      await useChangesStore.getState().refresh(worktreePath);
+    }
+  }
+
+  // Ctrl or Cmd with Enter commits from the description, like most commit boxes.
+  function onDescriptionKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      void commit();
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void commit();
+      }}
+      className="shrink-0 space-y-1.5 border-t border-sidebar-border p-2"
+    >
+      <Input
+        aria-label={copy.changes.summaryLabel}
+        placeholder={copy.changes.summaryPlaceholder}
+        value={draft.summary}
+        onChange={(event) =>
+          useCommitDraftStore
+            .getState()
+            .update(worktreePath, { summary: event.target.value })
+        }
+      />
+      <Textarea
+        aria-label={copy.changes.descriptionLabel}
+        placeholder={copy.changes.descriptionPlaceholder}
+        rows={3}
+        value={draft.description}
+        onChange={(event) =>
+          useCommitDraftStore
+            .getState()
+            .update(worktreePath, { description: event.target.value })
+        }
+        onKeyDown={onDescriptionKeyDown}
+      />
+      <div className="flex items-center gap-1.5">
+        <TooltipIconButton
+          label={copy.changes.generate}
+          tooltipSide="top"
+          disabled={!canGenerate}
+          aria-busy={generating}
+          onClick={() => void generate()}
+        >
+          {generating ? (
+            <Loader2Glyph18 className="animate-spin" />
+          ) : (
+            <SparkleGlyph18 />
+          )}
+        </TooltipIconButton>
+        <p
+          role="status"
+          className="min-w-0 flex-1 truncate text-meta text-muted-foreground"
+        >
+          {generating
+            ? copy.changes.generating
+            : (notice ??
+              (stagedCount === 0 ? copy.changes.nothingStaged : null))}
+        </p>
+        <Button type="submit" size="sm" disabled={!canCommit}>
+          {committing ? copy.changes.committing : copy.changes.commit}
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="text-meta break-words text-destructive">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}

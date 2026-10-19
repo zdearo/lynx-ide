@@ -87,7 +87,7 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 
 - [x] Abrir e editar arquivos: clique seleciona, duplo clique (ou Enter) abre no editor CodeMirror 6, que ocupa a área central; os arquivos abertos ficam numa faixa abaixo das abas de terminal. Salva com Cmd/Ctrl+S, com detecção de mudança no disco (hash) e aviso de conflito. Realce para JS/TS/JSX/TSX, JSON, CSS, HTML, Markdown, Python e Rust
 - [x] Aba Changes no painel da direita: lista de arquivos alterados (conflitos, staged, changes, untracked), diff do HEAD com a árvore de trabalho (Unified ou Split), aba de arquivo temporária com um clique e permanente com duplo clique, e botões Edit/Diff no topo do arquivo
-- [ ] Changes: stage/unstage, descartar, commit, contagem de linhas (+/−) por arquivo, diff por commit e por branch, e comparar staged contra o índice (hoje sempre contra o HEAD)
+- [ ] Changes: descartar, contagem de linhas (+/−) por arquivo, diff por commit e por branch, e comparar staged contra o índice (hoje sempre contra o HEAD)
 - [ ] Editor: busca em todos os arquivos, desfazer ao reabrir, abas de arquivo fixas/em prévia, abrir imagem e arquivo grande em modo leitura, salvar automático opcional
 - [ ] LSP: ponte em Rust (política A+D: servidor vivo só com o worktree em foco e um editor da linguagem aberto, para após ~10 min; limite LRU de segurança; servidores instalados pelo usuário) e `@codemirror/lsp-client` no editor
 - [ ] Explorador de arquivos: arrastar um item para o terminal, decorar com o status do Git (M/U) e atualizar sozinho com um vigia de arquivos (hoje atualiza ao voltar para a janela e no botão)
@@ -139,12 +139,12 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 ## Fase 2 — Revisão e Git
 
 - [ ] Diff de cada worktree contra a base ref (staged, unstaged e arquivos não rastreados)
-- [ ] Stage por arquivo
-- [ ] Commit com a mensagem escrita pelo usuário
+- [x] Stage por arquivo
+- [x] Commit com a mensagem escrita pelo usuário
 - [ ] Push com upstream; nunca force-push automático
 - [ ] Annotate AI Diff: comentário em linha que vira prompt para o agente
 - [ ] Conflito de merge: visualização básica
-- [ ] Mensagem de commit sugerida por IA **(?)**
+- [x] Mensagem de commit sugerida por IA, com o CLI do Claude Code ou do Codex instalado (sem escolha de agente nem de modelo ainda)
 
 ---
 

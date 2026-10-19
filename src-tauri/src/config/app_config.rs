@@ -13,6 +13,7 @@ pub const MAX_FONT_SIZE: u8 = 32;
 pub const DEFAULT_SCROLLBACK: u32 = 5_000;
 pub const MAX_SCROLLBACK: u32 = 100_000;
 pub const MAX_LAUNCH_ARGUMENTS_CHARS: usize = 500;
+pub const MAX_COMMIT_INSTRUCTIONS_CHARS: usize = 4_000;
 
 /// What a bell from a program does. Sound is left out: the terminal engine only reports the bell.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -116,6 +117,36 @@ pub struct AgentsConfig {
     pub launch_arguments: BTreeMap<HarnessId, String>,
 }
 
+/// Which agent CLI writes a commit message. `Auto` takes the first one installed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum CommitMessageAgent {
+    #[default]
+    Auto,
+    Claude,
+    Codex,
+}
+
+/// The style part of a commit message instruction. Lynx's output rules always follow it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum CommitMessageStyle {
+    #[default]
+    Conventional,
+    Plain,
+    Custom,
+}
+
+/// Git settings: which agent writes the commit message, and how it should write it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitConfig {
+    pub commit_message_agent: CommitMessageAgent,
+    pub commit_message_style: CommitMessageStyle,
+    /// The text used when the style is `Custom`. `None` means no text of its own.
+    pub commit_message_instructions: Option<String>,
+}
+
 /// The effective settings: what `~/.lynx/config.json` says, with defaults for the rest.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -123,6 +154,7 @@ pub struct AppConfig {
     pub terminal: TerminalConfig,
     pub worktrees: WorktreesConfig,
     pub agents: AgentsConfig,
+    pub git: GitConfig,
 }
 
 /// One thing wrong with the config, addressed by its dotted key (`terminal.fontSize`).
@@ -166,6 +198,10 @@ impl AppConfig {
         }
         for arguments in self.agents.launch_arguments.values_mut() {
             *arguments = arguments.trim().to_owned();
+        }
+        let instructions = &mut self.git.commit_message_instructions;
+        if let Some(text) = instructions.as_deref().map(str::trim) {
+            *instructions = (!text.is_empty()).then(|| text.to_owned());
         }
         self
     }
@@ -223,6 +259,19 @@ impl AppConfig {
                 ));
             }
         }
+        if let Some(text) = &self.git.commit_message_instructions {
+            if text.chars().any(|c| c.is_control() && c != '\n') {
+                issues.push(ConfigIssue::new(
+                    "git.commitMessageInstructions",
+                    "must be plain text; line breaks are allowed",
+                ));
+            } else if text.chars().count() > MAX_COMMIT_INSTRUCTIONS_CHARS {
+                issues.push(ConfigIssue::new(
+                    "git.commitMessageInstructions",
+                    format!("must be at most {MAX_COMMIT_INSTRUCTIONS_CHARS} characters"),
+                ));
+            }
+        }
         issues
     }
 
@@ -251,6 +300,15 @@ impl AppConfig {
             }
             "worktrees.directory" => self.worktrees.directory = defaults.worktrees.directory,
             "agents.launchMode" => self.agents.launch_mode = defaults.agents.launch_mode,
+            "git.commitMessageAgent" => {
+                self.git.commit_message_agent = defaults.git.commit_message_agent;
+            }
+            "git.commitMessageStyle" => {
+                self.git.commit_message_style = defaults.git.commit_message_style;
+            }
+            "git.commitMessageInstructions" => {
+                self.git.commit_message_instructions = defaults.git.commit_message_instructions;
+            }
             key => {
                 if let Some(harness) = key
                     .strip_prefix("agents.launchArguments.")
@@ -314,6 +372,14 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
         config.agents.launch_mode = launch_mode(agents, &mut issues).unwrap_or_default();
         config.agents.launch_arguments = launch_arguments(agents, &mut issues);
     }
+    if let Some(git) = section(root, "git", &mut issues) {
+        config.git.commit_message_agent =
+            commit_message_agent(git, &mut issues).unwrap_or_default();
+        config.git.commit_message_style =
+            commit_message_style(git, &mut issues).unwrap_or_default();
+        config.git.commit_message_instructions =
+            optional_text(git, "commitMessageInstructions", "git", &mut issues);
+    }
 
     finish(config.normalized(), issues, home)
 }
@@ -326,6 +392,42 @@ fn launch_mode(agents: &Map<String, Value>, issues: &mut Vec<ConfigIssue>) -> Op
             issues.push(ConfigIssue::new(
                 "agents.launchMode",
                 "must be manual or yolo",
+            ));
+            None
+        }
+    }
+}
+
+fn commit_message_agent(
+    git: &Map<String, Value>,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<CommitMessageAgent> {
+    match optional_text(git, "commitMessageAgent", "git", issues)?.as_str() {
+        "auto" => Some(CommitMessageAgent::Auto),
+        "claude" => Some(CommitMessageAgent::Claude),
+        "codex" => Some(CommitMessageAgent::Codex),
+        _ => {
+            issues.push(ConfigIssue::new(
+                "git.commitMessageAgent",
+                "must be auto, claude or codex",
+            ));
+            None
+        }
+    }
+}
+
+fn commit_message_style(
+    git: &Map<String, Value>,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<CommitMessageStyle> {
+    match optional_text(git, "commitMessageStyle", "git", issues)?.as_str() {
+        "conventional" => Some(CommitMessageStyle::Conventional),
+        "plain" => Some(CommitMessageStyle::Plain),
+        "custom" => Some(CommitMessageStyle::Custom),
+        _ => {
+            issues.push(ConfigIssue::new(
+                "git.commitMessageStyle",
+                "must be conventional, plain or custom",
             ));
             None
         }
@@ -791,5 +893,83 @@ mod tests {
     fn a_list_of_arguments_that_is_not_an_object_is_reported() {
         let (_, issues) = parse(json!({ "agents": { "launchArguments": ["--x"] } }));
         assert_eq!(keys(&issues), ["agents.launchArguments"]);
+    }
+
+    #[test]
+    fn git_settings_default_to_automatic_agent_and_conventional_style() {
+        let (config, issues) = parse(json!({}));
+
+        assert!(issues.is_empty());
+        assert_eq!(config.git.commit_message_agent, CommitMessageAgent::Auto);
+        assert_eq!(
+            config.git.commit_message_style,
+            CommitMessageStyle::Conventional
+        );
+        assert_eq!(config.git.commit_message_instructions, None);
+    }
+
+    #[test]
+    fn reads_the_commit_message_agent_style_and_instructions() {
+        let (config, issues) = parse(json!({
+            "git": {
+                "commitMessageAgent": "codex",
+                "commitMessageStyle": "custom",
+                "commitMessageInstructions": "Write in Portuguese."
+            }
+        }));
+
+        assert!(issues.is_empty());
+        assert_eq!(config.git.commit_message_agent, CommitMessageAgent::Codex);
+        assert_eq!(config.git.commit_message_style, CommitMessageStyle::Custom);
+        assert_eq!(
+            config.git.commit_message_instructions.as_deref(),
+            Some("Write in Portuguese.")
+        );
+    }
+
+    #[test]
+    fn an_unknown_agent_or_style_is_reported_and_defaulted() {
+        let (config, issues) = parse(json!({
+            "git": { "commitMessageAgent": "gemini", "commitMessageStyle": "emoji" }
+        }));
+
+        assert_eq!(
+            keys(&issues),
+            ["git.commitMessageAgent", "git.commitMessageStyle"]
+        );
+        assert_eq!(config.git.commit_message_agent, CommitMessageAgent::Auto);
+        assert_eq!(
+            config.git.commit_message_style,
+            CommitMessageStyle::Conventional
+        );
+    }
+
+    #[test]
+    fn blank_instructions_mean_none_and_line_breaks_are_kept() {
+        let (config, _) = parse(json!({ "git": { "commitMessageInstructions": "   " } }));
+        assert_eq!(config.git.commit_message_instructions, None);
+
+        let (config, issues) = parse(json!({
+            "git": { "commitMessageInstructions": "First line.\nSecond line." }
+        }));
+        assert!(issues.is_empty());
+        assert_eq!(
+            config.git.commit_message_instructions.as_deref(),
+            Some("First line.\nSecond line.")
+        );
+    }
+
+    #[test]
+    fn instructions_with_other_control_characters_or_too_long_are_reset() {
+        let (config, issues) = parse(json!({
+            "git": { "commitMessageInstructions": "bell\u{7}here" }
+        }));
+        assert_eq!(keys(&issues), ["git.commitMessageInstructions"]);
+        assert_eq!(config.git.commit_message_instructions, None);
+
+        let long = "x".repeat(MAX_COMMIT_INSTRUCTIONS_CHARS + 1);
+        let (config, issues) = parse(json!({ "git": { "commitMessageInstructions": long } }));
+        assert_eq!(keys(&issues), ["git.commitMessageInstructions"]);
+        assert_eq!(config.git.commit_message_instructions, None);
     }
 }

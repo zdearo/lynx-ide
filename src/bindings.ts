@@ -55,6 +55,19 @@ export const commands = {
 	listChanges: (worktreePath: string) => typedError<ChangedFile[], IpcError>(__TAURI_INVOKE("list_changes", { worktreePath })),
 	/**  HEAD and the working tree for one file. `original_path` is the old path of a renamed file. */
 	readFileDiff: (worktreePath: string, relativePath: string, originalPath: string | null) => typedError<FileDiff, IpcError>(__TAURI_INVOKE("read_file_diff", { worktreePath, relativePath, originalPath })),
+	/**  Stages one changed file: a deletion stages the removal, an untracked file gets tracked. */
+	stageChange: (worktreePath: string, relativePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("stage_change", { worktreePath, relativePath })),
+	/**  Stages several changed files in one step: a section's "stage all" button. */
+	stageChanges: (worktreePath: string, relativePaths: string[]) => typedError<null, IpcError>(__TAURI_INVOKE("stage_changes", { worktreePath, relativePaths })),
+	/**  Takes one file out of the index. `original_path` is the old path of a renamed file. */
+	unstageChange: (worktreePath: string, relativePath: string, originalPath: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("unstage_change", { worktreePath, relativePath, originalPath })),
+	/**  Commits what is staged with the message the user wrote. */
+	commitChanges: (worktreePath: string, summary: string, description: string) => typedError<null, IpcError>(__TAURI_INVOKE("commit_changes", { worktreePath, summary, description })),
+	/**
+	 *  A commit message written by the user's agent CLI from what is staged. Nothing is committed.
+	 *  The agent and the style come from the Git settings, read when the draft starts.
+	 */
+	draftCommitMessage: (worktreePath: string) => typedError<DraftedMessage, IpcError>(__TAURI_INVOKE("draft_commit_message", { worktreePath })),
 };
 
 /** Events */
@@ -102,6 +115,7 @@ export type AppConfig = {
 	terminal: TerminalConfig,
 	worktrees: WorktreesConfig,
 	agents: AgentsConfig,
+	git: GitConfig,
 };
 
 export type AppInfo = {
@@ -132,6 +146,12 @@ export type ChangedFile = {
  */
 export type ColorScheme = "default" | "light" | "solarizedDark" | "solarizedLight" | "dracula" | "nord" | "catppuccinLatte" | "catppuccinFrappe" | "catppuccinMacchiato" | "catppuccinMocha" | "gruvboxDark" | "oneDark" | "tokyoNight" | "monokai";
 
+/**  Which agent CLI writes a commit message. `Auto` takes the first one installed. */
+export type CommitMessageAgent = "auto" | "claude" | "codex";
+
+/**  The style part of a commit message instruction. Lynx's output rules always follow it. */
+export type CommitMessageStyle = "conventional" | "plain" | "custom";
+
 /**  The config file changed outside the app (an editor, a dotfiles sync, a script). */
 export type ConfigChanged = {
 	snapshot: ConfigSnapshot,
@@ -157,6 +177,14 @@ export type DirectoryListing = {
 	entries: FileEntry[],
 	/**  There were more than the panel shows. */
 	truncated: boolean,
+};
+
+/**  A message the user can edit before committing. */
+export type DraftedMessage = {
+	summary: string,
+	description: string,
+	/**  Which CLI wrote it, shown to the user. */
+	agentLabel: string,
 };
 
 /**  A side that is `None` does not exist there: a new file has no original, a deleted one no modified. */
@@ -190,6 +218,14 @@ export type Folder = {
 	collapsed: boolean,
 };
 
+/**  Git settings: which agent writes the commit message, and how it should write it. */
+export type GitConfig = {
+	commitMessageAgent: CommitMessageAgent,
+	commitMessageStyle: CommitMessageStyle,
+	/**  The text used when the style is `Custom`. `None` means no text of its own. */
+	commitMessageInstructions: string | null,
+};
+
 export type HarnessId = "claude" | "codex" | "opencode" | "antigravity" | "cursor" | "copilot" | "grok" | "droid" | "kiro" | "qwen" | "pi" | "omp";
 
 export type HookInstallState = "notInstalled" | "partial" | "installed" | "error";
@@ -209,7 +245,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
 
 /**
  *  How every agent starts from a new terminal: `Manual` keeps its permission prompts, and `Yolo`

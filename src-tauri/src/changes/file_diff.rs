@@ -8,7 +8,7 @@ use specta::Type;
 use crate::error::AppError;
 use crate::files::file_content::{MAX_TEXT_BYTES, read_text};
 use crate::files::files_error::FilesError;
-use crate::files::path_inside_worktree::resolve_inside;
+use crate::files::path_inside_worktree::check_shape;
 use crate::git::GitError;
 use crate::git::git_command::git;
 
@@ -32,14 +32,6 @@ fn is_missing_in_head(error: &GitError) -> bool {
     ]
     .iter()
     .any(|needle| error.stderr_contains(needle))
-}
-
-/// A path that is only checked for shape: the file may be gone from disk.
-fn check_shape(root: &Path, relative: &str) -> Result<(), FilesError> {
-    match resolve_inside(root, relative) {
-        Ok(_) | Err(FilesError::NotFound(_)) => Ok(()),
-        Err(error) => Err(error),
-    }
 }
 
 fn text_of(bytes: Vec<u8>, relative: &str) -> Result<String, FilesError> {

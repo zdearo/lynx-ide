@@ -1434,9 +1434,9 @@ await session("?mock=full", 1400, 800, async (p) => {
   const list = p.getByRole("group", {
     name: "Changed files in the selected worktree",
   });
-  const row = (name) => list.getByRole("option", { name });
+  const row = (name) => list.getByRole("treeitem", { name });
   const fileTabs = p.getByRole("tablist", { name: "Open files" });
-  const group = (name) => p.getByRole("listbox", { name });
+  const group = (name) => p.getByRole("tree", { name });
 
   check(
     "the Changes tab lists the sections in Git's order",
@@ -1448,10 +1448,10 @@ await session("?mock=full", 1400, 800, async (p) => {
   check(
     "a file with staged and unstaged changes is in both sections",
     (await group(/^Staged changes/)
-      .getByRole("option", { name: /^README\.md/ })
+      .getByRole("treeitem", { name: /^README\.md/ })
       .count()) === 1 &&
       (await group(/^Changes/)
-        .getByRole("option", { name: /^README\.md/ })
+        .getByRole("treeitem", { name: /^README\.md/ })
         .count()) === 1,
   );
   check(
@@ -2579,6 +2579,238 @@ await session("?mock=full", 1200, 760, async (p) => {
   });
   check(
     "axe: no WCAG A/AA violations with the status bar in view",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+});
+
+// Stage, commit and unstage from the Changes tab. The mock moves the files, like git would.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(500);
+  const list = p.getByRole("group", {
+    name: "Changed files in the selected worktree",
+  });
+  const group = (name) => p.getByRole("tree", { name });
+  const summary = p.getByRole("textbox", { name: "Commit summary" });
+  const description = p.getByRole("textbox", { name: "Commit description" });
+  const commit = p.getByRole("button", { name: "Commit", exact: true });
+
+  await list.getByRole("button", { name: "Stage App.tsx" }).click();
+  await p.waitForTimeout(400);
+  check(
+    "the stage button moves a changed file into the staged section",
+    (await group(/^Staged changes/)
+      .getByRole("treeitem", { name: /^App\.tsx/ })
+      .count()) === 1 &&
+      (await group(/^Changes/)
+        .getByRole("treeitem", { name: /^App\.tsx/ })
+        .count()) === 0,
+  );
+  check(
+    "Commit stays off until the summary has text",
+    await commit.isDisabled(),
+  );
+
+  await list.getByRole("treeitem", { name: /^setup\.md, untracked$/ }).focus();
+  await p.keyboard.press("s");
+  await p.waitForTimeout(400);
+  check(
+    "S on a focused row stages it",
+    (await group(/^Staged changes/)
+      .getByRole("treeitem", { name: /^setup\.md/ })
+      .count()) === 1,
+  );
+
+  await list.getByRole("button", { name: "Unstage setup.md" }).click();
+  await p.waitForTimeout(400);
+  check(
+    "unstage moves the file back to untracked, and the working tree keeps it",
+    (await group(/^Untracked files/)
+      .getByRole("treeitem", { name: /^setup\.md/ })
+      .count()) === 1 &&
+      (await group(/^Staged changes/)
+        .getByRole("treeitem", { name: /^setup\.md/ })
+        .count()) === 0,
+  );
+  await list.getByRole("treeitem", { name: /^setup\.md, untracked$/ }).focus();
+  await p.keyboard.press("s");
+  await p.waitForTimeout(400);
+
+  await p.getByRole("button", { name: "Generate message with AI" }).click();
+  await p.waitForTimeout(500);
+  check(
+    "Generate fills the message and says which agent wrote it",
+    (await summary.inputValue()) === "Update the Changes panel" &&
+      (await description.inputValue()) === "Describes the staged files." &&
+      (await p
+        .getByRole("status")
+        .filter({ hasText: "Drafted with Claude Code" })
+        .count()) === 1,
+  );
+
+  await summary.fill("Fix the button label");
+  await description.fill("The label was wrong.");
+  check(
+    "Commit turns on with a summary and staged files",
+    await commit.isEnabled(),
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the commit box and staged files",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await commit.click();
+  await p.waitForTimeout(600);
+  check(
+    "a commit empties the index and clears the message",
+    (await group(/^Staged changes/).count()) === 0 &&
+      (await summary.inputValue()) === "" &&
+      (await description.inputValue()) === "",
+  );
+
+  check(
+    "a committed file that stays changed is still listed",
+    (await group(/^Changes/)
+      .getByRole("treeitem", { name: /^README\.md/ })
+      .count()) === 1,
+  );
+});
+
+// The Git tab: which agent writes commit messages, the style it follows, and the instructions box.
+await session("?mock=full", 1200, 760, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(400);
+  await p.getByRole("tab", { name: "Git", exact: true }).click();
+  await p.waitForTimeout(300);
+
+  check(
+    "the Git tab starts on the automatic agent and Conventional Commits",
+    ((await p.locator("#git-commit-agent").textContent()) ?? "").includes(
+      "Automatic",
+    ) &&
+      ((await p.locator("#git-commit-style").textContent()) ?? "").includes(
+        "Conventional Commits",
+      ),
+  );
+  check(
+    "the instructions box only shows for the Custom style",
+    (await p.locator("#git-commit-instructions").count()) === 0,
+  );
+
+  await p.locator("#git-commit-style").click();
+  await p.getByRole("option", { name: "Custom", exact: true }).click();
+  await p.waitForTimeout(400);
+  const instructions = p.locator("#git-commit-instructions");
+  check(
+    "choosing Custom shows the instructions box",
+    (await instructions.count()) === 1,
+  );
+  await instructions.fill("Write the subject in Portuguese.");
+  await instructions.blur();
+  await p.waitForTimeout(400);
+  check(
+    "the instructions save when the box loses focus",
+    (await instructions.inputValue()) === "Write the subject in Portuguese.",
+  );
+
+  await p.locator("#git-commit-agent").click();
+  await p.getByRole("option", { name: "Codex", exact: true }).click();
+  await p.waitForTimeout(400);
+  check(
+    "the agent choice saves",
+    ((await p.locator("#git-commit-agent").textContent()) ?? "").includes(
+      "Codex",
+    ),
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the Git settings",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+});
+
+// The section buttons stage every file of their section at once.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(500);
+  const list = p.getByRole("group", {
+    name: "Changed files in the selected worktree",
+  });
+  const tree = (name) => p.getByRole("tree", { name });
+
+  check(
+    "the Changes and untracked sections have a stage-all button",
+    (await list
+      .getByRole("button", { name: "Stage all changes", exact: true })
+      .count()) === 1 &&
+      (await list
+        .getByRole("button", { name: "Stage all untracked files", exact: true })
+        .count()) === 1,
+  );
+
+  await list
+    .getByRole("button", { name: "Stage all untracked files", exact: true })
+    .click();
+  await p.waitForTimeout(400);
+  check(
+    "stage all untracked files moves every untracked file into the staged section",
+    (await tree(/^Staged changes/)
+      .getByRole("treeitem", { name: /^setup\.md/ })
+      .count()) === 1 && (await tree(/^Untracked files/).count()) === 0,
+  );
+
+  await list
+    .getByRole("button", { name: "Stage all changes", exact: true })
+    .click();
+  await p.waitForTimeout(400);
+  check(
+    "stage all changes moves every unstaged file, deletions included, into the index",
+    (await tree(/^Staged changes/)
+      .getByRole("treeitem", { name: /^Legacy\.tsx/ })
+      .count()) === 1 &&
+      (await tree(/^Staged changes/)
+        .getByRole("treeitem", { name: /^App\.tsx/ })
+        .count()) === 1 &&
+      (await tree(/^Changes/).count()) === 0,
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the stage-all buttons",
     axe.length === 0,
     axe.join(" || "),
   );

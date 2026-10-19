@@ -31,6 +31,11 @@ function withAgents(agents: AppConfig["agents"]) {
       terminal: DEFAULT_TERMINAL_CONFIG,
       worktrees: { directory: null },
       agents,
+      git: {
+        commitMessageAgent: "auto",
+        commitMessageStyle: "conventional",
+        commitMessageInstructions: null,
+      },
     },
     issues: [],
     path: "/home/dev/.lynx/config.json",

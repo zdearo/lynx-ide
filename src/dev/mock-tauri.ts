@@ -206,8 +206,24 @@ const MOCK_BINARY = new Set([
   "notes.pdf",
 ]);
 
+/** What `git add` does to one mock file: its unstaged change moves into the index. */
+function stageMockChange(path: string): void {
+  const entry = MOCK_CHANGES.find((change) => change.path === path);
+  if (entry?.unstaged) {
+    entry.staged = entry.unstaged === "untracked" ? "added" : entry.unstaged;
+    entry.unstaged = null;
+  }
+}
+
+interface MockChange {
+  path: string;
+  originalPath: string | null;
+  staged: string | null;
+  unstaged: string | null;
+}
+
 /** The changed files of every mock worktree, as `git status` would report them. */
-const MOCK_CHANGES = [
+let MOCK_CHANGES: MockChange[] = [
   {
     path: "README.md",
     originalPath: null,
@@ -270,6 +286,11 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   worktrees: { directory: null },
   agents: { launchMode: "manual", launchArguments: {} },
+  git: {
+    commitMessageAgent: "auto",
+    commitMessageStyle: "conventional",
+    commitMessageInstructions: null,
+  },
 };
 
 /** The same rules as the Rust validation, close enough for the interface to react to them. */
@@ -580,6 +601,44 @@ export function installMockTauri(scenario: string): void {
         case "list_changes":
           await delay(60);
           return structuredClone(MOCK_CHANGES);
+        case "stage_change":
+          await delay(60);
+          stageMockChange(String(args.relativePath));
+          return null;
+        case "stage_changes":
+          await delay(60);
+          for (const path of args.relativePaths as string[]) {
+            stageMockChange(path);
+          }
+          return null;
+        case "unstage_change": {
+          const entry = MOCK_CHANGES.find(
+            (change) => change.path === String(args.relativePath),
+          );
+          await delay(60);
+          if (entry?.staged) {
+            entry.unstaged =
+              entry.staged === "added" ? "untracked" : entry.staged;
+            entry.staged = null;
+          }
+          return null;
+        }
+        case "draft_commit_message":
+          await delay(200);
+          return {
+            summary: "Update the Changes panel",
+            description: "Describes the staged files.",
+            agentLabel: "Claude Code",
+          };
+        case "commit_changes":
+          await delay(120);
+          // What was staged is now in a commit: it leaves the list unless the working tree changed it again.
+          MOCK_CHANGES = MOCK_CHANGES.flatMap((change) => {
+            if (!change.staged) return [change];
+            const rest = { ...change, staged: null };
+            return rest.unstaged ? [rest] : [];
+          });
+          return null;
         case "read_file_diff": {
           const relative = String(args.relativePath);
           const change = MOCK_CHANGES.find((entry) => entry.path === relative);

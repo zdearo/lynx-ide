@@ -38,6 +38,14 @@ pub fn resolve_inside(root: &Path, relative: &str) -> Result<PathBuf, FilesError
     }
 }
 
+/// A path that is only checked for shape: the file may be gone from disk (a deletion, say).
+pub fn check_shape(root: &Path, relative: &str) -> Result<(), FilesError> {
+    match resolve_inside(root, relative) {
+        Ok(_) | Err(FilesError::NotFound(_)) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

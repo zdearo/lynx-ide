@@ -44,6 +44,11 @@ const config: AppConfig = {
   terminal: DEFAULT_TERMINAL_CONFIG,
   worktrees: { directory: null },
   agents: { launchMode: "manual", launchArguments: {} },
+  git: {
+    commitMessageAgent: "auto",
+    commitMessageStyle: "conventional",
+    commitMessageInstructions: null,
+  },
 };
 
 describe("launchCommand", () => {

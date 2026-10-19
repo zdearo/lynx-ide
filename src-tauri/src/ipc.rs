@@ -53,6 +53,11 @@ pub fn builder() -> Builder<tauri::Wry> {
             files::reveal_in_file_manager,
             changes::list_changes,
             changes::read_file_diff,
+            changes::stage_change,
+            changes::stage_changes,
+            changes::unstage_change,
+            changes::commit_changes,
+            changes::draft_commit_message,
         ])
         .events(collect_events![
             TerminalOutput,

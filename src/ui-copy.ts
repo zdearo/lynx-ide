@@ -168,6 +168,29 @@ export const copy = {
         browse: "Choose folder…",
       },
     },
+    git: {
+      title: "Git",
+      agent: {
+        label: "Commit message agent",
+        hint: "The agent CLI that writes a commit message from the staged changes. Automatic uses the first one installed: Claude Code, then Codex.",
+        auto: "Automatic",
+        claude: "Claude Code",
+        codex: "Codex",
+      },
+      style: {
+        label: "Commit message style",
+        hint: "How the message is written. Lynx's output rules always apply after this, so the message can still be read.",
+        conventional: "Conventional Commits",
+        plain: "Plain",
+        custom: "Custom",
+      },
+      instructions: {
+        label: "Custom instructions",
+        hint: "Used when the style is Custom. Describe the format you want; Lynx adds its own output rules after your text.",
+        placeholder:
+          "e.g. Write the subject in Portuguese, in the imperative mood.",
+      },
+    },
     decrease: "Decrease",
     increase: "Increase",
     file: {
@@ -284,6 +307,24 @@ export const copy = {
       conflicted: "conflict",
     },
     renamedFrom: (path: string) => `renamed from ${path}`,
+    stage: (name: string) => `Stage ${name}`,
+    unstage: (name: string) => `Unstage ${name}`,
+    stageFailed: "Could not stage the changes",
+    stageAll: (section: string) => `Stage all ${section.toLowerCase()}`,
+    unstageFailed: "Could not unstage the file",
+    summaryLabel: "Commit summary",
+    summaryPlaceholder: "Summary",
+    descriptionLabel: "Commit description",
+    descriptionPlaceholder: "Description",
+    commit: "Commit",
+    committing: "Committing…",
+    commitFailed: "Could not commit",
+    nothingStaged: "Stage a file to commit.",
+    generate: "Generate message with AI",
+    generating: "Generating a message…",
+    generateFailed: "Could not generate a message",
+    draftedWith: (agent: string) =>
+      `Drafted with ${agent}. Review it before committing.`,
   },
 
   summary: {

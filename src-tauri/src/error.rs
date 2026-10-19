@@ -22,6 +22,8 @@ pub enum AppError {
     WorktreeNotFound(String),
     #[error("invalid name: {0}")]
     InvalidName(String),
+    #[error("{0}")]
+    InvalidCommit(&'static str),
     #[error("{0} already exists")]
     AlreadyExists(String),
     #[error("the worktree has uncommitted changes")]
@@ -53,6 +55,8 @@ pub enum AppError {
     #[error(transparent)]
     Files(#[from] FilesError),
     #[error(transparent)]
+    CommitDraft(#[from] crate::changes::commit_message_draft::DraftError),
+    #[error(transparent)]
     AgentHooks(#[from] HookInstallError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
@@ -73,6 +77,8 @@ pub enum IpcErrorKind {
     RepoNotFound,
     WorktreeNotFound,
     InvalidName,
+    InvalidCommit,
+    CommitDraft,
     AlreadyExists,
     WorktreeHasChanges,
     CannotRemoveMainWorktree,
@@ -105,6 +111,8 @@ impl From<AppError> for IpcError {
             AppError::RepoNotFound(_) => IpcErrorKind::RepoNotFound,
             AppError::WorktreeNotFound(_) => IpcErrorKind::WorktreeNotFound,
             AppError::InvalidName(_) => IpcErrorKind::InvalidName,
+            AppError::InvalidCommit(_) => IpcErrorKind::InvalidCommit,
+            AppError::CommitDraft(_) => IpcErrorKind::CommitDraft,
             AppError::AlreadyExists(_) => IpcErrorKind::AlreadyExists,
             AppError::WorktreeHasChanges => IpcErrorKind::WorktreeHasChanges,
             AppError::CannotRemoveMainWorktree => IpcErrorKind::CannotRemoveMainWorktree,

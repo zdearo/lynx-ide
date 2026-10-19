@@ -72,6 +72,8 @@ export const commands = {
 	getBranchSync: (worktreePath: string) => typedError<BranchSync, IpcError>(__TAURI_INVOKE("get_branch_sync", { worktreePath })),
 	/**  Pushes the worktree's branch, publishing it first when it has no upstream. Never forces. */
 	pushBranch: (worktreePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("push_branch", { worktreePath })),
+	/**  The latest commits of the worktree's branch, newest first, with whether the remote has each. */
+	listCommits: (worktreePath: string, limit: number) => typedError<CommitEntry[], IpcError>(__TAURI_INVOKE("list_commits", { worktreePath, limit })),
 	/**  The pull request of a worktree's branch, or `None` when the branch has none. */
 	getPullRequest: (worktreePath: string) => typedError<{
 	number: number,
@@ -181,6 +183,20 @@ export type CheckState = "passed" | "failed" | "pending" | "skipped";
  *  gives the background; its text palette can also be used for the text.
  */
 export type ColorScheme = "default" | "light" | "solarizedDark" | "solarizedLight" | "dracula" | "nord" | "catppuccinLatte" | "catppuccinFrappe" | "catppuccinMacchiato" | "catppuccinMocha" | "gruvboxDark" | "oneDark" | "tokyoNight" | "monokai";
+
+export type CommitEntry = {
+	hash: string,
+	shortHash: string,
+	subject: string,
+	author: string,
+	/**  Seconds since 1970, as git records them. */
+	timestamp: number,
+	/**
+	 *  `false` for a commit the branch's upstream does not have. Without an upstream, nothing is
+	 *  known about the remote, so every commit reads as not pushed.
+	 */
+	pushed: boolean,
+};
 
 /**  Which agent CLI writes a commit message. `Auto` takes the first one installed. */
 export type CommitMessageAgent = "auto" | "claude" | "codex" | "opencode";

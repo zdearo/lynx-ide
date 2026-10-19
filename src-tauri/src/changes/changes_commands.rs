@@ -11,6 +11,7 @@ use super::branch_sync::{BranchSync, push, read as read_branch_sync};
 use super::change_list::{ChangedFile, list_changes as list};
 use super::change_staging::{stage, stage_many, unstage};
 use super::commit_changes::commit;
+use super::commit_history::{CommitEntry, list as list_history};
 use super::commit_message_draft::{DraftedMessage, draft_message};
 use super::commit_message_prompt::style_text;
 use super::file_diff::{FileDiff, read_diff};
@@ -162,6 +163,22 @@ pub async fn push_branch(
     run_blocking(move || {
         let root = workspace.resolve_worktree(&worktree_path)?;
         push(&root)
+    })
+    .await
+}
+
+/// The latest commits of the worktree's branch, newest first, with whether the remote has each.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_commits(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    limit: u32,
+) -> Result<Vec<CommitEntry>, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        list_history(&root, limit)
     })
     .await
 }

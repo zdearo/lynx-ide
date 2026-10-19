@@ -2969,13 +2969,37 @@ await session("?mock=full", 1400, 800, async (p) => {
     (await p.getByText("1 commit to push to origin").count()) === 1,
   );
 
+  await p.getByRole("button", { name: "Commits", exact: true }).click();
+  await p.waitForTimeout(300);
+  const history = p.getByRole("list", { name: "Commits on this branch" });
+  check(
+    "the Commits view lists the commits made, newest first, with the unpushed one marked",
+    (
+      (await history.getByRole("listitem").first().textContent()) ?? ""
+    ).includes("Fix the label") &&
+      (
+        (await history.getByRole("listitem").first().textContent()) ?? ""
+      ).includes("Not pushed") &&
+      (await history.getByRole("listitem").count()) === 4,
+  );
+  const summaryBox = await p
+    .getByRole("textbox", { name: "Commit summary" })
+    .boundingBox();
+  const listBox = await history.boundingBox();
+  check(
+    "the commit box stays above the list, which sits below it",
+    !!summaryBox && !!listBox && summaryBox.y < listBox.y,
+    JSON.stringify({ summaryBox, listBox }),
+  );
+
   await push.click();
   await p.waitForTimeout(700);
   check(
     "after the push the button is Commit again and the push is reported",
     (await commit.count()) === 1 &&
       (await push.count()) === 0 &&
-      (await p.getByText("Pushed to origin.").count()) === 1,
+      (await p.getByText("Pushed to origin.").count()) === 1 &&
+      (await history.getByText("Not pushed").count()) === 0,
   );
 });
 

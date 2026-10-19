@@ -14,6 +14,8 @@ import {
 import { useCollapsedChangeSections } from "@/changes/change-section-collapse";
 import { ChangeRow, type IndexAction } from "@/changes/ChangeRow";
 import { CommitArea } from "@/changes/CommitArea";
+import { CommitList } from "@/changes/CommitList";
+import { useChangesViewStore } from "@/changes/changes-view-store";
 import { stageFile, stageFiles, unstageFile } from "@/changes/change-actions";
 import { useChangesRefresh } from "@/changes/use-changes-refresh";
 import { useChangesStore } from "@/changes/changes-store";
@@ -48,6 +50,8 @@ export function ChangesPanel() {
   const activePath = useEditorStore((state) =>
     worktreePath ? state.active[worktreePath] : null,
   );
+  const view = useChangesViewStore((state) => state.view);
+  const setView = useChangesViewStore((state) => state.setView);
   const collapsed = useCollapsedChangeSections((state) => state.collapsed);
   const toggleSection = useCollapsedChangeSections((state) => state.toggle);
 
@@ -139,7 +143,37 @@ export function ChangesPanel() {
         </TooltipIconButton>
       </div>
 
-      {changes?.status === "error" && !count ? (
+      <CommitArea worktreePath={path} stagedCount={stagedCount} />
+
+      <div
+        role="group"
+        aria-label={copy.changes.views.label}
+        className="flex shrink-0 gap-1 border-b border-sidebar-border px-2 py-1.5"
+      >
+        {(["changes", "commits"] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={view === id}
+            onClick={() => setView(id)}
+            className={cn(
+              "h-6 rounded-md px-2 text-meta font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              view === id
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent/50",
+            )}
+          >
+            {copy.changes.views[id]}
+            {id === "changes" && count > 0 && (
+              <span className="ml-1 font-normal tabular-nums">{count}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {view === "commits" ? (
+        <CommitList worktreePath={path} />
+      ) : changes?.status === "error" && !count ? (
         <div className="px-3 pt-1" role="alert">
           <p className="text-ui text-destructive">{copy.changes.loadFailed}</p>
           <p className="mt-1 text-meta break-words text-muted-foreground">
@@ -259,7 +293,6 @@ export function ChangesPanel() {
           </div>
         </ScrollArea>
       )}
-      <CommitArea worktreePath={path} stagedCount={stagedCount} />
     </div>
   );
 }

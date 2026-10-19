@@ -282,6 +282,19 @@ export const copy = {
     unchanged: "$ unchanged lines",
   },
 
+  commits: {
+    list: "Commits on this branch",
+    loading: "Reading commits…",
+    empty: "No commits on this branch yet.",
+    notPushed: "Not pushed",
+    ago: {
+      now: "just now",
+      minutes: (count: number) => `${count} min ago`,
+      hours: (count: number) => `${count} h ago`,
+      days: (count: number) => `${count} d ago`,
+    },
+  },
+
   pullRequest: {
     tab: "Pull request",
     title: "Pull request",
@@ -400,6 +413,7 @@ export const copy = {
     committing: "Committing…",
     commitFailed: "Could not commit",
     nothingStaged: "Stage a file to commit.",
+    views: { label: "Show", changes: "Changes", commits: "Commits" },
     push: "Push",
     pushing: "Pushing…",
     pushFailed: "Could not push",

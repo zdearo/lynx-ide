@@ -218,8 +218,29 @@ function stageMockChange(path: string): void {
 /** Worktrees whose repository got a GitHub remote from the dialog during this session. */
 const remoteCreated = new Set<string>();
 
-/** Commits the mock branch has that its upstream lacks: a commit adds one, a push clears them. */
-let mockAhead = 0;
+const NOW_SECONDS = Math.floor(Date.now() / 1000);
+
+/** The mock branch's commits, newest first. A commit adds one the remote lacks; a push sends them. */
+const mockCommits = [
+  {
+    subject: "feat(auth): add the login form",
+    author: "Ana Souza",
+    ago: 3 * 3600,
+    pushed: true,
+  },
+  {
+    subject: "chore: bump dependencies",
+    author: "Ana Souza",
+    ago: 2 * 86400,
+    pushed: true,
+  },
+  {
+    subject: "docs(readme): describe the setup",
+    author: "Bruno Lima",
+    ago: 9 * 86400,
+    pushed: true,
+  },
+];
 
 interface MockChange {
   path: string;
@@ -644,15 +665,28 @@ export function installMockTauri(scenario: string): void {
           return {
             branch: "feat/auth",
             upstream: "origin/feat/auth",
-            ahead: mockAhead,
+            ahead: mockCommits.filter((commit) => !commit.pushed).length,
             behind: 0,
             remote: "origin",
           };
         }
         case "push_branch":
           await delay(200);
-          mockAhead = 0;
+          for (const commit of mockCommits) commit.pushed = true;
           return null;
+        case "list_commits":
+          await delay(40);
+          return mockCommits.map((commit, index) => {
+            const id = String(1000 + mockCommits.length - index);
+            return {
+              hash: `${id}`.padEnd(40, "a"),
+              shortHash: id.slice(0, 7),
+              subject: commit.subject,
+              author: commit.author,
+              timestamp: NOW_SECONDS - commit.ago,
+              pushed: commit.pushed,
+            };
+          });
         case "get_github_account":
           await delay(60);
           return { login: "zdearo", organizations: ["acme"] };
@@ -697,7 +731,12 @@ export function installMockTauri(scenario: string): void {
           };
         case "commit_changes":
           await delay(120);
-          mockAhead += 1;
+          mockCommits.unshift({
+            subject: String(args.summary),
+            author: "Dev User",
+            ago: 5,
+            pushed: false,
+          });
           // What was staged is now in a commit: it leaves the list unless the working tree changed it again.
           MOCK_CHANGES = MOCK_CHANGES.flatMap((change) => {
             if (!change.staged) return [change];

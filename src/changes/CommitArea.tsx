@@ -5,7 +5,7 @@ import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
 import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { useBranchSyncStore } from "@/changes/branch-sync-store";
-import { useChangesStore } from "@/changes/changes-store";
+import { refreshWorktreeGit } from "@/changes/refresh-worktree-git";
 import { primaryAction } from "@/changes/primary-action";
 import { draftOf, useCommitDraftStore } from "@/changes/commit-draft-store";
 import { Button } from "@/components/ui/button";
@@ -75,10 +75,7 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
       setError(errorMessage(caught));
     } finally {
       setCommitting(false);
-      await Promise.all([
-        useChangesStore.getState().refresh(worktreePath),
-        useBranchSyncStore.getState().refresh(worktreePath),
-      ]);
+      await refreshWorktreeGit(worktreePath);
     }
   }
 
@@ -95,7 +92,7 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
       setError(`${copy.changes.pushFailed}: ${errorMessage(caught)}`);
     } finally {
       setPushing(false);
-      await useBranchSyncStore.getState().refresh(worktreePath);
+      await refreshWorktreeGit(worktreePath);
     }
   }
 
@@ -113,7 +110,7 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
         event.preventDefault();
         void (action.kind === "push" ? push() : commit());
       }}
-      className="shrink-0 space-y-1.5 border-t border-sidebar-border p-2"
+      className="shrink-0 space-y-1.5 border-b border-sidebar-border p-2"
     >
       <div className="relative">
         <Input
@@ -146,7 +143,7 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
       <Textarea
         aria-label={copy.changes.descriptionLabel}
         placeholder={copy.changes.descriptionPlaceholder}
-        rows={3}
+        rows={2}
         value={draft.description}
         onChange={(event) =>
           useCommitDraftStore

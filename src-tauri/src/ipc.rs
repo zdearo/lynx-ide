@@ -61,6 +61,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             changes::draft_commit_message,
             changes::get_branch_sync,
             changes::push_branch,
+            changes::list_commits,
             pull_request::get_pull_request,
             pull_request::open_pull_request_url,
             pull_request::get_github_account,

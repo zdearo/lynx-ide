@@ -207,6 +207,7 @@ Gerenciador de pacotes: Bun (`bun install`, lockfile `bun.lock`).
 
 - `bun run tauri dev`: sobe o Vite e o app desktop com hot reload.
 - `bun run tauri build`: gera o pacote de release. `bun run tauri build --no-bundle` só compila o binário.
+- Build para Linux e Windows: `bun run tauri build` gera `.deb`, `.rpm` e `.AppImage` no Linux (em `src-tauri/target/release/bundle/`). O Windows (`.exe` NSIS e `.msi`) é gerado no CI, `.github/workflows/build.yml` (disparo manual ou tag `v*`), que também roda `check`, `rust:check` e `rust:test` nos dois sistemas; não dá para gerar o instalador do Windows daqui sem `makensis` e um SDK de cross-compile.
 - `bun run e2e`: sobe o Vite numa porta própria e roda `e2e/ui-smoke.mjs` no Chrome headless (precisa de Chrome; use `CHROME_PATH` se não estiver no caminho padrão).
 - `bun run check`: typecheck, ESLint, Prettier (verificação) e Vitest do frontend. Rode antes de concluir uma tarefa no frontend.
 - `bun run rust:check`: `cargo fmt --check` e `cargo clippy -D warnings`.

@@ -19,6 +19,7 @@ const pullRequest = (
   isDraft,
   review: null,
   headBranch: "feat/x",
+  headSha: "5f2c1e0a9b8d7c6e5f4a3b2c1d0e9f8a7b6c5d4e",
   baseBranch: "main",
   mergeState: "clean",
   autoMerge: false,

@@ -419,6 +419,103 @@ fn remove_worktree_keeps_a_branch_with_unmerged_commits() {
     );
 }
 
+/// A worktree on `task` with one commit of work, and that same work squashed into the main branch.
+fn squash_merged_fixture() -> (Fixture, String, String) {
+    let fixture = plain_fixture();
+    let created = fixture
+        .service
+        .create_worktree(&fixture.repo.id, "task", None)
+        .expect("create");
+    commit_file_in(Path::new(&created.path), "work.txt", "work\n", "do work");
+    let tip = fixture.git_repo.git(&["rev-parse", "task"]);
+
+    // What a squash merge on GitHub leaves behind: the work on main, as a new commit.
+    fixture.git_repo.git(&["merge", "--squash", "task"]);
+    fixture.git_repo.git(&["commit", "-m", "task (#1)"]);
+    (fixture, created.path, tip)
+}
+
+#[test]
+fn a_squash_merged_branch_is_deleted_when_it_still_points_at_the_merged_commit() {
+    let (fixture, path, tip) = squash_merged_fixture();
+
+    // `branch -d` alone would keep it: its commit is not an ancestor of main.
+    let result = fixture
+        .service
+        .remove_merged_worktree(&fixture.repo.id, &path, &tip)
+        .expect("clean up");
+
+    assert!(!Path::new(&path).exists());
+    assert!(result.branch_deleted);
+    assert_eq!(result.branch_kept_reason, None);
+    assert!(!branch_exists(&fixture.git_repo.path, "task"));
+}
+
+#[test]
+fn a_plain_removal_keeps_a_squash_merged_branch_which_is_why_the_clean_up_exists() {
+    let (fixture, path, _) = squash_merged_fixture();
+
+    let result = fixture
+        .service
+        .remove_worktree(&fixture.repo.id, &path, false)
+        .expect("remove");
+
+    assert!(!result.branch_deleted);
+    assert!(branch_exists(&fixture.git_repo.path, "task"));
+}
+
+#[test]
+fn a_branch_that_moved_on_after_the_merge_is_kept() {
+    let (fixture, path, merged_tip) = squash_merged_fixture();
+    commit_file_in(
+        Path::new(&path),
+        "later.txt",
+        "later\n",
+        "work after the merge",
+    );
+
+    let result = fixture
+        .service
+        .remove_merged_worktree(&fixture.repo.id, &path, &merged_tip)
+        .expect("clean up");
+
+    assert!(!Path::new(&path).exists());
+    assert!(!result.branch_deleted);
+    assert!(result.branch_kept_reason.is_some());
+    assert!(
+        branch_exists(&fixture.git_repo.path, "task"),
+        "the later commit exists nowhere else"
+    );
+}
+
+#[test]
+fn a_merged_clean_up_never_discards_uncommitted_changes() {
+    let (fixture, path, tip) = squash_merged_fixture();
+    fs::write(Path::new(&path).join("work.txt"), "edited since\n").expect("write");
+
+    let error = fixture
+        .service
+        .remove_merged_worktree(&fixture.repo.id, &path, &tip)
+        .expect_err("uncommitted changes");
+
+    assert!(matches!(error, AppError::WorktreeHasChanges));
+    assert!(Path::new(&path).exists());
+    assert!(branch_exists(&fixture.git_repo.path, "task"));
+}
+
+#[test]
+fn a_merged_clean_up_refuses_the_main_worktree() {
+    let fixture = plain_fixture();
+    let main_path = fixture.git_repo.path.to_string_lossy().into_owned();
+
+    let error = fixture
+        .service
+        .remove_merged_worktree(&fixture.repo.id, &main_path, "deadbeef")
+        .expect_err("main worktree");
+
+    assert!(matches!(error, AppError::CannotRemoveMainWorktree));
+}
+
 #[test]
 fn remove_worktree_refuses_uncommitted_changes_unless_forced() {
     let fixture = plain_fixture();

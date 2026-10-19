@@ -110,6 +110,8 @@ export const commands = {
 	/**  `None` when nobody has reviewed it yet, or the repository does not require reviews. */
 	review: ReviewDecision | null,
 	headBranch: string,
+	/**  The last commit of the pull request's branch on GitHub. */
+	headSha: string,
 	/**  The branch the pull request merges into. */
 	baseBranch: string,
 	mergeState: MergeState,
@@ -117,6 +119,13 @@ export const commands = {
 	autoMerge: boolean,
 	checks: PullRequestCheck[],
 } | null, IpcError>(__TAURI_INVOKE("get_pull_request", { worktreePath })),
+	/**
+	 *  Removes the worktree of a branch whose pull request is merged, and the branch with it.
+	 *  GitHub is asked here, not trusted from the screen: the pull request must be merged, and the
+	 *  branch is deleted only if it still points at the commit that was merged. Uncommitted changes
+	 *  stop it, as in any safe removal.
+	 */
+	cleanUpMergedWorktree: (repoId: string, worktreePath: string) => typedError<RemoveWorktreeResult, IpcError>(__TAURI_INVOKE("clean_up_merged_worktree", { repoId, worktreePath })),
 	/**  Opens a pull request's page in the browser. Only `https` links are opened. */
 	openPullRequestUrl: (url: string) => typedError<null, IpcError>(__TAURI_INVOKE("open_pull_request_url", { url })),
 	/**  The log of the GitHub Actions job a check points at. Only its end is returned. */
@@ -493,6 +502,8 @@ export type PullRequest = {
 	/**  `None` when nobody has reviewed it yet, or the repository does not require reviews. */
 	review: ReviewDecision | null,
 	headBranch: string,
+	/**  The last commit of the pull request's branch on GitHub. */
+	headSha: string,
 	/**  The branch the pull request merges into. */
 	baseBranch: string,
 	mergeState: MergeState,

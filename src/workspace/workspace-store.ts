@@ -64,6 +64,11 @@ interface WorkspaceState {
     path: string,
     force: boolean,
   ) => Promise<RemoveWorktreeResult>;
+  /** Removes the worktree and branch of a merged pull request; the backend checks GitHub itself. */
+  cleanUpMergedWorktree: (
+    repoId: string,
+    path: string,
+  ) => Promise<RemoveWorktreeResult>;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
@@ -274,6 +279,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     async removeWorktree(repoId, path, force) {
       const result = await unwrap(commands.removeWorktree(repoId, path, force));
+      await get().refreshWorktrees(repoId);
+      reconcileSelection();
+      return result;
+    },
+
+    async cleanUpMergedWorktree(repoId, path) {
+      const result = await unwrap(commands.cleanUpMergedWorktree(repoId, path));
       await get().refreshWorktrees(repoId);
       reconcileSelection();
       return result;

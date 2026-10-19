@@ -18,8 +18,6 @@ export interface SettingsSection {
   label: string;
   icon: IconComponent;
   panel: ComponentType;
-  /** The page uses the whole width of the dialog instead of a reading column. */
-  fillWidth?: boolean;
 }
 
 /** Add a section here and it appears in the settings navigation. */
@@ -35,7 +33,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     label: copy.settings.agents.title,
     icon: SparkleGlyph18,
     panel: AgentsSettings,
-    fillWidth: true,
   },
   {
     id: "worktrees",

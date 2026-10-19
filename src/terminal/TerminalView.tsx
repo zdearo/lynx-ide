@@ -13,6 +13,7 @@ import {
   terminalFontsReady,
 } from "@/terminal/terminal-appearance";
 import { resolveTerminalTheme } from "@/terminal/terminal-color-schemes";
+import { createResizeSender } from "@/terminal/terminal-resize-sender";
 import {
   webglBudget,
   type WebglRendererSlot,
@@ -37,6 +38,9 @@ interface Mounted {
 }
 
 /** Opens xterm in `container` and wires it to one backend session. */
+/** The room around the text: the same at the left, and at the right where the scrollbar sits. */
+const TERMINAL_PADDING_PX = 8;
+
 function mountTerminal(
   container: HTMLElement,
   terminalId: string,
@@ -53,9 +57,14 @@ function mountTerminal(
     theme: resolveTerminalTheme(settings),
     // Programs pick their own colours; this keeps any text readable (WCAG AA).
     minimumContrastRatio: 4.5,
+    // FitAddon keeps this much room at the right for the scrollbar: as wide as the padding on the left.
+    overviewRuler: { width: TERMINAL_PADDING_PX },
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
+  const sendSize = createResizeSender((size) =>
+    commands.resizeTerminal(terminalId, size.cols, size.rows),
+  );
   terminal.open(container);
   const webgl = webglBudget.slotFor(terminal);
 
@@ -100,7 +109,7 @@ function mountTerminal(
       gate.attach(snapshot);
       fitIfVisible();
       // The session was created at a default size; tell it the real one.
-      void commands.resizeTerminal(terminalId, terminal.cols, terminal.rows);
+      sendSize({ cols: terminal.cols, rows: terminal.rows });
     })
     .catch((error: unknown) => {
       if (disposed) return;
@@ -113,7 +122,7 @@ function mountTerminal(
     void commands.writeTerminal(terminalId, data);
   });
   const resize = terminal.onResize(({ cols, rows }) => {
-    void commands.resizeTerminal(terminalId, cols, rows);
+    sendSize({ cols, rows });
   });
   const observer = new ResizeObserver(fitIfVisible);
   observer.observe(container);
@@ -248,7 +257,7 @@ export function TerminalView({
     // would count padding on that parent as room it does not have. Its colour is
     // the terminal's, so a light scheme does not sit inside a dark frame.
     <div
-      className={cn("size-full p-2", !active && "hidden", className)}
+      className={cn("size-full py-2 pl-2", !active && "hidden", className)}
       style={{ backgroundColor: resolveTerminalTheme(settings).background }}
     >
       {/* WebGL draws the text on a canvas, so the applied font is mirrored here for the page to read. */}

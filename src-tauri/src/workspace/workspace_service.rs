@@ -173,6 +173,29 @@ impl WorkspaceService {
         worktree_path: &str,
         force: bool,
     ) -> Result<RemoveWorktreeResult, AppError> {
+        self.remove_worktree_with(repo_id, worktree_path, force, None)
+    }
+
+    /// Removes the worktree of a branch whose pull request is merged, never discarding changes.
+    /// The branch goes too when it still points at `merged_head`, the last commit the pull request
+    /// merged: a squash or rebase merge leaves its commits out of the base, so `branch -d` would
+    /// keep it, yet nothing on the branch is lost. A branch that moved on is kept like any other.
+    pub fn remove_merged_worktree(
+        &self,
+        repo_id: &str,
+        worktree_path: &str,
+        merged_head: &str,
+    ) -> Result<RemoveWorktreeResult, AppError> {
+        self.remove_worktree_with(repo_id, worktree_path, false, Some(merged_head))
+    }
+
+    fn remove_worktree_with(
+        &self,
+        repo_id: &str,
+        worktree_path: &str,
+        force: bool,
+        merged_head: Option<&str>,
+    ) -> Result<RemoveWorktreeResult, AppError> {
         let repo = self.find_repo(repo_id)?;
         let repo_path = Path::new(&repo.path);
 
@@ -205,7 +228,11 @@ impl WorkspaceService {
         }
         self.database.delete_worktree_meta(repo_id, &removed_path)?;
 
-        Ok(delete_worktree_branch(repo_path, entry.branch.as_deref()))
+        Ok(delete_worktree_branch(
+            repo_path,
+            entry.branch.as_deref(),
+            merged_head,
+        ))
     }
 
     /// The folder of a worktree this app knows about; anything else is refused.
@@ -310,7 +337,11 @@ impl WorkspaceService {
 
 /// A kept branch is not a failure: the worktree is already gone, and an
 /// unmerged branch is the user's only copy of that work.
-fn delete_worktree_branch(repo_path: &Path, branch: Option<&str>) -> RemoveWorktreeResult {
+fn delete_worktree_branch(
+    repo_path: &Path,
+    branch: Option<&str>,
+    merged_head: Option<&str>,
+) -> RemoveWorktreeResult {
     let Some(branch) = branch else {
         return RemoveWorktreeResult {
             branch: None,
@@ -318,6 +349,18 @@ fn delete_worktree_branch(repo_path: &Path, branch: Option<&str>) -> RemoveWorkt
             branch_kept_reason: None,
         };
     };
+
+    let at_merged_head = merged_head.is_some_and(|head| {
+        worktree_manager::branch_tip(repo_path, branch).is_ok_and(|tip| tip == head)
+    });
+    if at_merged_head {
+        let outcome = worktree_manager::delete_branch_forced(repo_path, branch);
+        return RemoveWorktreeResult {
+            branch: Some(branch.to_owned()),
+            branch_deleted: outcome.is_ok(),
+            branch_kept_reason: outcome.err().map(|error| error.to_string()),
+        };
+    }
 
     let (branch_deleted, branch_kept_reason) =
         match worktree_manager::delete_branch(repo_path, branch) {

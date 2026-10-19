@@ -29,9 +29,14 @@ interface DialogState {
   createRemoteFor: string | null;
   /** Files whose unstaged changes the user is asked to confirm throwing away. */
   discardTarget: { worktreePath: string; paths: string[] } | null;
+  /** A worktree whose pull request is merged, the user is asked to clean up. */
+  cleanUpTarget: { repoId: string; worktree: WorktreeInfo } | null;
 
   askCustomCommand: (worktreePath: string | null) => void;
   askRemoveWorktree: (
+    target: { repoId: string; worktree: WorktreeInfo } | null,
+  ) => void;
+  askCleanUp: (
     target: { repoId: string; worktree: WorktreeInfo } | null,
   ) => void;
   askRemoveRepo: (repo: Repo | null) => void;
@@ -59,6 +64,7 @@ export const useDialogStore = create<DialogState>((set) => ({
   closeFileTarget: null,
   createRemoteFor: null,
   discardTarget: null,
+  cleanUpTarget: null,
 
   askCustomCommand: (customCommandFor) => set({ customCommandFor }),
   askRemoveWorktree: (removeWorktreeTarget) => set({ removeWorktreeTarget }),
@@ -71,4 +77,5 @@ export const useDialogStore = create<DialogState>((set) => ({
   askCloseFile: (closeFileTarget) => set({ closeFileTarget }),
   askCreateRemote: (createRemoteFor) => set({ createRemoteFor }),
   askDiscard: (discardTarget) => set({ discardTarget }),
+  askCleanUp: (cleanUpTarget) => set({ cleanUpTarget }),
 }));

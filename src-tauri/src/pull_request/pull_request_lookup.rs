@@ -10,7 +10,7 @@ use specta::Type;
 use crate::bounded_command::{BoundedError, run_bounded};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
-const FIELDS: &str = "number,title,url,state,isDraft,reviewDecision,headRefName,baseRefName,mergeStateStatus,autoMergeRequest,statusCheckRollup";
+const FIELDS: &str = "number,title,url,state,isDraft,reviewDecision,headRefName,baseRefName,mergeStateStatus,autoMergeRequest,statusCheckRollup,headRefOid";
 
 #[derive(Debug, thiserror::Error)]
 pub enum PullRequestError {
@@ -89,6 +89,8 @@ pub struct PullRequest {
     /// `None` when nobody has reviewed it yet, or the repository does not require reviews.
     pub review: Option<ReviewDecision>,
     pub head_branch: String,
+    /// The last commit of the pull request's branch on GitHub.
+    pub head_sha: String,
     /// The branch the pull request merges into.
     pub base_branch: String,
     pub merge_state: MergeState,
@@ -107,6 +109,8 @@ struct RawPullRequest {
     is_draft: bool,
     review_decision: Option<String>,
     head_ref_name: String,
+    #[serde(default)]
+    head_ref_oid: String,
     #[serde(default)]
     base_ref_name: String,
     merge_state_status: Option<String>,
@@ -179,6 +183,7 @@ pub fn parse_pull_request(json: &str) -> Result<PullRequest, PullRequestError> {
         is_draft: raw.is_draft,
         review: review_of(raw.review_decision.as_deref()),
         head_branch: raw.head_ref_name,
+        head_sha: raw.head_ref_oid,
         base_branch: raw.base_ref_name,
         merge_state: merge_state_of(raw.merge_state_status.as_deref()),
         auto_merge: raw.auto_merge_request.is_some_and(|value| !value.is_null()),

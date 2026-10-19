@@ -13,7 +13,7 @@ export function ConfigFileNotice() {
   return (
     <div
       role="alert"
-      className="mb-5 flex gap-2 rounded-lg bg-destructive/10 p-3 text-xs text-destructive"
+      className="flex gap-2 rounded-lg bg-destructive/10 p-3 text-xs text-destructive"
     >
       <TriangleWarningGlyph18
         className="mt-0.5 size-3.5 shrink-0"

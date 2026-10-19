@@ -159,6 +159,8 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 - [ ] Quick open de arquivos do worktree
 - [ ] Jump palette entre worktrees, abas e sessões
 - [x] Integração com GitHub: PR e checks ligados ao worktree (aba Pull request, via `gh`): criar, mesclar/fechar/reabrir, auto-merge, discussão e respostas, log dos checks e Fix with AI
+- [x] Limpar o worktree depois do merge: com o PR mesclado, a aba Pull request oferece remover o worktree e o branch (recusa mudança não commitada; só apaga o branch se nada existe só nele)
+- [ ] Limpar também o branch remoto e oferecer a limpeza sozinha, logo depois de mesclar pelo Lynx
 - [ ] PRs empilhados (acompanhar e reordenar a pilha; abrir um PR sobre outro branch já funciona)
 - [ ] Integração com GitLab (`glab`), Linear e Jira **(?)** ordem de prioridade
 - [ ] Visualizador de arquivos e preview de markdown e imagens

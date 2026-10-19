@@ -70,6 +70,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             changes::list_commits,
             changes::list_commit_files,
             pull_request::get_pull_request,
+            pull_request::clean_up_merged_worktree,
             pull_request::open_pull_request_url,
             pull_request::get_check_log,
             pull_request::get_pull_request_discussion,

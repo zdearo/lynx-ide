@@ -136,6 +136,16 @@ export function PullRequestPanel() {
           <PullRequestDetails
             worktreePath={path}
             pullRequest={view.pullRequest}
+            onCleanUp={
+              // The main worktree is the repository itself: there is nothing to clean up.
+              view.pullRequest.state === "merged" && !selected.worktree.isMain
+                ? () =>
+                    useDialogStore.getState().askCleanUp({
+                      repoId: selected.repo.id,
+                      worktree: selected.worktree,
+                    })
+                : undefined
+            }
           />
         </ScrollArea>
       )}
@@ -146,9 +156,12 @@ export function PullRequestPanel() {
 function PullRequestDetails({
   worktreePath,
   pullRequest,
+  onCleanUp,
 }: {
   worktreePath: string;
   pullRequest: PullRequest;
+  /** Present when the pull request is merged and this worktree can be removed. */
+  onCleanUp?: () => void;
 }) {
   const badge = badgeOf(pullRequest);
   const counts = countChecks(pullRequest.checks);
@@ -216,6 +229,17 @@ function PullRequestDetails({
         worktreePath={worktreePath}
         pullRequest={pullRequest}
       />
+
+      {onCleanUp && (
+        <div className="space-y-1.5">
+          <p className="text-meta text-muted-foreground">
+            {copy.cleanUp.merged}
+          </p>
+          <Button variant="outline" size="sm" onClick={onCleanUp}>
+            {copy.cleanUp.button}
+          </Button>
+        </div>
+      )}
 
       <div
         role="group"

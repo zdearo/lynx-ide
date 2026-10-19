@@ -831,6 +831,7 @@ export function installMockTauri(scenario: string): void {
           await delay(60);
           return {
             headBranch: "refactor/db-pool",
+            headSha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
             remote: "origin",
             bases: ["develop", "main"],
             defaultBase: "main",
@@ -893,6 +894,7 @@ export function installMockTauri(scenario: string): void {
               isDraft: held.isDraft,
               review: null,
               headBranch: "refactor/db-pool",
+              headSha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
               baseBranch: "main",
               mergeState: "clean",
               autoMerge: held.autoMerge,
@@ -910,6 +912,7 @@ export function installMockTauri(scenario: string): void {
             isDraft: held42?.isDraft ?? false,
             review: "reviewRequired",
             headBranch: "feat/auth",
+            headSha: "5f2c1e0a9b8d7c6e5f4a3b2c1d0e9f8a7b6c5d4e",
             baseBranch: "main",
             mergeState: "unstable",
             autoMerge: held42?.autoMerge ?? false,
@@ -1247,6 +1250,26 @@ export function installMockTauri(scenario: string): void {
           return created;
         }
         case "remove_worktree": {
+          const list = worktrees[String(args.repoId)] ?? [];
+          const removed = list.find((w) => w.path === args.worktreePath);
+          worktrees[String(args.repoId)] = list.filter(
+            (w) => w.path !== args.worktreePath,
+          );
+          return {
+            branch: removed?.branch ?? null,
+            branchDeleted: true,
+            branchKeptReason: null,
+          };
+        }
+        case "clean_up_merged_worktree": {
+          await delay(120);
+          // The backend asks GitHub itself: only a merged pull request gets this far.
+          if (mockPrStates.get(42)?.state !== "merged") {
+            throw {
+              kind: "changeRefused",
+              message: "the pull request is not merged",
+            };
+          }
           const list = worktrees[String(args.repoId)] ?? [];
           const removed = list.find((w) => w.path === args.worktreePath);
           worktrees[String(args.repoId)] = list.filter(

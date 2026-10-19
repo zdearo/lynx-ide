@@ -30,7 +30,7 @@ interface ChangeRowProps {
   onPin: () => void;
 }
 
-/** One changed file: icon, name with its folder, and the status letter on the right. */
+/** One changed file: icon, name with its folder, then on the right the actions, the lines added and removed, and the status letter. */
 export function ChangeRow({
   entry,
   open,
@@ -108,20 +108,6 @@ export function ChangeRow({
         )}
       </span>
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        {lines && (lines.added > 0 || lines.removed > 0) && (
-          <span
-            className="text-meta tabular-nums"
-            title={copy.changes.lines(lines.added, lines.removed)}
-          >
-            {lines.added > 0 && (
-              <span className="text-diff-added">+{lines.added}</span>
-            )}
-            {lines.added > 0 && lines.removed > 0 && " "}
-            {lines.removed > 0 && (
-              <span className="text-diff-removed">−{lines.removed}</span>
-            )}
-          </span>
-        )}
         {onDiscard && (
           <TooltipIconButton
             label={copy.changes.discard.file(name)}
@@ -154,6 +140,20 @@ export function ChangeRow({
           >
             {index.kind === "stage" ? <PlusGlyph18 /> : <MinusGlyph18 />}
           </TooltipIconButton>
+        )}
+        {lines && (lines.added > 0 || lines.removed > 0) && (
+          <span
+            className="text-meta tabular-nums"
+            title={copy.changes.lines(lines.added, lines.removed)}
+          >
+            {lines.added > 0 && (
+              <span className="text-diff-added">+{lines.added}</span>
+            )}
+            {lines.added > 0 && lines.removed > 0 && " "}
+            {lines.removed > 0 && (
+              <span className="text-diff-removed">−{lines.removed}</span>
+            )}
+          </span>
         )}
         <ChangeMark kind={kind} />
       </div>

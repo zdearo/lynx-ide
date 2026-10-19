@@ -56,6 +56,11 @@ const NewWorktreeDialog = lazy(() =>
     default: m.NewWorktreeDialog,
   })),
 );
+const CleanUpMergedDialog = lazy(() =>
+  import("@/pull-request/CleanUpMergedDialog").then((m) => ({
+    default: m.CleanUpMergedDialog,
+  })),
+);
 const RemoveWorktreeDialog = lazy(() =>
   import("@/workspace/RemoveWorktreeDialog").then((m) => ({
     default: m.RemoveWorktreeDialog,
@@ -116,6 +121,7 @@ export function DialogHost() {
   const removeWorktreeTarget = useDialogStore(
     (state) => state.removeWorktreeTarget,
   );
+  const cleanUpTarget = useDialogStore((state) => state.cleanUpTarget);
   const removeRepoTarget = useDialogStore((state) => state.removeRepoTarget);
   const newWorktreeDraft = useWorkspaceStore((state) => state.draft);
 
@@ -133,6 +139,7 @@ export function DialogHost() {
       {deleteFolderTarget !== null && <DeleteFolderDialog />}
       {newWorktreeDraft !== null && <NewWorktreeDialog />}
       {removeWorktreeTarget !== null && <RemoveWorktreeDialog />}
+      {cleanUpTarget !== null && <CleanUpMergedDialog />}
       {removeRepoTarget !== null && <RemoveRepoDialog />}
     </Suspense>
   );

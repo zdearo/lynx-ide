@@ -110,8 +110,9 @@ export function SettingsDialog() {
               aria-labelledby={`settings-tab-${section.id}`}
               className="min-h-0 flex-1 overflow-y-auto p-6"
             >
-              <div className={section.fillWidth ? undefined : "max-w-xl"}>
-                <h2 className="mb-5 text-sm font-medium">{section.label}</h2>
+              <h2 className="mb-5 text-sm font-medium">{section.label}</h2>
+              {/* Every page fills the width and spaces its fields the same way. */}
+              <div className="grid gap-5">
                 <ConfigFileNotice />
                 <Panel />
               </div>

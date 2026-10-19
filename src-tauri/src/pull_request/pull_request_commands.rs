@@ -6,6 +6,7 @@ use crate::blocking_task::run_blocking;
 use crate::changes::commit_message_prompt::style_text;
 use crate::config::ConfigStore;
 use crate::error::{AppError, IpcError};
+use crate::workspace::workspace_models::RemoveWorktreeResult;
 use crate::workspace::workspace_service::WorkspaceService;
 
 use super::github_remote::{CreateRemoteRequest, GitHubAccount, account, create_remote};
@@ -18,7 +19,7 @@ use super::pull_request_discussion::{
 };
 use super::pull_request_draft::{DraftedPullRequest, draft};
 use super::pull_request_logs::{CheckLog, read as read_check_log};
-use super::pull_request_lookup::{PullRequest, lookup};
+use super::pull_request_lookup::{PullRequest, PullRequestState, lookup};
 
 /// The pull request of a worktree's branch, or `None` when the branch has none.
 #[tauri::command]
@@ -31,6 +32,29 @@ pub async fn get_pull_request(
     run_blocking(move || {
         let root = workspace.resolve_worktree(&worktree_path)?;
         lookup(&root).map_err(AppError::from)
+    })
+    .await
+}
+
+/// Removes the worktree of a branch whose pull request is merged, and the branch with it.
+/// GitHub is asked here, not trusted from the screen: the pull request must be merged, and the
+/// branch is deleted only if it still points at the commit that was merged. Uncommitted changes
+/// stop it, as in any safe removal.
+#[tauri::command]
+#[specta::specta]
+pub async fn clean_up_merged_worktree(
+    workspace: State<'_, WorkspaceService>,
+    repo_id: String,
+    worktree_path: String,
+) -> Result<RemoveWorktreeResult, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        let pull_request = lookup(&root)
+            .map_err(AppError::from)?
+            .filter(|pr| pr.state == PullRequestState::Merged && !pr.head_sha.is_empty())
+            .ok_or(AppError::ChangeRefused("the pull request is not merged"))?;
+        workspace.remove_merged_worktree(&repo_id, &worktree_path, &pull_request.head_sha)
     })
     .await
 }

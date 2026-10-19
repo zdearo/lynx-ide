@@ -6,8 +6,9 @@
 
 /*
  * Icons: Nerd Fonts symbols, one cell wide. Prompts, git status lines and agent
- * UIs draw these from the private-use area. The unicode-range keeps the 1.2 MB
- * file from loading until an icon actually shows up.
+ * UIs draw these from the private-use area. The unicode-range keeps the file
+ * from loading for text that has no icons; the terminal still loads it before it
+ * opens (`terminalFontsReady`), so the first prompt draws its icons.
  */
 @font-face {
   font-family: "Symbols Nerd Font Mono";

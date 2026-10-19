@@ -759,6 +759,22 @@ export const copy = {
     cancel: "Cancel",
   },
 
+  cleanUp: {
+    merged: "This pull request is merged.",
+    button: "Clean up worktree",
+    title: (name: string) => `Clean up ${name}?`,
+    body: (branch: string) =>
+      `The pull request is merged, so this removes the worktree folder and its branch ${branch}, and closes its terminals. It stops if there are uncommitted changes.`,
+    confirm: "Remove worktree and branch",
+    cancel: "Cancel",
+    cleaned: (name: string) => `${name} was cleaned up.`,
+    branchKept: (branch: string, reason: string) =>
+      `Branch ${branch} was kept: ${reason}.`,
+    hasChanges:
+      "This worktree has uncommitted changes, so it was not removed. Commit or discard them, or remove it from the sidebar.",
+    failed: "Could not clean up the worktree",
+  },
+
   removeWorktree: {
     title: (name: string) => `Remove ${name}?`,
     body: "This deletes the worktree folder and closes its terminals. The branch is deleted only when all of its commits are merged.",

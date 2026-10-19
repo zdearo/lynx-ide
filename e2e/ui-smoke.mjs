@@ -321,6 +321,13 @@ await session("?mock=full", 1200, 760, async (p) => {
     );
   });
   check("the last line of output is fully inside the terminal", lastRowVisible);
+  check(
+    "the scrollbar gutter is empty: the xterm overview ruler draws no edge line",
+    await p.evaluate(() => {
+      const ruler = document.querySelector(".xterm-decoration-overview-ruler");
+      return !ruler || getComputedStyle(ruler).display === "none";
+    }),
+  );
 
   const fonts = await p.evaluate(async () => {
     await document.fonts.ready;
@@ -2915,6 +2922,8 @@ await session("?mock=full", 1400, 800, async (p) => {
   await name.fill("lynx-ide-remote");
   check("a valid name turns Create repository on", await confirm.isEnabled());
 
+  // The button fades in when it turns on; axe would measure the colour mid-transition.
+  await p.waitForTimeout(400);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -3399,6 +3408,54 @@ await session("?mock=full", 1400, 800, async (p) => {
     (await p.getByText("Merged", { exact: true }).count()) >= 1 &&
       (await p.getByRole("button", { name: "Close pull request" }).count()) ===
         0,
+  );
+
+  // A merged pull request offers to remove its worktree and branch.
+  check(
+    "a merged pull request offers to clean up its worktree",
+    (await p.getByText("This pull request is merged.").count()) === 1 &&
+      (await p.getByRole("button", { name: "Clean up worktree" }).count()) ===
+        1,
+  );
+  await p.getByRole("button", { name: "Clean up worktree" }).click();
+  await p.waitForTimeout(300);
+  const cleanUp = p.getByRole("alertdialog");
+  check(
+    "the clean-up dialog says what goes: the folder, the branch and the terminals",
+    ((await cleanUp.textContent()) ?? "").includes("Clean up feat/auth?") &&
+      ((await cleanUp.textContent()) ?? "").includes("branch feat/auth") &&
+      ((await cleanUp.textContent()) ?? "").includes("closes its terminals"),
+  );
+  await p.evaluate(axeSource);
+  const cleanUpAxe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations in the clean-up dialog",
+    cleanUpAxe.length === 0,
+    cleanUpAxe.join(" || "),
+  );
+  await cleanUp.getByRole("button", { name: "Cancel" }).click();
+  await p.waitForTimeout(300);
+  check(
+    "cancelling keeps the worktree",
+    (await p.getByRole("button", { name: /^feat\/auth/ }).count()) >= 1,
+  );
+
+  await p.getByRole("button", { name: "Clean up worktree" }).click();
+  await p.waitForTimeout(300);
+  await p
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Remove worktree and branch" })
+    .click();
+  await p.waitForTimeout(800);
+  check(
+    "confirming removes the worktree from the sidebar and says so",
+    (await p.getByRole("button", { name: /^feat\/auth/ }).count()) === 0 &&
+      (await p.getByText("feat/auth was cleaned up.").count()) === 1,
   );
 });
 

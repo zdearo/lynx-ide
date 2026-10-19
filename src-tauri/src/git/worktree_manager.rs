@@ -140,6 +140,23 @@ pub fn prune_worktrees(repo: &Path) -> Result<(), GitError> {
     git(repo).args(["worktree", "prune"]).run().map(|_| ())
 }
 
+/// The commit a local branch points at.
+pub fn branch_tip(repo: &Path, branch: &str) -> Result<String, GitError> {
+    git(repo)
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("refs/heads/{branch}^{{commit}}"))
+        .run()
+}
+
+/// Drops a branch whatever `branch -d` thinks of it. For a branch whose work is known to be elsewhere.
+pub fn delete_branch_forced(repo: &Path, branch: &str) -> Result<(), GitError> {
+    git(repo)
+        .args(["branch", "-D"])
+        .arg(branch)
+        .run()
+        .map(|_| ())
+}
+
 /// Uses `branch -d`, which refuses to drop commits that exist nowhere else.
 pub fn delete_branch(repo: &Path, branch: &str) -> Result<BranchDeletion, GitError> {
     match git(repo).args(["branch", "-d"]).arg(branch).run() {

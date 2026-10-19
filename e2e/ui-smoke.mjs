@@ -3781,6 +3781,51 @@ await session("?mock=full", 1400, 800, async (p) => {
   check("and 'Agent needs you' still speaks", (await sent()).length > before);
 });
 
+// The file watcher: what an agent writes shows up in Files and Changes without leaving the window.
+await session("?mock=full", 1400, 800, async (p) => {
+  const worktree = "/home/dev/lynx-ide-worktrees/feat-auth";
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(600);
+
+  check(
+    "the new file is not listed before the agent writes it",
+    (await p.getByRole("treeitem", { name: /^agent-notes\.md/ }).count()) === 0,
+  );
+
+  await p.evaluate((path) => {
+    window.__lynxMock.agentWritesFile(path, "", "agent-notes.md");
+  }, worktree);
+  await p.waitForTimeout(500);
+  check(
+    "a file an agent writes appears in the explorer by itself",
+    (await p.getByRole("treeitem", { name: /^agent-notes\.md/ }).count()) === 1,
+  );
+
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(500);
+  check(
+    "and in Changes, as an untracked file",
+    (await p
+      .getByRole("tree", { name: /^Untracked files/ })
+      .getByRole("treeitem", { name: /^agent-notes\.md/ })
+      .count()) === 1,
+  );
+
+  await p.evaluate((path) => {
+    window.__lynxMock.agentWritesFile(path, "docs", "plan.md");
+  }, worktree);
+  await p.waitForTimeout(500);
+  check(
+    "a second file shows up in Changes too, with no reload",
+    (await p
+      .getByRole("tree", { name: /^Untracked files/ })
+      .getByRole("treeitem", { name: /^plan\.md/ })
+      .count()) === 1,
+  );
+});
+
 console.log(results.join("\n"));
 await browser.close();
 vite.kill();

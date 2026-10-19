@@ -51,16 +51,26 @@ export const useExplorerStore = create<ExplorerState>((set, get) => {
 
     async load(worktreePath, directory) {
       const previous = get().trees[worktreePath]?.directories[directory];
-      setDirectory(worktreePath, directory, {
-        status: "loading",
-        entries: previous?.entries ?? [],
-        truncated: previous?.truncated ?? false,
-        error: null,
-      });
+      // A folder already on screen reloads quietly: no flicker, and no redraw if nothing changed.
+      if (previous?.status !== "ready") {
+        setDirectory(worktreePath, directory, {
+          status: "loading",
+          entries: previous?.entries ?? [],
+          truncated: previous?.truncated ?? false,
+          error: null,
+        });
+      }
       try {
         const listing = await unwrap(
           commands.listDirectory(worktreePath, directory),
         );
+        if (
+          previous?.status === "ready" &&
+          previous.truncated === listing.truncated &&
+          JSON.stringify(previous.entries) === JSON.stringify(listing.entries)
+        ) {
+          return;
+        }
         setDirectory(worktreePath, directory, {
           status: "ready",
           entries: listing.entries,

@@ -48,7 +48,7 @@ describe("load", () => {
     expect(api.listDirectory).toHaveBeenCalledWith(wt, "");
   });
 
-  it("keeps the old entries on screen while reloading", async () => {
+  it("keeps a listed folder ready and its entries on screen while reloading", async () => {
     listsBy({ "": [file("a.txt")] });
     await useExplorerStore.getState().load(wt, "");
     let finish: (value: ReturnType<typeof listing>) => void = () => {};
@@ -61,7 +61,8 @@ describe("load", () => {
     const reloading = useExplorerStore.getState().load(wt, "");
 
     const during = useExplorerStore.getState().trees[wt].directories[""];
-    expect(during.status).toBe("loading");
+    // A folder already on screen reloads quietly: it never flips to "loading".
+    expect(during.status).toBe("ready");
     expect(during.entries.map((e) => e.name)).toEqual(["a.txt"]);
 
     finish(listing([file("b.txt")]));
@@ -71,6 +72,34 @@ describe("load", () => {
         .getState()
         .trees[wt].directories[""].entries.map((e) => e.name),
     ).toEqual(["b.txt"]);
+  });
+
+  it("leaves the folder untouched when the listing did not change", async () => {
+    listsBy({ "": [file("a.txt"), dir("src")] });
+    await useExplorerStore.getState().load(wt, "");
+    const before = useExplorerStore.getState().trees[wt];
+
+    await useExplorerStore.getState().load(wt, "");
+
+    // The same object: nothing subscribed to the tree redraws.
+    expect(useExplorerStore.getState().trees[wt]).toBe(before);
+  });
+
+  it("shows loading the first time a folder is listed", async () => {
+    let finish: (value: ReturnType<typeof listing>) => void = () => {};
+    api.listDirectory.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve as typeof finish;
+      }),
+    );
+
+    const first = useExplorerStore.getState().load(wt, "");
+    expect(useExplorerStore.getState().trees[wt].directories[""].status).toBe(
+      "loading",
+    );
+
+    finish(listing([file("a.txt")]));
+    await first;
   });
 
   it("records the reason and keeps the entries when listing fails", async () => {

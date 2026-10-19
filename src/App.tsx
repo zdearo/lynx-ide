@@ -25,6 +25,8 @@ import { TerminalWorkspace } from "@/terminal/TerminalWorkspace";
 import { StatusBar } from "@/status-bar/StatusBar";
 import { copy } from "@/ui-copy";
 import { notifyAgentStatus } from "@/notifications/notify-agent-status";
+import { applyWorktreeChange } from "@/watching/apply-worktree-change";
+import { useWorktreeWatch } from "@/watching/use-worktree-watch";
 import { useAppShortcuts } from "@/use-app-shortcuts";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import {
@@ -41,6 +43,10 @@ const DOCK_RIGHT_QUERY = "(min-width: 1280px)";
 const REFRESH_ON_FOCUS_MS = 2000;
 
 function App() {
+  const selectedWorktreePath = useWorkspaceStore(
+    (state) => state.selectedWorktreePath,
+  );
+  useWorktreeWatch(selectedWorktreePath);
   const wide = useMediaQuery(WIDE_LAYOUT_QUERY);
   const panelCollapsed = useNavigationStore((state) => state.panelCollapsed);
   const drawerOpen = useNavigationStore((state) => state.drawerOpen);
@@ -92,6 +98,11 @@ function App() {
       },
     );
 
+    // An agent or another program wrote files in the worktree on screen.
+    const unlistenWorktree = events.worktreeChanged.listen(({ payload }) => {
+      applyWorktreeChange(payload);
+    });
+
     // The config file is meant to be edited by hand, so changes can arrive at any time.
     const unlistenConfig = events.configChanged.listen(({ payload }) => {
       useConfigStore.getState().apply(payload.snapshot);
@@ -114,6 +125,7 @@ function App() {
       window.removeEventListener("focus", refreshOnFocus);
       void unlistenExit.then((unlisten) => unlisten());
       void unlistenAgentStatus.then((unlisten) => unlisten());
+      void unlistenWorktree.then((unlisten) => unlisten());
       void unlistenConfig.then((unlisten) => unlisten());
     };
   }, []);

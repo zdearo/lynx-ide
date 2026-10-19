@@ -719,6 +719,9 @@ export function installMockTauri(scenario: string): void {
             truncated: false,
           };
         }
+        case "watch_worktree":
+          // The mock backend can always watch; the e2e sends the events itself.
+          return args.worktreePath !== null;
         case "list_changes":
           await delay(60);
           return structuredClone(MOCK_CHANGES);
@@ -1366,6 +1369,24 @@ export function installMockTauri(scenario: string): void {
       /** Pretends the remote has this many commits the branch lacks. */
       setBehind(count: number) {
         mockBehind = count;
+      },
+      /** An agent creates a file: the listing and the changed files have it, and the watcher reports it. */
+      agentWritesFile(worktreePath: string, folder: string, name: string) {
+        MOCK_FILES[folder]?.push({ name, kind: "file" });
+        MOCK_CHANGES.push({
+          path: folder ? `${folder}/${name}` : name,
+          originalPath: null,
+          staged: null,
+          unstaged: "untracked",
+          stagedLines: null,
+          unstagedLines: { added: 3, removed: 0 },
+        });
+        void emit("worktree-changed", {
+          worktreePath,
+          directories: [folder],
+          everything: false,
+          git: false,
+        });
       },
       /** Changes a file as if another program had written it. */
       touchFile(worktreePath: string, relative: string, content: string) {

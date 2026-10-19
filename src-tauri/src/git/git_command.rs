@@ -102,6 +102,8 @@ impl GitCommand<'_> {
             .current_dir(self.cwd)
             .args(&self.args)
             .env("GIT_TERMINAL_PROMPT", "0")
+            // Reading must never rewrite the index: the file watcher would report it and the screen would read again.
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .env("LC_ALL", "C");
         hide_console_window(&mut command);
 

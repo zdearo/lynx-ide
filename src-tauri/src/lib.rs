@@ -11,6 +11,7 @@ mod ipc;
 mod persistence;
 mod pull_request;
 mod terminal;
+mod watching;
 mod workspace;
 
 use std::path::PathBuf;
@@ -25,6 +26,7 @@ use config::config_events::start_config_watcher;
 use persistence::AppDatabase;
 use terminal::terminal_events::TauriEventSink;
 use terminal::terminal_manager::TerminalManager;
+use watching::watch_commands::WatchState;
 use workspace::workspace_service::WorkspaceService;
 
 /// `LYNX_HOME` wins, so tests and portable setups can keep everything in one folder.
@@ -71,6 +73,8 @@ pub fn run() {
                 AppDatabase::open(&database_file)?,
                 Arc::new(move || worktrees_config.worktrees_directory()),
             ));
+
+            app.manage(WatchState::default());
 
             let shell_config = Arc::clone(&config);
             app.manage(TerminalManager::new(

@@ -155,6 +155,12 @@ export const commands = {
 	draftPullRequestText: (worktreePath: string, base: string) => typedError<DraftedPullRequest, IpcError>(__TAURI_INVOKE("draft_pull_request_text", { worktreePath, base })),
 	/**  Pushes the branch if the remote lacks it, then opens the pull request. */
 	createPullRequest: (worktreePath: string, request: CreatePullRequestRequest) => typedError<CreatedPullRequest, IpcError>(__TAURI_INVOKE("create_pull_request", { worktreePath, request })),
+	/**
+	 *  Watches this worktree, and stops watching the previous one. `None` only stops. Answers whether
+	 *  it is being watched: a worktree with too many folders, or a system that refuses, is not, and
+	 *  the interface then reads it again on a timer.
+	 */
+	watchWorktree: (worktreePath: string | null) => typedError<boolean, IpcError>(__TAURI_INVOKE("watch_worktree", { worktreePath })),
 };
 
 /** Events */
@@ -163,6 +169,7 @@ export const events = {
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
 	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
+	worktreeChanged: makeEvent<WorktreeChanged>("worktree-changed"),
 };
 
 /* Types */
@@ -648,6 +655,17 @@ export type TerminalSnapshot = {
 	lastSeq: number,
 	running: boolean,
 	exitCode: number | null,
+};
+
+/**  Files changed in the watched worktree. Sent once a burst of changes has settled. */
+export type WorktreeChanged = {
+	worktreePath: string,
+	/**  Folders whose contents changed, relative to the worktree (`""` is the root). */
+	directories: string[],
+	/**  Too many folders changed to list: read everything that is open again. */
+	everything: boolean,
+	/**  Git's own state moved: the index or `HEAD` was written (a stage, a commit, a checkout). */
+	git: boolean,
 };
 
 export type WorktreeInfo = {

@@ -90,7 +90,9 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 - [x] Changes: descartar (com confirmação), contagem de linhas (+/−) por arquivo, diff por commit e por branch, comparar staged e unstaged, amend, pull/sync, force push com lease e arquivos de cada commit
 - [ ] Editor: busca em todos os arquivos, desfazer ao reabrir, abas de arquivo fixas/em prévia, abrir imagem e arquivo grande em modo leitura, salvar automático opcional
 - [ ] LSP: ponte em Rust (política A+D: servidor vivo só com o worktree em foco e um editor da linguagem aberto, para após ~10 min; limite LRU de segurança; servidores instalados pelo usuário) e `@codemirror/lsp-client` no editor
-- [ ] Explorador de arquivos: arrastar um item para o terminal, decorar com o status do Git (M/U) e atualizar sozinho com um vigia de arquivos (hoje atualiza ao voltar para a janela e no botão)
+- [x] Vigia de arquivos: o explorador e o Changes se atualizam sozinhos quando um agente escreve no worktree da tela (`src-tauri/src/watching/`); a releitura de 4 s virou uma rede de segurança de 30 s
+- [ ] Vigia: recarregar um arquivo aberto no editor quando ele muda no disco (hoje só o aviso de conflito ao salvar), e vigiar também as pastas ignoradas pelo Git sob demanda
+- [ ] Explorador de arquivos: arrastar um item para o terminal
 - [ ] Painel da direita: largura ajustável e novas abas (busca, source control)
 
 - [ ] Exportar um JSON Schema do `config.json` para autocompletar no editor

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage } from "@/lib/error-message";
 import { unwrap } from "@/lib/ipc-result";
+import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
 
 interface CommitAreaProps {
@@ -39,11 +40,17 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
     !committing &&
     !pushing &&
     !generating;
-  const canGenerate = stagedCount > 0 && !committing && !pushing && !generating;
+  // Only a running operation turns the button off: with nothing staged it still answers a click.
+  const busyElsewhere = committing || pushing || generating;
 
   // Fills the summary and description from the user's agent CLI. Nothing is committed.
   async function generate() {
-    if (!canGenerate) return;
+    if (busyElsewhere) return;
+    if (stagedCount === 0) {
+      setError(null);
+      setNotice(copy.changes.generateNeedsStaged);
+      return;
+    }
     setGenerating(true);
     setError(null);
     setNotice(null);
@@ -128,9 +135,12 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
           label={copy.changes.generate}
           tooltipSide="top"
           variant="outline"
-          disabled={!canGenerate}
+          disabled={busyElsewhere}
           aria-busy={generating}
-          className="absolute top-1/2 right-1 size-6 -translate-y-1/2 bg-background"
+          className={cn(
+            "absolute top-1/2 right-1 size-6 -translate-y-1/2 bg-background",
+            stagedCount === 0 && "opacity-60",
+          )}
           onClick={() => void generate()}
         >
           {generating ? (

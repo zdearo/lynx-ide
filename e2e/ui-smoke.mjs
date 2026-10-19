@@ -2934,7 +2934,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     "confirming creates the remote and the pull request panel reads the branch again",
     (await p.getByRole("dialog").count()) === 0 &&
       (await p
-        .getByText("This branch has no pull request on GitHub.")
+        .getByRole("heading", { name: "Open a pull request" })
         .count()) === 1,
   );
 });
@@ -2969,6 +2969,17 @@ await session("?mock=full", 1400, 800, async (p) => {
     (await p.getByText("1 commit to push to origin").count()) === 1,
   );
 
+  await p.getByRole("button", { name: "Generate message with AI" }).click();
+  await p.waitForTimeout(200);
+  check(
+    "with nothing staged, Generate still answers the click and says what to do",
+    (await p
+      .getByText(
+        "Stage the files you want to commit, then generate the message.",
+      )
+      .count()) === 1,
+  );
+
   await p.getByRole("button", { name: "Commits", exact: true }).click();
   await p.waitForTimeout(300);
   const history = p.getByRole("list", { name: "Commits on this branch" });
@@ -3000,6 +3011,79 @@ await session("?mock=full", 1400, 800, async (p) => {
       (await push.count()) === 0 &&
       (await p.getByText("Pushed to origin.").count()) === 1 &&
       (await history.getByText("Not pushed").count()) === 0,
+  );
+});
+
+// A branch with no pull request: the form sits in the tab, like the commit box, and creates it.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^refactor-db/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Pull request", exact: true }).click();
+  await p.waitForTimeout(700);
+
+  const title = p.getByRole("textbox", { name: "Pull request title" });
+  const body = p.getByRole("textbox", { name: "Pull request description" });
+  check(
+    "a branch with no pull request shows the form in the tab, not a dialog",
+    (await p.getByRole("heading", { name: "Open a pull request" }).count()) ===
+      1 &&
+      (await p.getByRole("dialog").count()) === 0 &&
+      (await title.inputValue()) === "Refactor db pool" &&
+      (
+        (await p.getByRole("combobox", { name: "Base branch" }).innerText()) ??
+        ""
+      ).includes("main"),
+  );
+  check(
+    "a branch the remote lacks says it is pushed first, and the button says so too",
+    (await p
+      .getByText("refactor/db-pool is pushed to origin first.")
+      .count()) === 1 &&
+      (await p
+        .getByRole("button", { name: "Push and create", exact: true })
+        .count()) === 1,
+  );
+
+  await p
+    .getByRole("button", { name: "Generate title and description with AI" })
+    .click();
+  await p.waitForTimeout(500);
+  check(
+    "the sparkle button fills the title and description and names the agent",
+    (await title.inputValue()) ===
+      "refactor(db): size the pool from the config" &&
+      ((await body.inputValue()) ?? "").includes("pool size") &&
+      (await p
+        .getByText("Drafted with Claude Code. Review it before creating.")
+        .count()) === 1,
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the create pull request form",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await p.getByRole("switch", { name: "Draft" }).click();
+  await p.getByRole("button", { name: "Push and create", exact: true }).click();
+  await p.waitForTimeout(800);
+  check(
+    "creating replaces the form with the new pull request, marked as a draft",
+    (await p.getByRole("heading", { name: /^#77 refactor\(db\)/ }).count()) ===
+      1 &&
+      (await p.getByText("Draft", { exact: true }).count()) >= 1 &&
+      (await p
+        .getByRole("heading", { name: "Open a pull request" })
+        .count()) === 0,
   );
 });
 

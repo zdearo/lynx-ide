@@ -13,6 +13,7 @@ import { errorMessage } from "@/lib/error-message";
 import { unwrap } from "@/lib/ipc-result";
 import { useRefreshWhileVisible } from "@/lib/use-refresh-while-visible";
 import { cn } from "@/lib/utils";
+import { CreatePullRequestForm } from "@/pull-request/CreatePullRequestForm";
 import {
   usePullRequestStore,
   type PullRequestView,
@@ -121,9 +122,9 @@ export function PullRequestPanel() {
           </div>
         </div>
       ) : view.pullRequest === null ? (
-        <p className="px-3 pt-1 text-ui text-muted-foreground">
-          {copy.pullRequest.none}
-        </p>
+        <ScrollArea className="min-h-0 flex-1">
+          <CreatePullRequestForm worktreePath={path} />
+        </ScrollArea>
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <PullRequestDetails pullRequest={view.pullRequest} />

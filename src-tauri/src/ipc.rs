@@ -66,6 +66,9 @@ pub fn builder() -> Builder<tauri::Wry> {
             pull_request::open_pull_request_url,
             pull_request::get_github_account,
             pull_request::create_github_remote,
+            pull_request::get_pull_request_form,
+            pull_request::draft_pull_request_text,
+            pull_request::create_pull_request,
         ])
         .events(collect_events![
             TerminalOutput,

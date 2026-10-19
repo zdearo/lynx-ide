@@ -92,6 +92,15 @@ export const commands = {
 	getGithubAccount: () => typedError<GitHubAccount, IpcError>(__TAURI_INVOKE("get_github_account")),
 	/**  Creates the GitHub repository for a local one that has no remote, and connects it as `origin`. */
 	createGithubRemote: (worktreePath: string, request: CreateRemoteRequest) => typedError<null, IpcError>(__TAURI_INVOKE("create_github_remote", { worktreePath, request })),
+	/**  What the create-pull-request form starts from: the bases, the default one and a title. */
+	getPullRequestForm: (worktreePath: string) => typedError<PullRequestForm, IpcError>(__TAURI_INVOKE("get_pull_request_form", { worktreePath })),
+	/**
+	 *  A title and description from the user's agent CLI. Nothing is created. The agent and the title
+	 *  style come from the Git settings.
+	 */
+	draftPullRequestText: (worktreePath: string, base: string) => typedError<DraftedPullRequest, IpcError>(__TAURI_INVOKE("draft_pull_request_text", { worktreePath, base })),
+	/**  Pushes the branch if the remote lacks it, then opens the pull request. */
+	createPullRequest: (worktreePath: string, request: CreatePullRequestRequest) => typedError<CreatedPullRequest, IpcError>(__TAURI_INVOKE("create_pull_request", { worktreePath, request })),
 };
 
 /** Events */
@@ -225,6 +234,13 @@ export type ConfigSnapshot = {
 	fileBroken: boolean,
 };
 
+export type CreatePullRequestRequest = {
+	base: string,
+	title: string,
+	body: string,
+	draft: boolean,
+};
+
 /**  What the user chose in the dialog. `owner` is an account or organization name. */
 export type CreateRemoteRequest = {
 	owner: string,
@@ -232,6 +248,10 @@ export type CreateRemoteRequest = {
 	visibility: RepoVisibility,
 	/**  Pushes the current branch, so GitHub knows about it and its pull request can be found. */
 	push: boolean,
+};
+
+export type CreatedPullRequest = {
+	url: string,
 };
 
 export type DirectoryListing = {
@@ -244,6 +264,13 @@ export type DirectoryListing = {
 export type DraftedMessage = {
 	summary: string,
 	description: string,
+	/**  Which CLI wrote it, shown to the user. */
+	agentLabel: string,
+};
+
+export type DraftedPullRequest = {
+	title: string,
+	body: string,
 	/**  Which CLI wrote it, shown to the user. */
 	agentLabel: string,
 };
@@ -312,7 +339,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "invalidRepoName" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
 
 /**
  *  How every agent starts from a new terminal: `Manual` keeps its permission prompts, and `Yolo`
@@ -336,6 +363,18 @@ export type PullRequestCheck = {
 	/**  `workflow / job` for a GitHub Actions job, or the context name for a commit status. */
 	name: string,
 	state: CheckState,
+};
+
+/**  What the form starts from: where the branch can go, and what to call it. */
+export type PullRequestForm = {
+	headBranch: string,
+	remote: string,
+	/**  Branches on the remote that can receive the pull request, by short name. */
+	bases: string[],
+	defaultBase: string,
+	/**  The branch is not on the remote, or has commits it lacks: creating pushes it first. */
+	needsPush: boolean,
+	suggestedTitle: string,
 };
 
 export type PullRequestState = "open" | "closed" | "merged";

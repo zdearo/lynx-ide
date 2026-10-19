@@ -1,10 +1,18 @@
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::blocking_task::run_blocking;
+use crate::changes::commit_message_prompt::style_text;
+use crate::config::ConfigStore;
 use crate::error::{AppError, IpcError};
 use crate::workspace::workspace_service::WorkspaceService;
 
 use super::github_remote::{CreateRemoteRequest, GitHubAccount, account, create_remote};
+use super::pull_request_create::{
+    CreatePullRequestRequest, CreatedPullRequest, PullRequestForm, create, form,
+};
+use super::pull_request_draft::{DraftedPullRequest, draft};
 use super::pull_request_lookup::{PullRequest, lookup};
 
 /// The pull request of a worktree's branch, or `None` when the branch has none.
@@ -41,6 +49,61 @@ pub async fn create_github_remote(
     run_blocking(move || {
         let root = workspace.resolve_worktree(&worktree_path)?;
         create_remote(&root, &request).map_err(AppError::from)
+    })
+    .await
+}
+
+/// What the create-pull-request form starts from: the bases, the default one and a title.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_pull_request_form(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+) -> Result<PullRequestForm, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        form(&root)
+    })
+    .await
+}
+
+/// A title and description from the user's agent CLI. Nothing is created. The agent and the title
+/// style come from the Git settings.
+#[tauri::command]
+#[specta::specta]
+pub async fn draft_pull_request_text(
+    workspace: State<'_, WorkspaceService>,
+    store: State<'_, Arc<ConfigStore>>,
+    worktree_path: String,
+    base: String,
+) -> Result<DraftedPullRequest, IpcError> {
+    let workspace = workspace.inner().clone();
+    let git = store.config().git;
+    let style = style_text(
+        git.commit_message_style,
+        git.commit_message_instructions.as_deref(),
+    )
+    .to_owned();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        draft(&root, git.commit_message_agent, &style, &base)
+    })
+    .await
+}
+
+/// Pushes the branch if the remote lacks it, then opens the pull request.
+#[tauri::command]
+#[specta::specta]
+pub async fn create_pull_request(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    request: CreatePullRequestRequest,
+) -> Result<CreatedPullRequest, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        create(&root, &request)
     })
     .await
 }

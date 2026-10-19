@@ -9,6 +9,7 @@ use crate::files::files_error::FilesError;
 use crate::git::GitError;
 use crate::persistence::DatabaseError;
 use crate::pull_request::github_remote::GitHubRemoteError;
+use crate::pull_request::pull_request_create::CreatePullRequestError;
 use crate::pull_request::pull_request_lookup::PullRequestError;
 use crate::terminal::TerminalError;
 
@@ -62,6 +63,8 @@ pub enum AppError {
     PullRequest(#[from] crate::pull_request::pull_request_lookup::PullRequestError),
     #[error(transparent)]
     GitHubRemote(#[from] crate::pull_request::github_remote::GitHubRemoteError),
+    #[error(transparent)]
+    CreatePullRequest(#[from] crate::pull_request::pull_request_create::CreatePullRequestError),
     #[error("only https links can be opened")]
     InvalidLink,
     #[error("{0}")]
@@ -98,6 +101,9 @@ pub enum IpcErrorKind {
     InvalidLink,
     PushUnavailable,
     InvalidRepoName,
+    InvalidPullRequest,
+    PullRequestExists,
+    NoDifference,
     RemoteNameTaken,
     RemoteAlreadyExists,
     GitHub,
@@ -143,6 +149,16 @@ impl From<AppError> for IpcError {
             },
             AppError::InvalidLink => IpcErrorKind::InvalidLink,
             AppError::PushUnavailable(_) => IpcErrorKind::PushUnavailable,
+            AppError::CreatePullRequest(error) => match error {
+                CreatePullRequestError::NotInstalled => IpcErrorKind::GhNotInstalled,
+                CreatePullRequestError::NotLoggedIn => IpcErrorKind::GhNotLoggedIn,
+                CreatePullRequestError::Invalid(_) => IpcErrorKind::InvalidPullRequest,
+                CreatePullRequestError::AlreadyExists => IpcErrorKind::PullRequestExists,
+                CreatePullRequestError::NoDifference => IpcErrorKind::NoDifference,
+                CreatePullRequestError::TimedOut | CreatePullRequestError::Failed(_) => {
+                    IpcErrorKind::GitHub
+                }
+            },
             AppError::GitHubRemote(error) => match error {
                 GitHubRemoteError::NotInstalled => IpcErrorKind::GhNotInstalled,
                 GitHubRemoteError::NotLoggedIn => IpcErrorKind::GhNotLoggedIn,

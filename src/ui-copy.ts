@@ -300,7 +300,6 @@ export const copy = {
     title: "Pull request",
     noWorktree: "Select a worktree to see its pull request.",
     loading: "Looking for the pull request…",
-    none: "This branch has no pull request on GitHub.",
     refresh: "Refresh",
     retry: "Retry",
     branch: (name: string) => `Branch ${name}`,
@@ -334,6 +333,38 @@ export const copy = {
       notLoggedIn: "Run gh auth login in a terminal, then refresh.",
       noRemote: "This repository has no GitHub remote.",
       internal: "Something went wrong while reading the pull request.",
+    },
+    create: {
+      heading: "Open a pull request",
+      base: "Base branch",
+      titleLabel: "Pull request title",
+      titlePlaceholder: "Title",
+      bodyLabel: "Pull request description",
+      bodyPlaceholder: "Description",
+      draft: "Draft",
+      generate: "Generate title and description with AI",
+      generating: "Generating a title and description…",
+      draftedWith: (agent: string) =>
+        `Drafted with ${agent}. Review it before creating.`,
+      submit: "Create pull request",
+      pushAndSubmit: "Push and create",
+      creating: "Creating…",
+      pushHint: (branch: string, remote: string) =>
+        `${branch} is pushed to ${remote} first.`,
+      sameBranch: "Pick a base other than this branch.",
+      noOtherBase: (branch: string) =>
+        `${branch} is the only branch on the remote. Create a branch from it to open a pull request.`,
+      created: "Pull request created",
+      loadFailed: "Could not prepare the pull request",
+      error: {
+        notInstalled: "Install the GitHub CLI (gh) to create pull requests.",
+        notLoggedIn: "Run gh auth login in a terminal, then try again.",
+        invalid: "The title, description or base branch is not valid.",
+        exists: "This branch already has a pull request. Refresh to see it.",
+        noDifference: "This branch has no commits beyond its base.",
+        failed: "Could not create the pull request",
+        generateFailed: "Could not generate the text",
+      },
     },
     createRemote: {
       button: "Create remote",
@@ -424,6 +455,8 @@ export const copy = {
       `This branch is not on ${remote} yet. Push creates it there.`,
     generate: "Generate message with AI",
     generating: "Generating a message…",
+    generateNeedsStaged:
+      "Stage the files you want to commit, then generate the message.",
     generateFailed: "Could not generate a message",
     draftedWith: (agent: string) =>
       `Drafted with ${agent}. Review it before committing.`,

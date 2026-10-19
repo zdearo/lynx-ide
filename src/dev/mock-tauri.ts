@@ -215,6 +215,12 @@ function stageMockChange(path: string): void {
   }
 }
 
+/** Pull requests created from the form during this session, by worktree. */
+const createdPullRequests = new Map<
+  string,
+  { title: string; draft: boolean }
+>();
+
 /** Worktrees whose repository got a GitHub remote from the dialog during this session. */
 const remoteCreated = new Set<string>();
 
@@ -687,6 +693,32 @@ export function installMockTauri(scenario: string): void {
               pushed: commit.pushed,
             };
           });
+        case "get_pull_request_form":
+          await delay(60);
+          return {
+            headBranch: "refactor/db-pool",
+            remote: "origin",
+            bases: ["develop", "main"],
+            defaultBase: "main",
+            needsPush: true,
+            suggestedTitle: "Refactor db pool",
+          };
+        case "draft_pull_request_text":
+          await delay(200);
+          return {
+            title: "refactor(db): size the pool from the config",
+            body: "Reads the pool size from the config instead of a constant.",
+            agentLabel: "Claude Code",
+          };
+        case "create_pull_request": {
+          await delay(300);
+          const request = args.request as { title: string; draft: boolean };
+          createdPullRequests.set(String(args.worktreePath), {
+            title: request.title,
+            draft: request.draft,
+          });
+          return { url: "https://github.com/acme/api/pull/77" };
+        }
         case "get_github_account":
           await delay(60);
           return { login: "zdearo", organizations: ["acme"] };
@@ -700,6 +732,19 @@ export function installMockTauri(scenario: string): void {
           // The fix/pty worktree has no GitHub remote until the dialog creates one.
           if (path.endsWith("fix-pty") && !remoteCreated.has(path)) {
             throw { kind: "ghNoRemote", message: "no git remotes found" };
+          }
+          const created = createdPullRequests.get(path);
+          if (created) {
+            return {
+              number: 77,
+              title: created.title,
+              url: "https://github.com/acme/api/pull/77",
+              state: "open",
+              isDraft: created.draft,
+              review: null,
+              headBranch: "refactor/db-pool",
+              checks: [],
+            };
           }
           // Only the feat/auth worktree has a pull request in the mock; the others have none.
           if (!path.endsWith("feat-auth")) return null;

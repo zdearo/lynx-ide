@@ -3,4 +3,6 @@
 
 pub mod github_remote;
 pub mod pull_request_commands;
+pub mod pull_request_create;
+pub mod pull_request_draft;
 pub mod pull_request_lookup;

@@ -17,7 +17,7 @@ use super::commit_message_prompt::build_prompt;
 
 const TIMEOUT: Duration = Duration::from_secs(120);
 /// A huge change would make the prompt slow to send and hard for the agent to read.
-const DIFF_LIMIT_BYTES: usize = 200_000;
+pub const DIFF_LIMIT_BYTES: usize = 200_000;
 /// The subject line git shows in `git log --oneline`; longer ones get cut.
 const SUBJECT_CHARS: usize = 72;
 
@@ -29,6 +29,8 @@ pub enum DraftError {
     NotInstalled { agent: &'static str },
     #[error("nothing is staged to draft a message from")]
     NothingStaged,
+    #[error("the branch has no commits beyond its base to describe")]
+    NothingToCompare,
     #[error("{agent} did not answer within two minutes")]
     TimedOut { agent: &'static str },
     #[error("{agent} failed: {stderr}")]
@@ -116,7 +118,7 @@ pub struct DraftedMessage {
 }
 
 /// Cuts a diff to `limit` bytes at a line break, never inside a character.
-fn truncate_diff(diff: String, limit: usize) -> String {
+pub fn truncate_diff(diff: String, limit: usize) -> String {
     if diff.len() <= limit {
         return diff;
     }
@@ -131,6 +133,12 @@ fn truncate_diff(diff: String, limit: usize) -> String {
 /// Splits the agent's answer into summary and description. Strips a code fence around it.
 /// Returns `None` when nothing is left to use as a summary.
 fn parse_message(raw: &str) -> Option<(String, String)> {
+    parse_titled(raw, SUBJECT_CHARS)
+}
+
+/// Like `parse_message`, with the title cut at `max_title_chars`. A pull request title may be longer
+/// than a commit subject.
+pub fn parse_titled(raw: &str, max_title_chars: usize) -> Option<(String, String)> {
     let mut lines: Vec<&str> = raw.trim().lines().collect();
     if lines
         .first()
@@ -149,7 +157,7 @@ fn parse_message(raw: &str) -> Option<(String, String)> {
         .trim_end_matches('.')
         .trim()
         .chars()
-        .take(SUBJECT_CHARS)
+        .take(max_title_chars)
         .collect();
     let summary = summary.trim_end().to_owned();
     if summary.is_empty() {
@@ -211,16 +219,26 @@ pub fn draft_message(
         return Err(DraftError::NothingStaged);
     }
 
-    let agent = choose_agent(choice, on_path)?;
     let prompt = build_prompt(style, &truncate_diff(diff, DIFF_LIMIT_BYTES));
-    let answer = run_agent(root, agent, &prompt, TIMEOUT)?;
+    let (label, answer) = ask_agent(root, choice, &prompt)?;
     let (summary, description) =
-        parse_message(&answer).ok_or(DraftError::Empty { agent: agent.label })?;
+        parse_message(&answer).ok_or(DraftError::Empty { agent: label })?;
     Ok(DraftedMessage {
         summary,
         description,
-        agent_label: agent.label.to_owned(),
+        agent_label: label.to_owned(),
     })
+}
+
+/// Runs the chosen agent CLI on a prompt, and returns its label with the raw answer.
+pub fn ask_agent(
+    root: &Path,
+    choice: CommitMessageAgent,
+    prompt: &str,
+) -> Result<(&'static str, String), DraftError> {
+    let agent = choose_agent(choice, on_path)?;
+    let answer = run_agent(root, agent, prompt, TIMEOUT)?;
+    Ok((agent.label, answer))
 }
 
 #[cfg(test)]

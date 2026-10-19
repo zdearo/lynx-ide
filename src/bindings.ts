@@ -68,6 +68,10 @@ export const commands = {
 	 *  The agent and the style come from the Git settings, read when the draft starts.
 	 */
 	draftCommitMessage: (worktreePath: string) => typedError<DraftedMessage, IpcError>(__TAURI_INVOKE("draft_commit_message", { worktreePath })),
+	/**  Where the worktree's branch stands against its remote. */
+	getBranchSync: (worktreePath: string) => typedError<BranchSync, IpcError>(__TAURI_INVOKE("get_branch_sync", { worktreePath })),
+	/**  Pushes the worktree's branch, publishing it first when it has no upstream. Never forces. */
+	pushBranch: (worktreePath: string) => typedError<null, IpcError>(__TAURI_INVOKE("push_branch", { worktreePath })),
 	/**  The pull request of a worktree's branch, or `None` when the branch has none. */
 	getPullRequest: (worktreePath: string) => typedError<{
 	number: number,
@@ -143,6 +147,18 @@ export type AppInfo = {
 
 /**  What a bell from a program does. Sound is left out: the terminal engine only reports the bell. */
 export type BellStyle = "none" | "visual";
+
+/**  A branch against its remote. `upstream` is `None` for a branch that was never pushed. */
+export type BranchSync = {
+	/**  `None` on a detached HEAD. */
+	branch: string | null,
+	upstream: string | null,
+	/**  Commits the branch has that its upstream does not: what a push would send. */
+	ahead: number,
+	behind: number,
+	/**  The remote a push goes to: `origin` when there is one, else the first. `None` without remotes. */
+	remote: string | null,
+};
 
 export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "typeChanged" | "untracked" | "conflicted";
 
@@ -280,7 +296,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "invalidRepoName" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "invalidRepoName" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
 
 /**
  *  How every agent starts from a new terminal: `Manual` keeps its permission prompts, and `Yolo`

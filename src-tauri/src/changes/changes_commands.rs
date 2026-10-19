@@ -7,6 +7,7 @@ use crate::config::ConfigStore;
 use crate::error::IpcError;
 use crate::workspace::workspace_service::WorkspaceService;
 
+use super::branch_sync::{BranchSync, push, read as read_branch_sync};
 use super::change_list::{ChangedFile, list_changes as list};
 use super::change_staging::{stage, stage_many, unstage};
 use super::commit_changes::commit;
@@ -131,6 +132,36 @@ pub async fn stage_changes(
     run_blocking(move || {
         let root = workspace.resolve_worktree(&worktree_path)?;
         stage_many(&root, &relative_paths)
+    })
+    .await
+}
+
+/// Where the worktree's branch stands against its remote.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_branch_sync(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+) -> Result<BranchSync, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        read_branch_sync(&root)
+    })
+    .await
+}
+
+/// Pushes the worktree's branch, publishing it first when it has no upstream. Never forces.
+#[tauri::command]
+#[specta::specta]
+pub async fn push_branch(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+) -> Result<(), IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        push(&root)
     })
     .await
 }

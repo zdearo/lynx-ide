@@ -4,7 +4,9 @@ import { commands } from "@/bindings";
 import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
 import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
+import { useBranchSyncStore } from "@/changes/branch-sync-store";
 import { useChangesStore } from "@/changes/changes-store";
+import { primaryAction } from "@/changes/primary-action";
 import { draftOf, useCommitDraftStore } from "@/changes/commit-draft-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +26,10 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
   const draft = useCommitDraftStore((state) =>
     draftOf(state.drafts, worktreePath),
   );
+  const sync = useBranchSyncStore((state) => state.byWorktree[worktreePath]);
+  const action = primaryAction(stagedCount, sync);
   const [committing, setCommitting] = useState(false);
+  const [pushing, setPushing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -32,8 +37,9 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
     stagedCount > 0 &&
     draft.summary.trim() !== "" &&
     !committing &&
+    !pushing &&
     !generating;
-  const canGenerate = stagedCount > 0 && !committing && !generating;
+  const canGenerate = stagedCount > 0 && !committing && !pushing && !generating;
 
   // Fills the summary and description from the user's agent CLI. Nothing is committed.
   async function generate() {
@@ -69,7 +75,27 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
       setError(errorMessage(caught));
     } finally {
       setCommitting(false);
-      await useChangesStore.getState().refresh(worktreePath);
+      await Promise.all([
+        useChangesStore.getState().refresh(worktreePath),
+        useBranchSyncStore.getState().refresh(worktreePath),
+      ]);
+    }
+  }
+
+  // Sends the branch to its remote, publishing it first when the remote has none. Never forces.
+  async function push() {
+    if (action.kind !== "push" || pushing) return;
+    setPushing(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await unwrap(commands.pushBranch(worktreePath));
+      setNotice(copy.changes.pushed(action.remote));
+    } catch (caught) {
+      setError(`${copy.changes.pushFailed}: ${errorMessage(caught)}`);
+    } finally {
+      setPushing(false);
+      await useBranchSyncStore.getState().refresh(worktreePath);
     }
   }
 
@@ -85,7 +111,7 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void commit();
+        void (action.kind === "push" ? push() : commit());
       }}
       className="shrink-0 space-y-1.5 border-t border-sidebar-border p-2"
     >
@@ -137,11 +163,23 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
           {generating
             ? copy.changes.generating
             : (notice ??
-              (stagedCount === 0 ? copy.changes.nothingStaged : null))}
+              (action.kind === "push"
+                ? action.publish
+                  ? copy.changes.publishTo(action.remote)
+                  : copy.changes.commitsToPush(action.ahead, action.remote)
+                : stagedCount === 0
+                  ? copy.changes.nothingStaged
+                  : null))}
         </p>
-        <Button type="submit" size="sm" disabled={!canCommit}>
-          {committing ? copy.changes.committing : copy.changes.commit}
-        </Button>
+        {action.kind === "push" ? (
+          <Button type="submit" size="sm" disabled={pushing || committing}>
+            {pushing ? copy.changes.pushing : copy.changes.push}
+          </Button>
+        ) : (
+          <Button type="submit" size="sm" disabled={!canCommit}>
+            {committing ? copy.changes.committing : copy.changes.commit}
+          </Button>
+        )}
       </div>
       {error && (
         <p role="alert" className="text-meta break-words text-destructive">

@@ -400,6 +400,14 @@ export const copy = {
     committing: "Committing…",
     commitFailed: "Could not commit",
     nothingStaged: "Stage a file to commit.",
+    push: "Push",
+    pushing: "Pushing…",
+    pushFailed: "Could not push",
+    pushed: (remote: string) => `Pushed to ${remote}.`,
+    commitsToPush: (count: number, remote: string) =>
+      `${count} ${count === 1 ? "commit" : "commits"} to push to ${remote}`,
+    publishTo: (remote: string) =>
+      `This branch is not on ${remote} yet. Push creates it there.`,
     generate: "Generate message with AI",
     generating: "Generating a message…",
     generateFailed: "Could not generate a message",

@@ -64,6 +64,8 @@ pub enum AppError {
     GitHubRemote(#[from] crate::pull_request::github_remote::GitHubRemoteError),
     #[error("only https links can be opened")]
     InvalidLink,
+    #[error("{0}")]
+    PushUnavailable(&'static str),
     #[error("could not open the link: {0}")]
     OpenLink(#[source] std::io::Error),
     #[error(transparent)]
@@ -94,6 +96,7 @@ pub enum IpcErrorKind {
     GhNoRemote,
     PullRequest,
     InvalidLink,
+    PushUnavailable,
     InvalidRepoName,
     RemoteNameTaken,
     RemoteAlreadyExists,
@@ -139,6 +142,7 @@ impl From<AppError> for IpcError {
                 _ => IpcErrorKind::PullRequest,
             },
             AppError::InvalidLink => IpcErrorKind::InvalidLink,
+            AppError::PushUnavailable(_) => IpcErrorKind::PushUnavailable,
             AppError::GitHubRemote(error) => match error {
                 GitHubRemoteError::NotInstalled => IpcErrorKind::GhNotInstalled,
                 GitHubRemoteError::NotLoggedIn => IpcErrorKind::GhNotLoggedIn,

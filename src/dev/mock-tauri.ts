@@ -218,6 +218,9 @@ function stageMockChange(path: string): void {
 /** Worktrees whose repository got a GitHub remote from the dialog during this session. */
 const remoteCreated = new Set<string>();
 
+/** Commits the mock branch has that its upstream lacks: a commit adds one, a push clears them. */
+let mockAhead = 0;
+
 interface MockChange {
   path: string;
   originalPath: string | null;
@@ -626,6 +629,30 @@ export function installMockTauri(scenario: string): void {
           }
           return null;
         }
+        case "get_branch_sync": {
+          await delay(40);
+          const path = String(args.worktreePath);
+          if (path.endsWith("fix-pty")) {
+            return {
+              branch: "fix/pty",
+              upstream: null,
+              ahead: 0,
+              behind: 0,
+              remote: remoteCreated.has(path) ? "origin" : null,
+            };
+          }
+          return {
+            branch: "feat/auth",
+            upstream: "origin/feat/auth",
+            ahead: mockAhead,
+            behind: 0,
+            remote: "origin",
+          };
+        }
+        case "push_branch":
+          await delay(200);
+          mockAhead = 0;
+          return null;
         case "get_github_account":
           await delay(60);
           return { login: "zdearo", organizations: ["acme"] };
@@ -670,6 +697,7 @@ export function installMockTauri(scenario: string): void {
           };
         case "commit_changes":
           await delay(120);
+          mockAhead += 1;
           // What was staged is now in a commit: it leaves the list unless the working tree changed it again.
           MOCK_CHANGES = MOCK_CHANGES.flatMap((change) => {
             if (!change.staged) return [change];

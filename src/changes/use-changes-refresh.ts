@@ -1,3 +1,4 @@
+import { useBranchSyncStore } from "@/changes/branch-sync-store";
 import { useChangesStore } from "@/changes/changes-store";
 import { useRefreshWhileVisible } from "@/lib/use-refresh-while-visible";
 
@@ -8,7 +9,10 @@ const POLL_MS = 4000;
 export function useChangesRefresh(worktreePath: string | null) {
   useRefreshWhileVisible(
     worktreePath,
-    (path) => void useChangesStore.getState().refresh(path),
+    (path) => {
+      void useChangesStore.getState().refresh(path);
+      void useBranchSyncStore.getState().refresh(path);
+    },
     POLL_MS,
   );
 }

@@ -2939,6 +2939,46 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 });
 
+// After a commit, the button under the file list becomes Push while the remote lacks commits.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Changes", exact: true }).click();
+  await p.waitForTimeout(600);
+
+  const commit = p.getByRole("button", { name: "Commit", exact: true });
+  const push = p.getByRole("button", { name: "Push", exact: true });
+  check(
+    "with files staged and nothing to push, the button is Commit",
+    (await commit.count()) === 1 && (await push.count()) === 0,
+  );
+
+  await p
+    .getByRole("textbox", { name: "Commit summary" })
+    .fill("Fix the label");
+  await commit.click();
+  await p.waitForTimeout(700);
+  check(
+    "once the index is empty and a commit is waiting, the button becomes Push",
+    (await push.count()) === 1 && (await commit.count()) === 0,
+  );
+  check(
+    "the commit box says what a push sends",
+    (await p.getByText("1 commit to push to origin").count()) === 1,
+  );
+
+  await push.click();
+  await p.waitForTimeout(700);
+  check(
+    "after the push the button is Commit again and the push is reported",
+    (await commit.count()) === 1 &&
+      (await push.count()) === 0 &&
+      (await p.getByText("Pushed to origin.").count()) === 1,
+  );
+});
+
 console.log(results.join("\n"));
 await browser.close();
 vite.kill();

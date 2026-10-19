@@ -1,6 +1,7 @@
 mod agents;
 mod app_info;
 mod blocking_task;
+mod bounded_command;
 mod changes;
 mod config;
 mod error;
@@ -8,6 +9,7 @@ mod files;
 mod git;
 mod ipc;
 mod persistence;
+mod pull_request;
 mod terminal;
 mod workspace;
 

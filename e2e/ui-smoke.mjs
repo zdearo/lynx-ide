@@ -2816,6 +2816,129 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 });
 
+// The Pull request tab: the branch's PR, its checks, and the link to GitHub.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Pull request", exact: true }).click();
+  await p.waitForTimeout(600);
+
+  check(
+    "the tab shows the pull request of the branch, with its number and title",
+    (await p.getByRole("heading", { name: /^#42 fix\(auth\)/ }).count()) === 1,
+  );
+  check(
+    "the checks are counted by state",
+    (await p.getByText("1 passed · 1 failed · 1 pending").count()) === 1,
+  );
+  const checks = p.getByRole("region", { name: "Checks" });
+  check(
+    "a failing check comes first in the list",
+    ((await checks.getByRole("listitem").first().textContent()) ?? "").includes(
+      "CI / test",
+    ),
+  );
+  check(
+    "the state of each check is written out, not only drawn",
+    (await p.getByText("Skipped", { exact: true }).count()) === 1,
+  );
+
+  await p.getByRole("button", { name: "Open on GitHub" }).click();
+  await p.waitForTimeout(300);
+  check(
+    "Open on GitHub asks the backend for the pull request link",
+    (await p.getByRole("alert").count()) === 0,
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the pull request shown",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+});
+
+// A repository with no GitHub remote: the panel offers to create one, and the dialog creates it.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: /^fix\/pty/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+Shift+E");
+  await p.waitForTimeout(500);
+  await p.getByRole("tab", { name: "Pull request", exact: true }).click();
+  await p.waitForTimeout(600);
+
+  const createButton = p.getByRole("button", {
+    name: "Create remote",
+    exact: true,
+  });
+  check(
+    "without a GitHub remote, Create remote sits beside Retry",
+    (await createButton.count()) === 1 &&
+      (await p.getByRole("button", { name: "Retry", exact: true }).count()) ===
+        1,
+  );
+
+  await createButton.click();
+  await p.waitForTimeout(500);
+  const dialog = p.getByRole("dialog");
+  check(
+    "the dialog opens with the signed-in account, the folder name and private selected",
+    (
+      await dialog.getByRole("combobox", { name: "Account" }).innerText()
+    ).includes("zdearo") &&
+      (await dialog
+        .getByRole("textbox", { name: "Repository name" })
+        .inputValue()) === "lynx-ide" &&
+      (await dialog.getByRole("radio", { name: /Private/ }).isChecked()) ===
+        true &&
+      (await dialog.getByRole("switch").isChecked()) === true,
+  );
+
+  const name = dialog.getByRole("textbox", { name: "Repository name" });
+  const confirm = dialog.getByRole("button", {
+    name: "Create repository",
+    exact: true,
+  });
+  await name.fill("has space");
+  check(
+    "a name GitHub would refuse keeps Create repository off",
+    await confirm.isDisabled(),
+  );
+  await name.fill("lynx-ide-remote");
+  check("a valid name turns Create repository on", await confirm.isEnabled());
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations in the create remote dialog",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await confirm.click();
+  await p.waitForTimeout(700);
+  check(
+    "confirming creates the remote and the pull request panel reads the branch again",
+    (await p.getByRole("dialog").count()) === 0 &&
+      (await p
+        .getByText("This branch has no pull request on GitHub.")
+        .count()) === 1,
+  );
+});
+
 console.log(results.join("\n"));
 await browser.close();
 vite.kill();

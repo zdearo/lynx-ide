@@ -68,6 +68,24 @@ export const commands = {
 	 *  The agent and the style come from the Git settings, read when the draft starts.
 	 */
 	draftCommitMessage: (worktreePath: string) => typedError<DraftedMessage, IpcError>(__TAURI_INVOKE("draft_commit_message", { worktreePath })),
+	/**  The pull request of a worktree's branch, or `None` when the branch has none. */
+	getPullRequest: (worktreePath: string) => typedError<{
+	number: number,
+	title: string,
+	url: string,
+	state: PullRequestState,
+	isDraft: boolean,
+	/**  `None` when nobody has reviewed it yet, or the repository does not require reviews. */
+	review: ReviewDecision | null,
+	headBranch: string,
+	checks: PullRequestCheck[],
+} | null, IpcError>(__TAURI_INVOKE("get_pull_request", { worktreePath })),
+	/**  Opens a pull request's page in the browser. Only `https` links are opened. */
+	openPullRequestUrl: (url: string) => typedError<null, IpcError>(__TAURI_INVOKE("open_pull_request_url", { url })),
+	/**  The login and organizations `gh` is signed in with, for the account picker of the remote dialog. */
+	getGithubAccount: () => typedError<GitHubAccount, IpcError>(__TAURI_INVOKE("get_github_account")),
+	/**  Creates the GitHub repository for a local one that has no remote, and connects it as `origin`. */
+	createGithubRemote: (worktreePath: string, request: CreateRemoteRequest) => typedError<null, IpcError>(__TAURI_INVOKE("create_github_remote", { worktreePath, request })),
 };
 
 /** Events */
@@ -140,6 +158,8 @@ export type ChangedFile = {
 	unstaged: ChangeKind | null,
 };
 
+export type CheckState = "passed" | "failed" | "pending" | "skipped";
+
 /**
  *  Themes the terminal can use. `Default` is the look the app has always had. A theme
  *  gives the background; its text palette can also be used for the text.
@@ -147,7 +167,7 @@ export type ChangedFile = {
 export type ColorScheme = "default" | "light" | "solarizedDark" | "solarizedLight" | "dracula" | "nord" | "catppuccinLatte" | "catppuccinFrappe" | "catppuccinMacchiato" | "catppuccinMocha" | "gruvboxDark" | "oneDark" | "tokyoNight" | "monokai";
 
 /**  Which agent CLI writes a commit message. `Auto` takes the first one installed. */
-export type CommitMessageAgent = "auto" | "claude" | "codex";
+export type CommitMessageAgent = "auto" | "claude" | "codex" | "opencode";
 
 /**  The style part of a commit message instruction. Lynx's output rules always follow it. */
 export type CommitMessageStyle = "conventional" | "plain" | "custom";
@@ -171,6 +191,15 @@ export type ConfigSnapshot = {
 	fileExists: boolean,
 	/**  The file exists but is not valid JSON, so settings cannot be saved over it. */
 	fileBroken: boolean,
+};
+
+/**  What the user chose in the dialog. `owner` is an account or organization name. */
+export type CreateRemoteRequest = {
+	owner: string,
+	name: string,
+	visibility: RepoVisibility,
+	/**  Pushes the current branch, so GitHub knows about it and its pull request can be found. */
+	push: boolean,
 };
 
 export type DirectoryListing = {
@@ -226,6 +255,12 @@ export type GitConfig = {
 	commitMessageInstructions: string | null,
 };
 
+/**  The account `gh` is signed in with, and the organizations it can create repositories for. */
+export type GitHubAccount = {
+	login: string,
+	organizations: string[],
+};
+
 export type HarnessId = "claude" | "codex" | "opencode" | "antigravity" | "cursor" | "copilot" | "grok" | "droid" | "kiro" | "qwen" | "pi" | "omp";
 
 export type HookInstallState = "notInstalled" | "partial" | "installed" | "error";
@@ -245,13 +280,33 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "invalidRepoName" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
 
 /**
  *  How every agent starts from a new terminal: `Manual` keeps its permission prompts, and `Yolo`
  *  adds each agent's own flag that skips them.
  */
 export type LaunchMode = "manual" | "yolo";
+
+export type PullRequest = {
+	number: number,
+	title: string,
+	url: string,
+	state: PullRequestState,
+	isDraft: boolean,
+	/**  `None` when nobody has reviewed it yet, or the repository does not require reviews. */
+	review: ReviewDecision | null,
+	headBranch: string,
+	checks: PullRequestCheck[],
+};
+
+export type PullRequestCheck = {
+	/**  `workflow / job` for a GitHub Actions job, or the context name for a commit status. */
+	name: string,
+	state: CheckState,
+};
+
+export type PullRequestState = "open" | "closed" | "merged";
 
 export type RemoveWorktreeResult = {
 	branch: string | null,
@@ -275,6 +330,10 @@ export type RepoRefs = {
 	/**  Local branches and remote-tracking branches, e.g. `main`, `origin/main`. */
 	refs: string[],
 };
+
+export type RepoVisibility = "private" | "public";
+
+export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
 
 export type TerminalConfig = {
 	/**  CSS font list tried before the bundled fonts; `None` uses the bundled ones. */

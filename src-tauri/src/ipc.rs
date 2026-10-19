@@ -9,6 +9,7 @@ use crate::changes::changes_commands as changes;
 use crate::config::config_commands as config;
 use crate::config::config_events::ConfigChanged;
 use crate::files::files_commands as files;
+use crate::pull_request::pull_request_commands as pull_request;
 use crate::terminal::terminal_commands as terminal;
 use crate::terminal::terminal_events::{AgentStatusChanged, TerminalExit, TerminalOutput};
 use crate::workspace::workspace_commands as workspace;
@@ -58,6 +59,10 @@ pub fn builder() -> Builder<tauri::Wry> {
             changes::unstage_change,
             changes::commit_changes,
             changes::draft_commit_message,
+            pull_request::get_pull_request,
+            pull_request::open_pull_request_url,
+            pull_request::get_github_account,
+            pull_request::create_github_remote,
         ])
         .events(collect_events![
             TerminalOutput,

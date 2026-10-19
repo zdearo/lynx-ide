@@ -89,16 +89,34 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
       }}
       className="shrink-0 space-y-1.5 border-t border-sidebar-border p-2"
     >
-      <Input
-        aria-label={copy.changes.summaryLabel}
-        placeholder={copy.changes.summaryPlaceholder}
-        value={draft.summary}
-        onChange={(event) =>
-          useCommitDraftStore
-            .getState()
-            .update(worktreePath, { summary: event.target.value })
-        }
-      />
+      <div className="relative">
+        <Input
+          aria-label={copy.changes.summaryLabel}
+          placeholder={copy.changes.summaryPlaceholder}
+          value={draft.summary}
+          className="pr-9"
+          onChange={(event) =>
+            useCommitDraftStore
+              .getState()
+              .update(worktreePath, { summary: event.target.value })
+          }
+        />
+        <TooltipIconButton
+          label={copy.changes.generate}
+          tooltipSide="top"
+          variant="outline"
+          disabled={!canGenerate}
+          aria-busy={generating}
+          className="absolute top-1/2 right-1 size-6 -translate-y-1/2 bg-background"
+          onClick={() => void generate()}
+        >
+          {generating ? (
+            <Loader2Glyph18 className="animate-spin" />
+          ) : (
+            <SparkleGlyph18 />
+          )}
+        </TooltipIconButton>
+      </div>
       <Textarea
         aria-label={copy.changes.descriptionLabel}
         placeholder={copy.changes.descriptionPlaceholder}
@@ -112,19 +130,6 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
         onKeyDown={onDescriptionKeyDown}
       />
       <div className="flex items-center gap-1.5">
-        <TooltipIconButton
-          label={copy.changes.generate}
-          tooltipSide="top"
-          disabled={!canGenerate}
-          aria-busy={generating}
-          onClick={() => void generate()}
-        >
-          {generating ? (
-            <Loader2Glyph18 className="animate-spin" />
-          ) : (
-            <SparkleGlyph18 />
-          )}
-        </TooltipIconButton>
         <p
           role="status"
           className="min-w-0 flex-1 truncate text-meta text-muted-foreground"

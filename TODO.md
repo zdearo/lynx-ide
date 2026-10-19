@@ -156,7 +156,7 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 
 - [ ] Quick open de arquivos do worktree
 - [ ] Jump palette entre worktrees, abas e sessões
-- [ ] Integração com GitHub: PR e checks ligados ao worktree
+- [ ] Integração com GitHub: PR e checks ligados ao worktree. Identificação feita (aba Pull request, via `gh`); criar, mesclar e comentar ficam para depois
 - [ ] Integração com GitLab, Linear e Jira **(?)** ordem de prioridade
 - [ ] Visualizador de arquivos e preview de markdown e imagens
 - [ ] Arrastar arquivo para o terminal do agente

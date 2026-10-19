@@ -8,6 +8,7 @@ const AGENT_OPTIONS: ChoiceOption[] = [
   { value: "auto", label: copy.settings.git.agent.auto },
   { value: "claude", label: copy.settings.git.agent.claude },
   { value: "codex", label: copy.settings.git.agent.codex },
+  { value: "opencode", label: copy.settings.git.agent.opencode },
 ];
 
 const STYLE_OPTIONS: ChoiceOption[] = [
@@ -17,7 +18,12 @@ const STYLE_OPTIONS: ChoiceOption[] = [
 ];
 
 function isAgent(value: string | null): value is CommitMessageAgent {
-  return value === "auto" || value === "claude" || value === "codex";
+  return (
+    value === "auto" ||
+    value === "claude" ||
+    value === "codex" ||
+    value === "opencode"
+  );
 }
 
 function isStyle(value: string | null): value is CommitMessageStyle {

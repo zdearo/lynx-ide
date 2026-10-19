@@ -215,6 +215,9 @@ function stageMockChange(path: string): void {
   }
 }
 
+/** Worktrees whose repository got a GitHub remote from the dialog during this session. */
+const remoteCreated = new Set<string>();
+
 interface MockChange {
   path: string;
   originalPath: string | null;
@@ -623,6 +626,41 @@ export function installMockTauri(scenario: string): void {
           }
           return null;
         }
+        case "get_github_account":
+          await delay(60);
+          return { login: "zdearo", organizations: ["acme"] };
+        case "create_github_remote":
+          await delay(300);
+          remoteCreated.add(String(args.worktreePath));
+          return null;
+        case "get_pull_request": {
+          await delay(120);
+          const path = String(args.worktreePath);
+          // The fix/pty worktree has no GitHub remote until the dialog creates one.
+          if (path.endsWith("fix-pty") && !remoteCreated.has(path)) {
+            throw { kind: "ghNoRemote", message: "no git remotes found" };
+          }
+          // Only the feat/auth worktree has a pull request in the mock; the others have none.
+          if (!path.endsWith("feat-auth")) return null;
+          return {
+            number: 42,
+            title: "fix(auth): refresh the token before it expires",
+            url: "https://github.com/acme/app/pull/42",
+            state: "open",
+            isDraft: false,
+            review: "reviewRequired",
+            headBranch: "feat/auth",
+            checks: [
+              { name: "CI / test", state: "failed" },
+              { name: "CI / build", state: "pending" },
+              { name: "CI / lint", state: "passed" },
+              { name: "CI / docs", state: "skipped" },
+            ],
+          };
+        }
+        case "open_pull_request_url":
+          await delay(40);
+          return null;
         case "draft_commit_message":
           await delay(200);
           return {

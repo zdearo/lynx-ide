@@ -1,16 +1,15 @@
 //! A commit message drafted by the user's own agent CLI, run read-only over the staged diff.
 //! Lynx does not call a model API: it asks whichever supported CLI is installed.
 
-use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use serde::Serialize;
 use specta::Type;
 
 use crate::agents::agent_catalog::on_path;
+use crate::bounded_command::{BoundedError, run_bounded};
 use crate::config::app_config::CommitMessageAgent;
 use crate::git::git_command::git;
 
@@ -54,8 +53,8 @@ struct Agent {
     args: &'static [&'static str],
 }
 
-/// In the order Lynx prefers them. Both read the prompt from stdin, which takes large diffs.
-const AGENTS: [Agent; 2] = [
+/// In the order Lynx prefers them. All read the prompt from stdin, which takes large diffs.
+const AGENTS: [Agent; 3] = [
     Agent {
         id: CommitMessageAgent::Claude,
         label: "Claude Code",
@@ -73,6 +72,13 @@ const AGENTS: [Agent; 2] = [
             "-s",
             "read-only",
         ],
+    },
+    // OpenCode's `json` format would wrap the answer in events, so the plain text format is asked for.
+    Agent {
+        id: CommitMessageAgent::Opencode,
+        label: "OpenCode",
+        binary: "opencode",
+        args: &["run", "--format", "default"],
     },
 ];
 
@@ -167,70 +173,26 @@ fn run_agent(
     } else {
         Command::new(agent.binary)
     };
-    command
-        .args(agent.args)
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = command.spawn().map_err(|source| {
-        if source.kind() == std::io::ErrorKind::NotFound {
-            DraftError::NoAgent
-        } else {
-            DraftError::Spawn {
+    command.args(agent.args).current_dir(root);
+    let output =
+        run_bounded(&mut command, prompt.as_bytes(), timeout).map_err(|error| match error {
+            BoundedError::TimedOut => DraftError::TimedOut { agent: agent.label },
+            BoundedError::Spawn(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                DraftError::NoAgent
+            }
+            BoundedError::Spawn(source) => DraftError::Spawn {
                 agent: agent.label,
                 source,
-            }
-        }
-    })?;
+            },
+        })?;
 
-    // Written on its own thread: the agent may start answering before it has read everything.
-    let mut stdin = child.stdin.take();
-    let input = prompt.as_bytes().to_vec();
-    let writer = thread::spawn(move || {
-        if let Some(stdin) = stdin.as_mut() {
-            let _ = stdin.write_all(&input);
-        }
-    });
-    let read = |pipe: Option<Box<dyn std::io::Read + Send>>| {
-        thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = std::io::Read::read_to_end(&mut pipe, &mut bytes);
-            }
-            bytes
-        })
-    };
-    let stdout = read(child.stdout.take().map(|pipe| Box::new(pipe) as _));
-    let stderr = read(child.stderr.take().map(|pipe| Box::new(pipe) as _));
-
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|source| DraftError::Spawn {
-            agent: agent.label,
-            source,
-        })? {
-            break status;
-        }
-        if started.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(DraftError::TimedOut { agent: agent.label });
-        }
-        thread::sleep(Duration::from_millis(50));
-    };
-    let _ = writer.join();
-    let stdout = stdout.join().unwrap_or_default();
-    let stderr = stderr.join().unwrap_or_default();
-
-    if !status.success() {
+    if !output.status.success() {
         return Err(DraftError::Failed {
             agent: agent.label,
-            stderr: String::from_utf8_lossy(&stderr).trim().to_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         });
     }
-    Ok(String::from_utf8_lossy(&stdout).into_owned())
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Drafts a message for what is staged. `style` is the instruction text; the app adds its own
@@ -287,6 +249,17 @@ mod tests {
         assert!(matches!(
             choose_agent(CommitMessageAgent::Codex, |binary| binary == "claude"),
             Err(DraftError::NotInstalled { agent: "Codex" })
+        ));
+    }
+
+    #[test]
+    fn opencode_is_chosen_by_name_and_reported_by_its_label() {
+        let opencode = choose_agent(CommitMessageAgent::Opencode, |binary| binary == "opencode");
+        assert_eq!(opencode.expect("opencode").binary, "opencode");
+
+        assert!(matches!(
+            choose_agent(CommitMessageAgent::Opencode, |_| false),
+            Err(DraftError::NotInstalled { agent: "OpenCode" })
         ));
     }
 

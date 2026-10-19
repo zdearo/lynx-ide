@@ -125,6 +125,7 @@ pub enum CommitMessageAgent {
     Auto,
     Claude,
     Codex,
+    Opencode,
 }
 
 /// The style part of a commit message instruction. Lynx's output rules always follow it.
@@ -406,10 +407,11 @@ fn commit_message_agent(
         "auto" => Some(CommitMessageAgent::Auto),
         "claude" => Some(CommitMessageAgent::Claude),
         "codex" => Some(CommitMessageAgent::Codex),
+        "opencode" => Some(CommitMessageAgent::Opencode),
         _ => {
             issues.push(ConfigIssue::new(
                 "git.commitMessageAgent",
-                "must be auto, claude or codex",
+                "must be auto, claude, codex or opencode",
             ));
             None
         }
@@ -906,6 +908,20 @@ mod tests {
             CommitMessageStyle::Conventional
         );
         assert_eq!(config.git.commit_message_instructions, None);
+    }
+
+    #[test]
+    fn opencode_is_a_commit_message_agent_and_the_error_lists_all_of_them() {
+        let (config, issues) = parse(json!({ "git": { "commitMessageAgent": "opencode" } }));
+        assert!(issues.is_empty());
+        assert_eq!(
+            config.git.commit_message_agent,
+            CommitMessageAgent::Opencode
+        );
+
+        let (_, issues) = parse(json!({ "git": { "commitMessageAgent": "gemini" } }));
+        assert_eq!(keys(&issues), ["git.commitMessageAgent"]);
+        assert!(issues[0].message.contains("opencode"));
     }
 
     #[test]

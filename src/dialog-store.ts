@@ -25,6 +25,8 @@ interface DialogState {
   closeTerminalId: string | null;
   /** A file with unsaved changes the user is asked to confirm closing. */
   closeFileTarget: { worktreePath: string; path: string } | null;
+  /** Worktree whose repository gets a GitHub remote, once the user confirms. */
+  createRemoteFor: string | null;
 
   askCustomCommand: (worktreePath: string | null) => void;
   askRemoveWorktree: (
@@ -37,6 +39,7 @@ interface DialogState {
   askAddProject: (open: boolean) => void;
   askCloseTerminal: (id: string | null) => void;
   askCloseFile: (target: { worktreePath: string; path: string } | null) => void;
+  askCreateRemote: (worktreePath: string | null) => void;
 }
 
 export const useDialogStore = create<DialogState>((set) => ({
@@ -49,6 +52,7 @@ export const useDialogStore = create<DialogState>((set) => ({
   addProjectOpen: false,
   closeTerminalId: null,
   closeFileTarget: null,
+  createRemoteFor: null,
 
   askCustomCommand: (customCommandFor) => set({ customCommandFor }),
   askRemoveWorktree: (removeWorktreeTarget) => set({ removeWorktreeTarget }),
@@ -59,4 +63,5 @@ export const useDialogStore = create<DialogState>((set) => ({
   askAddProject: (addProjectOpen) => set({ addProjectOpen }),
   askCloseTerminal: (closeTerminalId) => set({ closeTerminalId }),
   askCloseFile: (closeFileTarget) => set({ closeFileTarget }),
+  askCreateRemote: (createRemoteFor) => set({ createRemoteFor }),
 }));

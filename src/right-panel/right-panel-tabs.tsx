@@ -1,10 +1,12 @@
 import type { ComponentType } from "react";
 import { ChangesPanel } from "@/changes/ChangesPanel";
 import { CodeCompareGlyph18 } from "@/components/icons/CodeCompareGlyph18";
+import { CodePullRequestGlyph18 } from "@/components/icons/CodePullRequestGlyph18";
 import { FolderTreeGlyph18 } from "@/components/icons/FolderTreeGlyph18";
 import type { IconComponent } from "@/components/icons/icon-component";
 
 import { FilesPanel } from "@/files/FilesPanel";
+import { PullRequestPanel } from "@/pull-request/PullRequestPanel";
 import type { RightPanelTabId } from "@/right-panel/right-panel-store";
 import { copy } from "@/ui-copy";
 
@@ -28,5 +30,11 @@ export const RIGHT_PANEL_TABS: readonly RightPanelTab[] = [
     label: copy.changes.title,
     icon: CodeCompareGlyph18,
     panel: ChangesPanel,
+  },
+  {
+    id: "pull-request",
+    label: copy.pullRequest.tab,
+    icon: CodePullRequestGlyph18,
+    panel: PullRequestPanel,
   },
 ];

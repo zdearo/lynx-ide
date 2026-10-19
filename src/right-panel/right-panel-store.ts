@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 /** The tabs of the right-hand panel. */
-export type RightPanelTabId = "files" | "changes";
+export type RightPanelTabId = "files" | "changes" | "pull-request";
 
 const DOCKED_OPEN_KEY = "lynx-ide.rightPanelOpen";
 

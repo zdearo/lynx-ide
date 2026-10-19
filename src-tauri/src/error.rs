@@ -8,6 +8,8 @@ use crate::config::config_store::ConfigError;
 use crate::files::files_error::FilesError;
 use crate::git::GitError;
 use crate::persistence::DatabaseError;
+use crate::pull_request::github_remote::GitHubRemoteError;
+use crate::pull_request::pull_request_lookup::PullRequestError;
 use crate::terminal::TerminalError;
 
 #[derive(Debug, thiserror::Error)]
@@ -57,6 +59,14 @@ pub enum AppError {
     #[error(transparent)]
     CommitDraft(#[from] crate::changes::commit_message_draft::DraftError),
     #[error(transparent)]
+    PullRequest(#[from] crate::pull_request::pull_request_lookup::PullRequestError),
+    #[error(transparent)]
+    GitHubRemote(#[from] crate::pull_request::github_remote::GitHubRemoteError),
+    #[error("only https links can be opened")]
+    InvalidLink,
+    #[error("could not open the link: {0}")]
+    OpenLink(#[source] std::io::Error),
+    #[error(transparent)]
     AgentHooks(#[from] HookInstallError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
@@ -79,6 +89,15 @@ pub enum IpcErrorKind {
     InvalidName,
     InvalidCommit,
     CommitDraft,
+    GhNotInstalled,
+    GhNotLoggedIn,
+    GhNoRemote,
+    PullRequest,
+    InvalidLink,
+    InvalidRepoName,
+    RemoteNameTaken,
+    RemoteAlreadyExists,
+    GitHub,
     AlreadyExists,
     WorktreeHasChanges,
     CannotRemoveMainWorktree,
@@ -113,6 +132,22 @@ impl From<AppError> for IpcError {
             AppError::InvalidName(_) => IpcErrorKind::InvalidName,
             AppError::InvalidCommit(_) => IpcErrorKind::InvalidCommit,
             AppError::CommitDraft(_) => IpcErrorKind::CommitDraft,
+            AppError::PullRequest(error) => match error {
+                PullRequestError::NotInstalled => IpcErrorKind::GhNotInstalled,
+                PullRequestError::NotLoggedIn => IpcErrorKind::GhNotLoggedIn,
+                PullRequestError::NoRemote => IpcErrorKind::GhNoRemote,
+                _ => IpcErrorKind::PullRequest,
+            },
+            AppError::InvalidLink => IpcErrorKind::InvalidLink,
+            AppError::GitHubRemote(error) => match error {
+                GitHubRemoteError::NotInstalled => IpcErrorKind::GhNotInstalled,
+                GitHubRemoteError::NotLoggedIn => IpcErrorKind::GhNotLoggedIn,
+                GitHubRemoteError::InvalidRepoName(_) => IpcErrorKind::InvalidRepoName,
+                GitHubRemoteError::NameTaken => IpcErrorKind::RemoteNameTaken,
+                GitHubRemoteError::RemoteExists => IpcErrorKind::RemoteAlreadyExists,
+                GitHubRemoteError::TimedOut | GitHubRemoteError::Failed(_) => IpcErrorKind::GitHub,
+            },
+            AppError::OpenLink(_) => IpcErrorKind::FileSystem,
             AppError::AlreadyExists(_) => IpcErrorKind::AlreadyExists,
             AppError::WorktreeHasChanges => IpcErrorKind::WorktreeHasChanges,
             AppError::CannotRemoveMainWorktree => IpcErrorKind::CannotRemoveMainWorktree,

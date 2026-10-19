@@ -172,10 +172,11 @@ export const copy = {
       title: "Git",
       agent: {
         label: "Commit message agent",
-        hint: "The agent CLI that writes a commit message from the staged changes. Automatic uses the first one installed: Claude Code, then Codex.",
+        hint: "The agent CLI that writes a commit message from the staged changes. Automatic uses the first one installed: Claude Code, then Codex, then OpenCode.",
         auto: "Automatic",
         claude: "Claude Code",
         codex: "Codex",
+        opencode: "OpenCode",
       },
       style: {
         label: "Commit message style",
@@ -279,6 +280,85 @@ export const copy = {
     split: "Split",
     // CodeMirror puts the number of hidden lines where the $ is.
     unchanged: "$ unchanged lines",
+  },
+
+  pullRequest: {
+    tab: "Pull request",
+    title: "Pull request",
+    noWorktree: "Select a worktree to see its pull request.",
+    loading: "Looking for the pull request…",
+    none: "This branch has no pull request on GitHub.",
+    refresh: "Refresh",
+    retry: "Retry",
+    branch: (name: string) => `Branch ${name}`,
+    openOnGitHub: "Open on GitHub",
+    openFailed: "Could not open the link",
+    badge: {
+      draft: "Draft",
+      open: "Open",
+      merged: "Merged",
+      closed: "Closed",
+    },
+    review: {
+      none: "No review yet",
+      approved: "Approved",
+      changesRequested: "Changes requested",
+      reviewRequired: "Review required",
+    },
+    checks: {
+      title: "Checks",
+      none: "No checks on this pull request.",
+      summary: (passed: number, failed: number, pending: number) =>
+        `${passed} passed · ${failed} failed · ${pending} pending`,
+      passed: "Passed",
+      failed: "Failed",
+      pending: "Pending",
+      skipped: "Skipped",
+    },
+    error: {
+      title: "Could not read the pull request",
+      notInstalled: "Install the GitHub CLI (gh) to see pull requests here.",
+      notLoggedIn: "Run gh auth login in a terminal, then refresh.",
+      noRemote: "This repository has no GitHub remote.",
+      internal: "Something went wrong while reading the pull request.",
+    },
+    createRemote: {
+      button: "Create remote",
+      title: "Create a GitHub remote",
+      description:
+        "Creates a repository on GitHub and connects this repository to it as origin.",
+      account: "Account",
+      name: "Repository name",
+      nameHint:
+        "Letters, digits, hyphens, underscores and dots. The folder name is a good start.",
+      visibility: "Visibility",
+      visibilityOptions: {
+        private: "Private",
+        public: "Public",
+      },
+      visibilityHints: {
+        private: "Only people you invite can see the code.",
+        public: "Anyone on the internet can see the code.",
+      },
+      push: "Push this branch",
+      pushHint:
+        "Sends the current branch to the new repository, so its pull request can be found.",
+      cancel: "Cancel",
+      confirm: "Create repository",
+      creating: "Creating…",
+      created: "Remote created",
+      loadFailed: "Could not read the GitHub account",
+      error: {
+        notInstalled: "Install the GitHub CLI (gh) to create repositories.",
+        notLoggedIn: "Run gh auth login in a terminal, then try again.",
+        invalidName:
+          "The account or repository name has characters GitHub does not allow.",
+        nameTaken:
+          "A repository with that name already exists on this account.",
+        remoteExists: "This repository already has a remote named origin.",
+        failed: "Could not create the repository",
+      },
+    },
   },
 
   changes: {

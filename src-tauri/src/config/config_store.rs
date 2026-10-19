@@ -13,7 +13,7 @@ use crate::agents::harness::{HarnessId, harness_name, supported};
 
 use super::app_config::{
     AppConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, GitConfig, LaunchMode,
-    TerminalConfig, expand_home, parse_config,
+    NotificationsConfig, TerminalConfig, expand_home, parse_config,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -341,6 +341,22 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
         (config.agents.launch_mode != LaunchMode::Manual).then(|| json!("yolo")),
     );
     put_launch_arguments(root, &config.agents.launch_arguments);
+    let notifications = &config.notifications;
+    let notification_defaults = NotificationsConfig::default();
+    put(
+        root,
+        "notifications",
+        "onDone",
+        (notifications.on_done != notification_defaults.on_done)
+            .then(|| json!(notifications.on_done)),
+    );
+    put(
+        root,
+        "notifications",
+        "onNeedsYou",
+        (notifications.on_needs_you != notification_defaults.on_needs_you)
+            .then(|| json!(notifications.on_needs_you)),
+    );
     let git = &config.git;
     let git_defaults = GitConfig::default();
     put(
@@ -512,6 +528,27 @@ mod tests {
         assert_eq!(
             file_json(&store),
             json!({ "terminal": { "copyOnSelect": true, "bell": "none", "confirmClose": true } })
+        );
+
+        store.update(AppConfig::default()).expect("reset");
+        assert_eq!(file_json(&store), json!({}));
+    }
+
+    #[test]
+    fn a_turned_off_notification_is_written_and_back_on_removes_the_key() {
+        let (store, _dir) = setup();
+        let quiet = AppConfig {
+            notifications: NotificationsConfig {
+                on_done: false,
+                ..NotificationsConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        store.update(quiet).expect("set");
+        assert_eq!(
+            file_json(&store),
+            json!({ "notifications": { "onDone": false } })
         );
 
         store.update(AppConfig::default()).expect("reset");

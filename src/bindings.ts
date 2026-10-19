@@ -194,6 +194,7 @@ export type AppConfig = {
 	worktrees: WorktreesConfig,
 	agents: AgentsConfig,
 	git: GitConfig,
+	notifications: NotificationsConfig,
 };
 
 export type AppInfo = {
@@ -467,6 +468,14 @@ export type MergeState =
 "conflicting" | 
 /**  A draft, or checks are still running or failing. */
 "unstable" | "unknown";
+
+/**  When Lynx sends a system notification about an agent, while the window is not in front. */
+export type NotificationsConfig = {
+	/**  An agent finished its work. */
+	onDone: boolean,
+	/**  An agent is waiting for an answer or a permission. */
+	onNeedsYou: boolean,
+};
 
 /**  How a pull joins the remote's commits. */
 export type PullKind = 

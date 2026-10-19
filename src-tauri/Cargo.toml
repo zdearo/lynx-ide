@@ -31,6 +31,7 @@ portable-pty = "0.9.0"
 open = "5.4.4"
 toml_edit = "0.25.17"
 sha2 = "0.10"
+tauri-plugin-notification = "2.7.0"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

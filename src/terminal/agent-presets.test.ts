@@ -44,6 +44,7 @@ const config: AppConfig = {
   terminal: DEFAULT_TERMINAL_CONFIG,
   worktrees: { directory: null },
   agents: { launchMode: "manual", launchArguments: {} },
+  notifications: { onDone: true, onNeedsYou: true },
   git: {
     commitMessageAgent: "auto",
     commitMessageStyle: "conventional",

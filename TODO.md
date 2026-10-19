@@ -163,7 +163,8 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 - [ ] Integração com GitLab (`glab`), Linear e Jira **(?)** ordem de prioridade
 - [ ] Visualizador de arquivos e preview de markdown e imagens
 - [ ] Arrastar arquivo para o terminal do agente
-- [ ] Notificações do sistema e marcação de "não lido"
+- [x] Notificações do sistema (agente concluído e agente precisa de você, só com a janela fora de frente, ligadas e desligadas em Settings) e marcação de "não lido" (o `done` do agente)
+- [ ] Notificações: clicar leva ao worktree e à aba do agente; contador na janela ou no ícone; som
 
 ---
 

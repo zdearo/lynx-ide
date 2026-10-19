@@ -168,6 +168,19 @@ export const copy = {
         browse: "Choose folder…",
       },
     },
+    notifications: {
+      title: "Notifications",
+      intro:
+        "Lynx tells you through the system when an agent needs you or finishes, but only while its window is not in front. Your system must allow notifications for Lynx.",
+      done: {
+        label: "Agent finished",
+        hint: "Notify when an agent finishes its work.",
+      },
+      needsYou: {
+        label: "Agent needs you",
+        hint: "Notify when an agent waits for an answer or a permission.",
+      },
+    },
     git: {
       title: "Git",
       agent: {
@@ -597,6 +610,11 @@ export const copy = {
     generateFailed: "Could not generate a message",
     draftedWith: (agent: string) =>
       `Drafted with ${agent}. Review it before committing.`,
+  },
+
+  notifications: {
+    done: (agent: string) => `${agent} finished`,
+    needsYou: (agent: string) => `${agent} needs you`,
   },
 
   fixWithAi: {

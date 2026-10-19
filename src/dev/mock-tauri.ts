@@ -387,6 +387,7 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   worktrees: { directory: null },
   agents: { launchMode: "manual", launchArguments: {} },
+  notifications: { onDone: true, onNeedsYou: true },
   git: {
     commitMessageAgent: "auto",
     commitMessageStyle: "conventional",
@@ -604,6 +605,22 @@ export function installMockTauri(scenario: string): void {
       detail: null,
     };
   }
+
+  // What the app asked the system to show, for the e2e to read.
+  interface MockNotification {
+    title: string;
+    body?: string;
+  }
+  const sentNotifications: MockNotification[] = [];
+  // The notification plugin replaces the browser's Notification the same way inside the app.
+  class MockSystemNotification {
+    static permission: NotificationPermission = "granted";
+    static requestPermission = () => Promise.resolve("granted" as const);
+    constructor(title: string, options?: { body?: string }) {
+      sentNotifications.push({ title, body: options?.body });
+    }
+  }
+  Object.assign(window, { Notification: MockSystemNotification });
 
   function addSession(
     path: string,
@@ -1299,6 +1316,8 @@ export function installMockTauri(scenario: string): void {
         }
         case "resize_terminal":
           return null;
+        case "plugin:notification|is_permission_granted":
+          return true;
         case "close_terminal":
           sessions.splice(
             sessions.findIndex((s) => s.id === args.id),
@@ -1333,6 +1352,18 @@ export function installMockTauri(scenario: string): void {
         });
       },
       /** Ends every running program, as if each one had exited with code 0. */
+      /** Changes the status of every agent session, as if the agents had reported it. */
+      setAgentStatus(status: AgentStatus) {
+        for (const session of sessions) {
+          if (!session.harness || !session.running) continue;
+          void emit("agent-status-changed", {
+            id: session.id,
+            harness: session.harness,
+            status,
+          });
+        }
+      },
+      notifications: () => structuredClone(sentNotifications),
       endAllTerminals() {
         for (const session of sessions) {
           if (!session.running) continue;

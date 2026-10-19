@@ -24,6 +24,7 @@ const RightSidebar = lazy(() =>
 import { TerminalWorkspace } from "@/terminal/TerminalWorkspace";
 import { StatusBar } from "@/status-bar/StatusBar";
 import { copy } from "@/ui-copy";
+import { notifyAgentStatus } from "@/notifications/notify-agent-status";
 import { useAppShortcuts } from "@/use-app-shortcuts";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import {
@@ -83,6 +84,8 @@ function App() {
 
     const unlistenAgentStatus = events.agentStatusChanged.listen(
       ({ payload }) => {
+        // Before the store takes the new status, so the notification can compare with the old one.
+        void notifyAgentStatus(payload);
         useTerminalStore
           .getState()
           .setAgentState(payload.id, payload.harness, payload.status);

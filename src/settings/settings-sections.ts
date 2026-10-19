@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 
+import { BellGlyph18 } from "@/components/icons/BellGlyph18";
 import { CodeBranchGlyph18 } from "@/components/icons/CodeBranchGlyph18";
 import { FolderGlyph18 } from "@/components/icons/FolderGlyph18";
 import type { IconComponent } from "@/components/icons/icon-component";
@@ -7,6 +8,7 @@ import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
 import { TerminalGlyph18 } from "@/components/icons/TerminalGlyph18";
 import { AgentsSettings } from "@/settings/AgentsSettings";
 import { GitSettings } from "@/settings/GitSettings";
+import { NotificationsSettings } from "@/settings/NotificationsSettings";
 import { TerminalSettings } from "@/settings/TerminalSettings";
 import { WorktreesSettings } from "@/settings/WorktreesSettings";
 import { copy } from "@/ui-copy";
@@ -46,5 +48,11 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     label: copy.settings.git.title,
     icon: CodeBranchGlyph18,
     panel: GitSettings,
+  },
+  {
+    id: "notifications",
+    label: copy.settings.notifications.title,
+    icon: BellGlyph18,
+    panel: NotificationsSettings,
   },
 ];

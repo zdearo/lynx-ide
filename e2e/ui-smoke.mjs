@@ -3622,6 +3622,108 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 });
 
+// System notifications: only for done and needs-you, only while the window is not in front.
+await session("?mock=full", 1400, 800, async (p) => {
+  const sent = () => p.evaluate(() => window.__lynxMock.notifications());
+  const report = (status) =>
+    p.evaluate((next) => window.__lynxMock.setAgentStatus(next), status);
+  const inFront = (front) =>
+    p.evaluate((value) => {
+      document.hasFocus = () => value;
+    }, front);
+
+  await inFront(true);
+  await report("done");
+  await p.waitForTimeout(300);
+  check(
+    "no notification while the window is in front",
+    (await sent()).length === 0,
+  );
+
+  await inFront(false);
+  await report("working");
+  await p.waitForTimeout(200);
+  check(
+    "a working agent is not worth a notification",
+    (await sent()).length === 0,
+  );
+
+  await report("done");
+  await p.waitForTimeout(400);
+  const finished = await sent();
+  check(
+    "an agent that finishes while the window is away is announced, with its place",
+    finished.length > 0 &&
+      finished.every(
+        (item) => item.title.endsWith("finished") && item.body.includes("·"),
+      ),
+    JSON.stringify(finished),
+  );
+
+  await report("done");
+  await p.waitForTimeout(200);
+  check(
+    "the same status twice does not notify twice",
+    (await sent()).length === finished.length,
+  );
+
+  await report("needsYou");
+  await p.waitForTimeout(300);
+  const all = await sent();
+  check(
+    "an agent that needs the user is announced too",
+    all.length > finished.length &&
+      all
+        .slice(finished.length)
+        .every((item) => item.title.endsWith("needs you")),
+    JSON.stringify(all),
+  );
+
+  // Turn "Agent finished" off in Settings: only the needs-you kind stays.
+  await inFront(true);
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  await p.getByRole("tab", { name: "Notifications", exact: true }).click();
+  await p.waitForTimeout(300);
+  const finishedSwitch = p.getByRole("switch", { name: "Agent finished" });
+  check(
+    "the Notifications page has both kinds, on by default",
+    (await finishedSwitch.getAttribute("aria-checked")) === "true" &&
+      (await p
+        .getByRole("switch", { name: "Agent needs you" })
+        .getAttribute("aria-checked")) === "true",
+  );
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the Notifications page",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+  await finishedSwitch.click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(300);
+
+  await inFront(false);
+  const before = (await sent()).length;
+  await report("working");
+  await report("done");
+  await p.waitForTimeout(300);
+  check(
+    "with 'Agent finished' off, finishing is silent",
+    (await sent()).length === before,
+  );
+  await report("needsYou");
+  await p.waitForTimeout(300);
+  check("and 'Agent needs you' still speaks", (await sent()).length > before);
+});
+
 console.log(results.join("\n"));
 await browser.close();
 vite.kill();

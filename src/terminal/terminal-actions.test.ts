@@ -31,6 +31,7 @@ function withAgents(agents: AppConfig["agents"]) {
       terminal: DEFAULT_TERMINAL_CONFIG,
       worktrees: { directory: null },
       agents,
+      notifications: { onDone: true, onNeedsYou: true },
       git: {
         commitMessageAgent: "auto",
         commitMessageStyle: "conventional",

@@ -148,6 +148,25 @@ pub struct GitConfig {
     pub commit_message_instructions: Option<String>,
 }
 
+/// When Lynx sends a system notification about an agent, while the window is not in front.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationsConfig {
+    /// An agent finished its work.
+    pub on_done: bool,
+    /// An agent is waiting for an answer or a permission.
+    pub on_needs_you: bool,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            on_done: true,
+            on_needs_you: true,
+        }
+    }
+}
+
 /// The effective settings: what `~/.lynx/config.json` says, with defaults for the rest.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -156,6 +175,7 @@ pub struct AppConfig {
     pub worktrees: WorktreesConfig,
     pub agents: AgentsConfig,
     pub git: GitConfig,
+    pub notifications: NotificationsConfig,
 }
 
 /// One thing wrong with the config, addressed by its dotted key (`terminal.fontSize`).
@@ -301,6 +321,10 @@ impl AppConfig {
             }
             "worktrees.directory" => self.worktrees.directory = defaults.worktrees.directory,
             "agents.launchMode" => self.agents.launch_mode = defaults.agents.launch_mode,
+            "notifications.onDone" => self.notifications.on_done = defaults.notifications.on_done,
+            "notifications.onNeedsYou" => {
+                self.notifications.on_needs_you = defaults.notifications.on_needs_you;
+            }
             "git.commitMessageAgent" => {
                 self.git.commit_message_agent = defaults.git.commit_message_agent;
             }
@@ -372,6 +396,14 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
     if let Some(agents) = section(root, "agents", &mut issues) {
         config.agents.launch_mode = launch_mode(agents, &mut issues).unwrap_or_default();
         config.agents.launch_arguments = launch_arguments(agents, &mut issues);
+    }
+    if let Some(notifications) = section(root, "notifications", &mut issues) {
+        if let Some(value) = flag(notifications, "onDone", "notifications", &mut issues) {
+            config.notifications.on_done = value;
+        }
+        if let Some(value) = flag(notifications, "onNeedsYou", "notifications", &mut issues) {
+            config.notifications.on_needs_you = value;
+        }
     }
     if let Some(git) = section(root, "git", &mut issues) {
         config.git.commit_message_agent =
@@ -987,5 +1019,24 @@ mod tests {
         let (config, issues) = parse(json!({ "git": { "commitMessageInstructions": long } }));
         assert_eq!(keys(&issues), ["git.commitMessageInstructions"]);
         assert_eq!(config.git.commit_message_instructions, None);
+    }
+
+    #[test]
+    fn notifications_default_to_on_and_read_each_flag() {
+        let (config, issues) = parse(json!({}));
+        assert!(issues.is_empty());
+        assert!(config.notifications.on_done && config.notifications.on_needs_you);
+
+        let (config, issues) = parse(json!({ "notifications": { "onDone": false } }));
+        assert!(issues.is_empty());
+        assert!(!config.notifications.on_done);
+        assert!(config.notifications.on_needs_you);
+    }
+
+    #[test]
+    fn an_invalid_notification_flag_is_reported_and_keeps_the_default() {
+        let (config, issues) = parse(json!({ "notifications": { "onNeedsYou": "yes" } }));
+        assert_eq!(keys(&issues), ["notifications.onNeedsYou"]);
+        assert!(config.notifications.on_needs_you);
     }
 }

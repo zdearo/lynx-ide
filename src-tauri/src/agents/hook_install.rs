@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use specta::Type;
 
+use crate::app_image_environment;
+
 /// A harness version as `[major, minor, patch]`. Arrays of numbers compare in release order.
 pub type Version = [u32; 3];
 
@@ -118,13 +120,14 @@ pub fn parse_version(output: &str) -> Option<Version> {
 
 /// The harness on the PATH, asked for its version. None when it cannot run or answers too slowly.
 pub fn probe_version(program: &str) -> Option<Version> {
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::null());
+    app_image_environment::clean_command(&mut command);
+    let mut child = command.spawn().ok()?;
     let deadline = Instant::now() + VERSION_PROBE_TIMEOUT;
     loop {
         if child.try_wait().ok()?.is_some() {

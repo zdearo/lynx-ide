@@ -1,4 +1,5 @@
 mod agents;
+mod app_image_environment;
 mod app_info;
 mod blocking_task;
 mod bounded_command;
@@ -54,7 +55,7 @@ pub fn run() {
             builder.mount_events(app);
 
             let user_home = app.path().home_dir()?;
-            let executable = std::env::current_exe().ok();
+            let executable = app_image_environment::launch_executable(std::env::current_exe().ok());
             app.manage(HookTargets::from_environment(
                 &user_home,
                 executable.as_deref(),

@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use crate::app_image_environment;
 use crate::bounded_command::{BoundedError, run_bounded};
 
 #[derive(Debug, thiserror::Error)]
@@ -106,6 +107,7 @@ impl GitCommand<'_> {
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("LC_ALL", "C");
         hide_console_window(&mut command);
+        app_image_environment::clean_command(&mut command);
 
         let to_git_error = |error: io::Error| match error.kind() {
             io::ErrorKind::NotFound => GitError::NotInstalled,

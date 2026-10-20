@@ -11,6 +11,7 @@ use specta::Type;
 use crate::agents::activity::AgentStatus;
 use crate::agents::agent_monitor::{AgentInput, Foreground, ForegroundSource, MonitorLink};
 use crate::agents::harness::HarnessId;
+use crate::app_image_environment;
 
 #[cfg(unix)]
 use super::foreground_job::command_line;
@@ -151,6 +152,8 @@ impl TerminalSession {
         let mut command = CommandBuilder::new(&request.shell.program);
         command.args(&request.shell.args);
         command.cwd(request.cwd);
+        // Before the session's own variables, so an explicit request still wins.
+        app_image_environment::clean_terminal(&mut command);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("TERM_PROGRAM", "lynx-ide");

@@ -9,6 +9,7 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::agents::agent_catalog::on_path;
+use crate::app_image_environment;
 use crate::bounded_command::{BoundedError, run_bounded};
 use crate::config::app_config::CommitMessageAgent;
 use crate::git::git_command::git;
@@ -182,6 +183,7 @@ fn run_agent(
         Command::new(agent.binary)
     };
     command.args(agent.args).current_dir(root);
+    app_image_environment::clean_command(&mut command);
     let output =
         run_bounded(&mut command, prompt.as_bytes(), timeout).map_err(|error| match error {
             BoundedError::TimedOut => DraftError::TimedOut { agent: agent.label },

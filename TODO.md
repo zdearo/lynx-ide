@@ -159,7 +159,10 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 
 - [x] Rodapé de status (24px), começando depois da barra de atividades e por baixo do painel de projetos, com o status do LSP à direita (vazio até o bridge existir)
 - [ ] LSP: bridge no Rust que sobe e desce os servidores pela regra A+D (10 minutos, worktree em foco) e alimenta `lsp-status-store.ts`, que o rodapé já lê
-- [ ] Limites de uso dos agentes no lado esquerdo do rodapé (acompanhamento de uso da Fase 4)
+- [x] Limites dos planos no lado esquerdo do rodapé: Codex (`codex app-server`) e Claude Code (`get_usage`), com popover por janela
+- [x] Limites do plano do Claude Code pelo `get_usage` do protocolo stream-json (o mesmo do Agent SDK), sem tocar no `statusLine` do usuário
+- [x] Limites: configurações (visível, planos, usado ou restante, compacto ou detalhado, limiares de aviso) e popover com o ritmo estimado
+- [ ] Limites de outros provedores (Cursor, Gemini, Grok, OpenCode), cada um pelo protocolo do próprio CLI, se houver um
 
 - [ ] Quick open de arquivos do worktree
 - [ ] Jump palette entre worktrees, abas e sessões

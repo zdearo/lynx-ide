@@ -97,6 +97,7 @@ export const copy = {
     },
     agents: {
       title: "Agents",
+      tabs: { label: "Agent settings", setup: "Setup" },
       intro:
         "Turn an agent on to let Lynx follow its sessions and offer it in the new terminal menu. Turning it on adds hooks to the agent's own settings, after you confirm.",
       detected: "On this computer",
@@ -180,6 +181,49 @@ export const copy = {
         label: "Agent needs you",
         hint: "Notify when an agent waits for an answer or a permission.",
       },
+    },
+    usage: {
+      title: "Plan limits",
+      intro:
+        "How much of each AI plan you have used, shown in the footer. Lynx reads the numbers from the CLI you already use and sends nothing to a model.",
+      visible: {
+        label: "Show in the footer",
+        hint: "Off also stops Lynx from reading the limits.",
+      },
+      showNames: {
+        label: "Show plan names",
+        hint: "Off leaves the mark, the bar and the number. The name stays in the details.",
+      },
+      providers: {
+        label: "Plans",
+        hint: "A plan shows when its CLI is installed and signed in.",
+        claude: "Claude Code",
+        claudeHint: "Its 5-hour and weekly windows.",
+        codex: "Codex",
+        codexHint: "Its plan window.",
+      },
+      display: {
+        label: "Percentages",
+        hint: "Show how much is used, or how much is left.",
+        used: "Used",
+        remaining: "Left",
+      },
+      layout: {
+        label: "Footer layout",
+        hint: "Compact shows one number per plan. Detailed shows every window with its bar.",
+        compact: "Compact",
+        detailed: "Detailed",
+      },
+      warnAt: {
+        label: "Getting close at",
+        hint: "From this share used, the bar warns.",
+      },
+      criticalAt: {
+        label: "Almost used up at",
+        hint: "From this share used, the bar shows its strongest warning.",
+      },
+      levels: (warnAt: number, criticalAt: number) =>
+        `Calm below ${warnAt}%, getting close from ${warnAt}%, almost used up from ${criticalAt}%.`,
     },
     git: {
       title: "Git",
@@ -859,6 +903,71 @@ export const copy = {
   welcome: {
     title: "Add a project to get started",
     body: "Each task gets its own git worktree, with its agents and terminals next to it.",
+  },
+
+  planLimits: {
+    title: "Plan limits",
+    refresh: "Refresh plan limits",
+    retry: "Try again",
+    signIn: "Sign in",
+    unavailable: "Unavailable",
+    unavailableTitle: "Limits could not be read",
+    signInDetail: (name: string) =>
+      `Sign in to ${name} to see its plan limits.`,
+    signInHint: {
+      claude: "Run claude in a terminal, then /login.",
+      codex: "Run codex login in a terminal.",
+    },
+    unavailableSummary: (name: string) => `${name}: plan limits unavailable`,
+    summary: (name: string, shown: string, window: string, reset: string) =>
+      `${name}: ${shown}, ${window}. ${reset}.`,
+    percentUsed: (percent: number) => `${percent}% used`,
+    percentLeft: (percent: number) => `${percent}% left`,
+    pace: {
+      runsOut: (duration: string) => `At this pace: full in ${duration}`,
+      holds: "At this pace: lasts until the reset",
+    },
+    readAt: (ago: string) => `Read ${ago}`,
+    source: {
+      claude: "Read from Claude Code. No tokens spent.",
+      codex: "Read from the Codex CLI. No tokens spent.",
+    },
+    resets: {
+      unknown: "Reset time unknown",
+      now: "Resets now",
+      in: (duration: string) => `Resets in ${duration}`,
+    },
+    duration: {
+      minutes: (minutes: number) => `${minutes}m`,
+      hours: (hours: number, minutes: number) => `${hours}h ${minutes}m`,
+      days: (days: number, hours: number) => `${days}d ${hours}h`,
+      exactDays: (days: number) => `${days}d`,
+    },
+    window: {
+      session: "5-hour window",
+      weekly: "Weekly window",
+      monthly: "Monthly window",
+      other: (minutes: number | null) =>
+        minutes === null
+          ? "Other window"
+          : `${Math.round(minutes / 1440)}-day window`,
+    },
+    windowShort: {
+      session: "5h",
+      weekly: "wk",
+      monthly: "mo",
+      other: (minutes: number | null) =>
+        minutes === null ? "?" : `${Math.round(minutes / 1440)}d`,
+    },
+    tone: {
+      close: "Getting close",
+      full: "Almost used up",
+    },
+    ago: {
+      now: "just now",
+      minutes: (minutes: number) => `${minutes} min ago`,
+      hours: (hours: number) => `${hours} h ago`,
+    },
   },
 
   statusBar: {

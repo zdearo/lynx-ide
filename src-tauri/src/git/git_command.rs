@@ -154,14 +154,14 @@ impl GitCommand<'_> {
 }
 
 #[cfg(windows)]
-fn hide_console_window(command: &mut Command) {
+pub(crate) fn hide_console_window(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     command.creation_flags(CREATE_NO_WINDOW);
 }
 
 #[cfg(not(windows))]
-fn hide_console_window(_command: &mut Command) {}
+pub(crate) fn hide_console_window(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {

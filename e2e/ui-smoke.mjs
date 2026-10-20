@@ -1041,6 +1041,8 @@ await session("?mock=full", 1200, 760, async (p) => {
 
 await session("?mock=broken", 1200, 760, async (p) => {
   await p.keyboard.press("Control+,");
+  // The settings code loads the first time the dialog opens, which can take longer than a fixed wait.
+  await p.getByRole("tab", { name: "Terminal", exact: true }).waitFor();
   await p.waitForTimeout(400);
   check(
     "a broken config file is called out",
@@ -3991,6 +3993,267 @@ await session("?mock=full", 1400, 800, async (p) => {
       .getByRole("tree", { name: /^Untracked files/ })
       .getByRole("treeitem", { name: /^plan\.md/ })
       .count()) === 1,
+  );
+});
+
+// Plan limits in the footer: one button per plan, with the fullest window, and the details in a popover.
+await session("?mock=full", 1400, 800, async (p) => {
+  const footer = p.getByRole("contentinfo", { name: "Status bar" });
+  const codex = footer.getByRole("button", { name: /^Codex:/ });
+  check(
+    "the footer shows the Codex plan with its share used and no other plan",
+    (await codex.count()) === 1 &&
+      ((await codex.innerText()) ?? "").includes("0%") &&
+      (await footer.getByRole("group", { name: "Plan limits" }).count()) === 1,
+  );
+
+  await codex.click();
+  await p.waitForTimeout(300);
+  const details = p.getByRole("dialog");
+  check(
+    "its popover names the plan and window and says when it resets",
+    ((await details.innerText()) ?? "").includes("Free") &&
+      ((await details.innerText()) ?? "").includes("Monthly window") &&
+      ((await details.innerText()) ?? "").includes("Resets in 29d"),
+  );
+  check(
+    "the window's bar is a progress bar with its value, not only a colour",
+    (await details
+      .getByRole("progressbar", { name: "Monthly window" })
+      .count()) === 1,
+  );
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the plan limits popover open",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(200);
+  check(
+    "Escape closes the popover",
+    (await p.getByRole("dialog").count()) === 0,
+  );
+
+  // A plan that is nearly out says so in words, and so does one that is not signed in.
+  await p.evaluate(() => {
+    const now = Math.floor(Date.now() / 1000);
+    window.__lynxMock.setPlanUsage([
+      {
+        harness: "codex",
+        plan: "plus",
+        state: "ready",
+        reason: null,
+        observedAt: now,
+        windows: [
+          {
+            kind: "session",
+            minutes: 300,
+            usedPercent: 40,
+            resetsAt: now + 3600,
+          },
+          {
+            kind: "weekly",
+            minutes: 10080,
+            usedPercent: 93,
+            resetsAt: now + 86400,
+          },
+        ],
+      },
+      {
+        harness: "claude",
+        plan: null,
+        state: "signInNeeded",
+        reason: null,
+        windows: [],
+        observedAt: now,
+      },
+    ]);
+    window.dispatchEvent(new Event("focus"));
+  });
+  await p.waitForTimeout(500);
+  check(
+    "the footer shows the fullest window, so a nearly used up plan reads 93%",
+    (
+      (await footer.getByRole("button", { name: /^Codex:/ }).innerText()) ?? ""
+    ).includes("93%"),
+  );
+  check(
+    "a plan that is not signed in says so",
+    (await footer
+      .getByRole("button", { name: /Sign in to Claude Code/ })
+      .count()) === 1,
+  );
+  await footer.getByRole("button", { name: /^Codex:/ }).click();
+  await p.waitForTimeout(300);
+  check(
+    "the popover lists both windows and flags the nearly used up one in words",
+    (await p.getByRole("dialog").getByText("Almost used up").count()) === 1 &&
+      (await p.getByRole("dialog").getByRole("progressbar").count()) === 2,
+  );
+});
+
+// The plan limits settings: what shows in the footer, how it reads, and the warning levels that stay in order.
+await session("?mock=full", 1400, 800, async (p) => {
+  const footer = p.getByRole("contentinfo", { name: "Status bar" });
+  const claude = footer.getByRole("button", { name: /^Claude Code:/ });
+  const codex = footer.getByRole("button", { name: /^Codex:/ });
+  // An open dialog hides the page behind it from role queries, so the footer is read by CSS meanwhile.
+  const claudeBehind = p.locator("footer button", { hasText: "Claude Code" });
+  const codexBehind = p.locator("footer button", { hasText: "Codex" });
+  await p.evaluate(() => {
+    const now = Math.floor(Date.now() / 1000);
+    window.__lynxMock.setPlanUsage([
+      {
+        harness: "claude",
+        plan: "pro",
+        state: "ready",
+        reason: null,
+        observedAt: now,
+        windows: [
+          {
+            kind: "session",
+            minutes: 300,
+            usedPercent: 82,
+            resetsAt: now + 2 * 3600 + 900,
+          },
+          {
+            kind: "weekly",
+            minutes: 10080,
+            usedPercent: 31,
+            resetsAt: now + 4 * 86400,
+          },
+        ],
+      },
+      {
+        harness: "codex",
+        plan: "plus",
+        state: "ready",
+        reason: null,
+        observedAt: now,
+        windows: [
+          {
+            kind: "monthly",
+            minutes: 43200,
+            usedPercent: 12,
+            resetsAt: now + 20 * 86400,
+          },
+        ],
+      },
+    ]);
+    window.dispatchEvent(new Event("focus"));
+  });
+  await p.waitForTimeout(400);
+  check(
+    "both plans show in the footer by default, compact, with the countdown",
+    (await claude.count()) === 1 &&
+      (await codex.count()) === 1 &&
+      ((await claude.textContent()) ?? "").includes("82% used") &&
+      ((await claude.textContent()) ?? "").includes("2h 15m"),
+  );
+
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  // The limits are a tab of the Agents page.
+  await p.getByRole("tab", { name: "Agents", exact: true }).click();
+  await p.getByRole("tab", { name: "Plan limits", exact: true }).click();
+  await p.waitForTimeout(300);
+  const settings = p.locator('[role="dialog"]');
+  const switchOn = async (name) =>
+    (await settings
+      .getByRole("switch", { name, exact: true })
+      .getAttribute("aria-checked")) === "true";
+  check(
+    "the page offers the footer switch and one switch per plan, all on",
+    (await switchOn("Show in the footer")) &&
+      (await switchOn("Claude Code")) &&
+      (await switchOn("Codex")),
+  );
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the Plan limits page",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await settings.getByRole("switch", { name: "Codex", exact: true }).click();
+  await p.waitForTimeout(400);
+  check(
+    "turning a plan off takes it out of the footer",
+    (await codexBehind.count()) === 0 && (await claudeBehind.count()) === 1,
+  );
+  await settings.getByRole("switch", { name: "Codex", exact: true }).click();
+  await p.waitForTimeout(400);
+
+  await settings.getByRole("combobox", { name: "Footer layout" }).click();
+  await p.getByRole("option", { name: "Detailed", exact: true }).click();
+  await p.waitForTimeout(300);
+  await settings.getByRole("combobox", { name: "Percentages" }).click();
+  await p.getByRole("option", { name: "Left", exact: true }).click();
+  await p.waitForTimeout(400);
+  const detailed = (await claudeBehind.textContent()) ?? "";
+  check(
+    "detailed layout names each window and reads what is left",
+    detailed.includes("5h") &&
+      detailed.includes("wk") &&
+      detailed.includes("18% left") &&
+      detailed.includes("69% left"),
+    detailed,
+  );
+
+  // The warning levels cannot cross: the warning stops one below the critical level.
+  await p.evaluate(() => window.__lynxMock.setUsageConfig({ warnAt: 89 }));
+  await p.waitForTimeout(400);
+  check(
+    "the warning level cannot go up to the critical one",
+    await settings
+      .locator("#usage-warn-at")
+      .locator("xpath=..")
+      .getByRole("button", { name: "Increase" })
+      .isDisabled(),
+  );
+  check(
+    "the critical level cannot go down to the warning one",
+    await settings
+      .locator("#usage-critical-at")
+      .locator("xpath=..")
+      .getByRole("button", { name: "Decrease" })
+      .isDisabled(),
+  );
+
+  await settings
+    .getByRole("switch", { name: "Show plan names", exact: true })
+    .click();
+  await p.waitForTimeout(400);
+  const marks = p.locator('footer [role="group"] button');
+  check(
+    "with names off the footer keeps each plan's number but not its name, which stays in the label",
+    (await marks.count()) === 2 &&
+      !((await marks.first().textContent()) ?? "").includes("Claude") &&
+      ((await marks.first().getAttribute("aria-label")) ?? "").includes(
+        "Claude Code",
+      ),
+  );
+
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(300);
+  await p.evaluate(() => window.__lynxMock.setUsageConfig({ visible: false }));
+  await p.waitForTimeout(400);
+  check(
+    "switching the footer off hides every plan",
+    (await footer.getByRole("group", { name: "Plan limits" }).count()) === 0,
   );
 });
 

@@ -32,6 +32,15 @@ function withAgents(agents: AppConfig["agents"]) {
       worktrees: { directory: null },
       agents,
       notifications: { onDone: true, onNeedsYou: true },
+      usage: {
+        visible: true,
+        providers: ["claude", "codex"],
+        showNames: true,
+        display: "used",
+        layout: "compact",
+        warnAt: 75,
+        criticalAt: 90,
+      },
       git: {
         commitMessageAgent: "auto",
         commitMessageStyle: "conventional",

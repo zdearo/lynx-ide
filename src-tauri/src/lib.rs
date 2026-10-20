@@ -12,6 +12,7 @@ mod ipc;
 mod persistence;
 mod pull_request;
 mod terminal;
+mod usage;
 mod watching;
 mod workspace;
 
@@ -27,6 +28,8 @@ use config::config_events::start_config_watcher;
 use persistence::AppDatabase;
 use terminal::terminal_events::TauriEventSink;
 use terminal::terminal_manager::TerminalManager;
+use usage::plan_usage_service::PlanUsageService;
+use usage::{claude_usage, codex_usage};
 use watching::watch_commands::WatchState;
 use workspace::workspace_service::WorkspaceService;
 
@@ -76,6 +79,10 @@ pub fn run() {
             ));
 
             app.manage(WatchState::default());
+            app.manage(PlanUsageService::new(
+                codex_usage::installed(),
+                claude_usage::installed(),
+            ));
 
             let shell_config = Arc::clone(&config);
             app.manage(TerminalManager::new(

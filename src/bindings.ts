@@ -165,6 +165,11 @@ export const commands = {
 	 *  the interface then reads it again on a timer.
 	 */
 	watchWorktree: (worktreePath: string | null) => typedError<boolean, IpcError>(__TAURI_INVOKE("watch_worktree", { worktreePath })),
+	/**
+	 *  The plan limits the settings ask for. Nothing is read while the footer's limits are off.
+	 *  `force` skips the cache: used on refresh.
+	 */
+	getPlanUsage: (force: boolean) => typedError<PlanUsage[], IpcError>(__TAURI_INVOKE("get_plan_usage", { force })),
 };
 
 /** Events */
@@ -215,6 +220,7 @@ export type AppConfig = {
 	agents: AgentsConfig,
 	git: GitConfig,
 	notifications: NotificationsConfig,
+	usage: UsageConfig,
 };
 
 export type AppInfo = {
@@ -512,6 +518,35 @@ export type NotificationsConfig = {
 	onNeedsYou: boolean,
 };
 
+export type PlanUsage = {
+	harness: HarnessId,
+	/**  The plan's name as the provider writes it, such as `free` or `plus`. */
+	plan: string | null,
+	state: PlanUsageState,
+	reason: string | null,
+	windows: PlanWindow[],
+	/**  Unix seconds when these numbers were read. */
+	observedAt: number,
+};
+
+export type PlanUsageState = 
+/**  The windows below are what the provider reported. */
+"ready" | 
+/**  The provider is there but not signed in, so there is nothing to read. */
+"signInNeeded" | 
+/**  Something went wrong; `reason` says what, in the provider's own words where it gave them. */
+"unavailable";
+
+export type PlanWindow = {
+	kind: WindowKind,
+	/**  How long the window lasts, when the source says. */
+	minutes: number | null,
+	/**  Share of the window already used, rounded to a whole percent and possibly above 100 when the plan allows it. */
+	usedPercent: number,
+	/**  Unix seconds when the window starts over. */
+	resetsAt: number | null,
+};
+
 /**  How a pull joins the remote's commits. */
 export type PullKind = 
 /**  Only moves forward: refused when the branch has commits of its own. */
@@ -679,6 +714,32 @@ export type TerminalSnapshot = {
 	running: boolean,
 	exitCode: number | null,
 };
+
+/**  Plan limits in the footer: whether they show, which plans, how a share reads, and when a bar warns. */
+export type UsageConfig = {
+	/**  Off also stops Lynx from reading the limits at all. */
+	visible: boolean,
+	/**  The plans to show, in order. */
+	providers: HarnessId[],
+	/**  Whether each plan's name shows beside its mark. Off leaves the mark, the bar and the number. */
+	showNames: boolean,
+	display: UsageDisplay,
+	layout: UsageLayout,
+	/**  From this share used, a bar warns. Between 1 and 99. */
+	warnAt: number,
+	/**  From this share used, a bar is nearly out. Between 2 and 100, and above `warn_at`. */
+	criticalAt: number,
+};
+
+/**  How the footer shows a plan's share: the percentage used, or what is left. */
+export type UsageDisplay = "used" | "remaining";
+
+/**  How much of each plan the footer shows: a percentage per plan, or every window with its bar. */
+export type UsageLayout = "compact" | "detailed";
+
+export type WindowKind = "session" | "weekly" | "monthly" | 
+/**  A window of a length Lynx does not name; the minutes still say how long it is. */
+"other";
 
 /**  Files changed in the watched worktree. Sent once a burst of changes has settled. */
 export type WorktreeChanged = {

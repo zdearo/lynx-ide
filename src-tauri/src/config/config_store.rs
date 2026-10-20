@@ -13,7 +13,7 @@ use crate::agents::harness::{HarnessId, harness_name, supported};
 
 use super::app_config::{
     AppConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, GitConfig, LaunchMode,
-    NotificationsConfig, TerminalConfig, expand_home, parse_config,
+    NotificationsConfig, TerminalConfig, UsageConfig, expand_home, parse_config,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -357,6 +357,58 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
         (notifications.on_needs_you != notification_defaults.on_needs_you)
             .then(|| json!(notifications.on_needs_you)),
     );
+    let usage = &config.usage;
+    let usage_defaults = UsageConfig::default();
+    put(
+        root,
+        "usage",
+        "visible",
+        (usage.visible != usage_defaults.visible).then(|| json!(usage.visible)),
+    );
+    put(
+        root,
+        "usage",
+        "providers",
+        (usage.providers != usage_defaults.providers).then(|| {
+            json!(
+                usage
+                    .providers
+                    .iter()
+                    .map(|harness| harness_name(*harness))
+                    .collect::<Vec<_>>()
+            )
+        }),
+    );
+    put(
+        root,
+        "usage",
+        "showNames",
+        (usage.show_names != usage_defaults.show_names).then(|| json!(usage.show_names)),
+    );
+    put(
+        root,
+        "usage",
+        "display",
+        (usage.display != usage_defaults.display).then(|| json!(usage.display)),
+    );
+    put(
+        root,
+        "usage",
+        "layout",
+        (usage.layout != usage_defaults.layout).then(|| json!(usage.layout)),
+    );
+    put(
+        root,
+        "usage",
+        "warnAt",
+        (usage.warn_at != usage_defaults.warn_at).then(|| json!(usage.warn_at)),
+    );
+    put(
+        root,
+        "usage",
+        "criticalAt",
+        (usage.critical_at != usage_defaults.critical_at).then(|| json!(usage.critical_at)),
+    );
     let git = &config.git;
     let git_defaults = GitConfig::default();
     put(
@@ -449,7 +501,7 @@ mod tests {
     use super::*;
     use crate::config::app_config::{
         BellStyle, ColorScheme, CommitMessageAgent, CommitMessageStyle, TerminalConfig,
-        WorktreesConfig,
+        UsageDisplay, UsageLayout, WorktreesConfig,
     };
 
     fn setup() -> (ConfigStore, tempfile::TempDir) {
@@ -549,6 +601,40 @@ mod tests {
         assert_eq!(
             file_json(&store),
             json!({ "notifications": { "onDone": false } })
+        );
+
+        store.update(AppConfig::default()).expect("reset");
+        assert_eq!(file_json(&store), json!({}));
+    }
+
+    #[test]
+    fn usage_settings_are_written_only_when_they_differ_from_defaults() {
+        let (store, _dir) = setup();
+        let changed = AppConfig {
+            usage: UsageConfig {
+                visible: false,
+                providers: vec![HarnessId::Codex],
+                show_names: false,
+                display: UsageDisplay::Remaining,
+                layout: UsageLayout::Detailed,
+                warn_at: 60,
+                critical_at: 85,
+            },
+            ..AppConfig::default()
+        };
+
+        store.update(changed).expect("set");
+        assert_eq!(
+            file_json(&store),
+            json!({ "usage": {
+                "visible": false,
+                "providers": ["codex"],
+                "showNames": false,
+                "display": "remaining",
+                "layout": "detailed",
+                "warnAt": 60,
+                "criticalAt": 85
+            } })
         );
 
         store.update(AppConfig::default()).expect("reset");

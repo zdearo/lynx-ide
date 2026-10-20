@@ -4,7 +4,9 @@ import {
   commands,
   type AppConfig,
   type ConfigSnapshot,
+  type HarnessId,
   type TerminalConfig,
+  type UsageConfig,
 } from "@/bindings";
 import { unwrap } from "@/lib/ipc-result";
 
@@ -21,6 +23,20 @@ export const DEFAULT_TERMINAL_CONFIG: TerminalConfig = {
   confirmClose: false,
   colorScheme: "default",
   textColorScheme: null,
+};
+
+/** The plans whose limits Lynx reads, in the order the footer shows them. */
+export const USAGE_PROVIDERS: HarnessId[] = ["claude", "codex"];
+
+/** Mirrors the backend defaults, for the moment before the first config arrives. */
+export const DEFAULT_USAGE_CONFIG: UsageConfig = {
+  visible: true,
+  providers: USAGE_PROVIDERS,
+  showNames: true,
+  display: "used",
+  layout: "compact",
+  warnAt: 75,
+  criticalAt: 90,
 };
 
 interface ConfigState {
@@ -44,6 +60,12 @@ export const useConfigStore = create<ConfigState>((set) => ({
 
   apply: (snapshot) => set({ snapshot }),
 }));
+
+export function useUsageConfig(): UsageConfig {
+  return useConfigStore(
+    (state) => state.snapshot?.config.usage ?? DEFAULT_USAGE_CONFIG,
+  );
+}
 
 export function useTerminalConfig(): TerminalConfig {
   return useConfigStore(

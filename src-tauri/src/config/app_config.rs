@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use specta::Type;
 
@@ -167,6 +167,61 @@ impl Default for NotificationsConfig {
     }
 }
 
+/// How the footer shows a plan's share: the percentage used, or what is left.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum UsageDisplay {
+    #[default]
+    Used,
+    Remaining,
+}
+
+/// How much of each plan the footer shows: a percentage per plan, or every window with its bar.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum UsageLayout {
+    #[default]
+    Compact,
+    Detailed,
+}
+
+pub const DEFAULT_USAGE_WARN_AT: u8 = 75;
+pub const DEFAULT_USAGE_CRITICAL_AT: u8 = 90;
+/// The plans whose limits Lynx reads. Settings offer these and no others.
+pub const USAGE_PROVIDERS: [HarnessId; 2] = [HarnessId::Claude, HarnessId::Codex];
+
+/// Plan limits in the footer: whether they show, which plans, how a share reads, and when a bar warns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageConfig {
+    /// Off also stops Lynx from reading the limits at all.
+    pub visible: bool,
+    /// The plans to show, in order.
+    pub providers: Vec<HarnessId>,
+    /// Whether each plan's name shows beside its mark. Off leaves the mark, the bar and the number.
+    pub show_names: bool,
+    pub display: UsageDisplay,
+    pub layout: UsageLayout,
+    /// From this share used, a bar warns. Between 1 and 99.
+    pub warn_at: u8,
+    /// From this share used, a bar is nearly out. Between 2 and 100, and above `warn_at`.
+    pub critical_at: u8,
+}
+
+impl Default for UsageConfig {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            providers: USAGE_PROVIDERS.to_vec(),
+            show_names: true,
+            display: UsageDisplay::default(),
+            layout: UsageLayout::default(),
+            warn_at: DEFAULT_USAGE_WARN_AT,
+            critical_at: DEFAULT_USAGE_CRITICAL_AT,
+        }
+    }
+}
+
 /// The effective settings: what `~/.lynx/config.json` says, with defaults for the rest.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -176,6 +231,7 @@ pub struct AppConfig {
     pub agents: AgentsConfig,
     pub git: GitConfig,
     pub notifications: NotificationsConfig,
+    pub usage: UsageConfig,
 }
 
 /// One thing wrong with the config, addressed by its dotted key (`terminal.fontSize`).
@@ -280,6 +336,31 @@ impl AppConfig {
                 ));
             }
         }
+        let usage = &self.usage;
+        if usage
+            .providers
+            .iter()
+            .any(|harness| !USAGE_PROVIDERS.contains(harness))
+        {
+            issues.push(ConfigIssue::new(
+                "usage.providers",
+                "must list plan names such as claude and codex",
+            ));
+        }
+        // A pair that contradicts itself is reset as a pair: resetting one alone would never fix it.
+        if !(1..=99).contains(&usage.warn_at) {
+            issues.push(ConfigIssue::new("usage.warnAt", "must be between 1 and 99"));
+        } else if !(2..=100).contains(&usage.critical_at) {
+            issues.push(ConfigIssue::new(
+                "usage.criticalAt",
+                "must be between 2 and 100",
+            ));
+        } else if usage.warn_at >= usage.critical_at {
+            issues.push(ConfigIssue::new(
+                "usage.thresholds",
+                "getting close must be lower than almost used up",
+            ));
+        }
         if let Some(text) = &self.git.commit_message_instructions {
             if text.chars().any(|c| c.is_control() && c != '\n') {
                 issues.push(ConfigIssue::new(
@@ -324,6 +405,17 @@ impl AppConfig {
             "notifications.onDone" => self.notifications.on_done = defaults.notifications.on_done,
             "notifications.onNeedsYou" => {
                 self.notifications.on_needs_you = defaults.notifications.on_needs_you;
+            }
+            "usage.visible" => self.usage.visible = defaults.usage.visible,
+            "usage.providers" => self.usage.providers = defaults.usage.providers,
+            "usage.showNames" => self.usage.show_names = defaults.usage.show_names,
+            "usage.display" => self.usage.display = defaults.usage.display,
+            "usage.layout" => self.usage.layout = defaults.usage.layout,
+            "usage.warnAt" => self.usage.warn_at = defaults.usage.warn_at,
+            "usage.criticalAt" => self.usage.critical_at = defaults.usage.critical_at,
+            "usage.thresholds" => {
+                self.usage.warn_at = defaults.usage.warn_at;
+                self.usage.critical_at = defaults.usage.critical_at;
             }
             "git.commitMessageAgent" => {
                 self.git.commit_message_agent = defaults.git.commit_message_agent;
@@ -403,6 +495,29 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
         }
         if let Some(value) = flag(notifications, "onNeedsYou", "notifications", &mut issues) {
             config.notifications.on_needs_you = value;
+        }
+    }
+    if let Some(usage) = section(root, "usage", &mut issues) {
+        if let Some(value) = flag(usage, "visible", "usage", &mut issues) {
+            config.usage.visible = value;
+        }
+        if let Some(providers) = usage_providers(usage, &mut issues) {
+            config.usage.providers = providers;
+        }
+        if let Some(value) = flag(usage, "showNames", "usage", &mut issues) {
+            config.usage.show_names = value;
+        }
+        if let Some(display) = choice(usage, "display", "usage", "used or remaining", &mut issues) {
+            config.usage.display = display;
+        }
+        if let Some(layout) = choice(usage, "layout", "usage", "compact or detailed", &mut issues) {
+            config.usage.layout = layout;
+        }
+        if let Some(warn) = number(usage, "warnAt", "usage", &mut issues) {
+            config.usage.warn_at = u8::try_from(warn).unwrap_or(u8::MAX);
+        }
+        if let Some(critical) = number(usage, "criticalAt", "usage", &mut issues) {
+            config.usage.critical_at = u8::try_from(critical).unwrap_or(u8::MAX);
         }
     }
     if let Some(git) = section(root, "git", &mut issues) {
@@ -505,6 +620,60 @@ fn launch_arguments(
 }
 
 /// Resets invalid fields one at a time until the config validates.
+/// A text setting that must be one of the names its enum serializes to.
+fn choice<T: DeserializeOwned>(
+    object: &Map<String, Value>,
+    key: &str,
+    section: &str,
+    expected: &str,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<T> {
+    let text = optional_text(object, key, section, issues)?;
+    match serde_json::from_value(Value::String(text)) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            issues.push(ConfigIssue::new(
+                &format!("{section}.{key}"),
+                format!("must be {expected}"),
+            ));
+            None
+        }
+    }
+}
+
+/// The plans to show: a list of plan names, each one Lynx reads, without repeats.
+fn usage_providers(
+    usage: &Map<String, Value>,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<Vec<HarnessId>> {
+    let items = match usage.get("providers")? {
+        Value::Array(items) => items,
+        Value::Null => return None,
+        _ => {
+            issues.push(ConfigIssue::new(
+                "usage.providers",
+                "must be a list of plan names",
+            ));
+            return None;
+        }
+    };
+    let mut providers: Vec<HarnessId> = Vec::new();
+    for item in items {
+        match serde_json::from_value::<HarnessId>(item.clone()) {
+            Ok(harness) if !providers.contains(&harness) => providers.push(harness),
+            Ok(_) => {}
+            Err(_) => {
+                issues.push(ConfigIssue::new(
+                    "usage.providers",
+                    "must list plan names such as claude and codex",
+                ));
+                return None;
+            }
+        }
+    }
+    Some(providers)
+}
+
 fn finish(
     mut config: AppConfig,
     mut issues: Vec<ConfigIssue>,
@@ -1038,5 +1207,94 @@ mod tests {
         let (config, issues) = parse(json!({ "notifications": { "onNeedsYou": "yes" } }));
         assert_eq!(keys(&issues), ["notifications.onNeedsYou"]);
         assert!(config.notifications.on_needs_you);
+    }
+
+    #[test]
+    fn usage_defaults_show_both_plans_compact_and_used() {
+        let (config, issues) = parse(json!({}));
+
+        assert!(issues.is_empty());
+        assert!(config.usage.visible);
+        assert_eq!(config.usage.providers, USAGE_PROVIDERS.to_vec());
+        assert!(config.usage.show_names);
+        assert_eq!(config.usage.display, UsageDisplay::Used);
+        assert_eq!(config.usage.layout, UsageLayout::Compact);
+        assert_eq!((config.usage.warn_at, config.usage.critical_at), (75, 90));
+    }
+
+    #[test]
+    fn usage_values_are_read_from_the_file() {
+        let (config, issues) = parse(json!({ "usage": {
+            "visible": false,
+            "providers": ["codex"],
+            "showNames": false,
+            "display": "remaining",
+            "layout": "detailed",
+            "warnAt": 60,
+            "criticalAt": 85
+        } }));
+
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(!config.usage.visible);
+        assert_eq!(config.usage.providers, vec![HarnessId::Codex]);
+        assert!(!config.usage.show_names);
+        assert_eq!(config.usage.display, UsageDisplay::Remaining);
+        assert_eq!(config.usage.layout, UsageLayout::Detailed);
+        assert_eq!((config.usage.warn_at, config.usage.critical_at), (60, 85));
+    }
+
+    #[test]
+    fn a_plan_lynx_cannot_read_is_reported_and_the_list_goes_back_to_default() {
+        let (config, issues) = parse(json!({ "usage": { "providers": ["cursor"] } }));
+
+        assert_eq!(keys(&issues), ["usage.providers"]);
+        assert_eq!(config.usage.providers, USAGE_PROVIDERS.to_vec());
+    }
+
+    #[test]
+    fn a_repeated_plan_is_listed_once() {
+        let (config, issues) =
+            parse(json!({ "usage": { "providers": ["codex", "claude", "codex"] } }));
+
+        assert!(issues.is_empty());
+        assert_eq!(
+            config.usage.providers,
+            vec![HarnessId::Codex, HarnessId::Claude]
+        );
+    }
+
+    #[test]
+    fn an_unknown_display_or_layout_falls_back_to_its_default() {
+        let (config, issues) = parse(json!({ "usage": { "display": "half", "layout": "huge" } }));
+
+        assert_eq!(keys(&issues), ["usage.display", "usage.layout"]);
+        assert_eq!(config.usage.display, UsageDisplay::Used);
+        assert_eq!(config.usage.layout, UsageLayout::Compact);
+    }
+
+    #[test]
+    fn a_warn_level_out_of_range_is_reset_alone() {
+        let (config, issues) = parse(json!({ "usage": { "warnAt": 150 } }));
+
+        assert_eq!(keys(&issues), ["usage.warnAt"]);
+        assert_eq!(config.usage.warn_at, DEFAULT_USAGE_WARN_AT);
+        assert_eq!(config.usage.critical_at, DEFAULT_USAGE_CRITICAL_AT);
+    }
+
+    #[test]
+    fn levels_that_contradict_each_other_are_reset_as_a_pair() {
+        // A warning at 95 is above the default "almost out" at 90: neither setting alone can fix that.
+        let (config, issues) = parse(json!({ "usage": { "warnAt": 95 } }));
+
+        assert_eq!(keys(&issues), ["usage.thresholds"]);
+        assert_eq!((config.usage.warn_at, config.usage.critical_at), (75, 90));
+    }
+
+    #[test]
+    fn a_critical_level_below_the_warning_is_reset_as_a_pair() {
+        let (config, issues) = parse(json!({ "usage": { "warnAt": 50, "criticalAt": 40 } }));
+
+        assert_eq!(keys(&issues), ["usage.thresholds"]);
+        assert_eq!((config.usage.warn_at, config.usage.critical_at), (75, 90));
     }
 }

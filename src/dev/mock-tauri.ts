@@ -12,6 +12,7 @@ import type {
   ConfigSnapshot,
   Folder,
   HarnessId,
+  PlanUsage,
   Repo,
   TerminalInfo,
   WorktreeInfo,
@@ -259,6 +260,26 @@ const mockDiscussion = {
 };
 
 /** What GitHub holds for each mock pull request: an action on it changes what is read back. */
+/** The plan limits the mock reports. The e2e replaces them through `__lynxMock.setPlanUsage`. */
+let mockPlanUsage: PlanUsage[] = [
+  {
+    harness: "codex",
+    plan: "free",
+    state: "ready",
+    reason: null,
+    windows: [
+      {
+        kind: "monthly",
+        minutes: 43_200,
+        usedPercent: 0,
+        // An hour past 29 days, so the countdown still reads "29d" a while after the page loads.
+        resetsAt: Math.floor(Date.now() / 1000) + 29 * 86_400 + 3_600,
+      },
+    ],
+    observedAt: Math.floor(Date.now() / 1000),
+  },
+];
+
 const mockPrStates = new Map<
   number,
   { state: string; isDraft: boolean; autoMerge: boolean }
@@ -392,6 +413,15 @@ const DEFAULT_CONFIG: AppConfig = {
   worktrees: { directory: null },
   agents: { launchMode: "manual", launchArguments: {} },
   notifications: { onDone: true, onNeedsYou: true },
+  usage: {
+    visible: true,
+    providers: ["claude", "codex"],
+    showNames: true,
+    display: "used",
+    layout: "compact",
+    warnAt: 75,
+    criticalAt: 90,
+  },
   git: {
     commitMessageAgent: "auto",
     commitMessageStyle: "conventional",
@@ -738,6 +768,17 @@ export function installMockTauri(scenario: string): void {
             })),
             truncated: false,
           };
+        }
+        case "get_plan_usage": {
+          await delay(60);
+          // Mirrors the backend: nothing is read while the limits are off, and only the chosen plans are.
+          const usage = configSnapshot.config.usage;
+          if (!usage.visible) return [];
+          return structuredClone(
+            mockPlanUsage.filter((plan) =>
+              usage.providers.includes(plan.harness),
+            ),
+          );
         }
         case "watch_worktree":
           // The mock backend can always watch; the e2e sends the events itself.
@@ -1489,6 +1530,10 @@ export function installMockTauri(scenario: string): void {
         if (repo) repo.missing = missing;
         linkedChanged = true;
       },
+      /** Replaces what the plan limits footer reports, for the e2e to show each state. */
+      setPlanUsage(usages: PlanUsage[]) {
+        mockPlanUsage = usages;
+      },
       /** Pretends the remote has this many commits the branch lacks. */
       setBehind(count: number) {
         mockBehind = count;
@@ -1538,6 +1583,19 @@ export function installMockTauri(scenario: string): void {
           session.exitCode = 0;
           void emit("terminal-exit", { id: session.id, exitCode: 0 });
         }
+      },
+      /** Changes the plan limits settings, as if the file had been edited by hand. */
+      setUsageConfig(patch: Partial<AppConfig["usage"]>) {
+        configSnapshot = {
+          ...configSnapshot,
+          config: {
+            ...configSnapshot.config,
+            usage: { ...configSnapshot.config.usage, ...patch },
+          },
+        };
+        void emit("config-changed", {
+          snapshot: structuredClone(configSnapshot),
+        });
       },
       editConfigFile(patch: Partial<AppConfig["terminal"]>) {
         configSnapshot = {

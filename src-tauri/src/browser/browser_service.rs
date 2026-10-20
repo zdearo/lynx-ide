@@ -17,7 +17,11 @@ use lynx_browser_protocol::message::{FromHost, ToHost};
 use super::agent_pointer::{AgentPointer, Controller, CursorShape, Sweep};
 use super::browser_error::BrowserError;
 use super::browser_state::{BrowserState, BrowserStatus};
+use super::engine_files::{self, EngineStatus};
+use super::engine_install_error::EngineInstallError;
+use super::engine_installer::{EngineInstallLock, EngineProgress, install};
 use super::engine_location::locate;
+use super::engine_manifest::manifest_url;
 use super::page_log::PageLog;
 use super::web_address::normalize;
 
@@ -86,6 +90,8 @@ pub struct BrowserService {
     watching: Arc<AtomicBool>,
     /// The page's console and requests, and what the engine answered by itself.
     log: Arc<PageLog>,
+    /// One engine install at a time.
+    installing: EngineInstallLock,
 }
 
 impl BrowserService {
@@ -113,6 +119,7 @@ impl BrowserService {
             pointer: Arc::new(AgentPointer::default()),
             watching: Arc::new(AtomicBool::new(false)),
             log: Arc::new(PageLog::default()),
+            installing: EngineInstallLock::default(),
         }
     }
 
@@ -120,6 +127,38 @@ impl BrowserService {
         self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// What engine is installed, and whether this app can run it.
+    pub fn engine_status(&self) -> EngineStatus {
+        engine_files::read_status(&self.lynx_home)
+    }
+
+    /// Downloads the engine and puts it in place. Blocks until it is done, so call it off the
+    /// async runtime. The running engine, if any, is stopped first: its files are about to change.
+    pub fn install_engine(
+        &self,
+        force: bool,
+        report: &mut dyn FnMut(EngineProgress),
+    ) -> Result<EngineStatus, BrowserError> {
+        let _only_one = self.installing.acquire().ok_or(EngineInstallError::Busy)?;
+        install(&self.lynx_home, &manifest_url(), force, report)?;
+        // An engine that failed to start, or was missing, is not a failure any more.
+        let mut inner = self.lock();
+        if inner.link.is_none() {
+            self.set_state(&mut inner, BrowserState::default());
+        }
+        drop(inner);
+        Ok(self.engine_status())
+    }
+
+    /// Stops the engine and deletes what the installer put on disk.
+    pub fn remove_engine(&self) -> Result<EngineStatus, BrowserError> {
+        let _only_one = self.installing.acquire().ok_or(EngineInstallError::Busy)?;
+        self.shutdown();
+        engine_files::remove(&self.lynx_home)
+            .map_err(|error| EngineInstallError::io(&self.lynx_home.join("engine"), error))?;
+        Ok(self.engine_status())
     }
 
     pub fn log(&self) -> Arc<PageLog> {
@@ -574,7 +613,7 @@ mod tests {
         assert!(matches!(error, BrowserError::EngineMissing(_)), "{error}");
         let state = service.state();
         assert_eq!(state.status, BrowserStatus::Failed);
-        assert!(state.error.unwrap().contains("browser:engine"));
+        assert!(state.error.unwrap().contains("not installed"));
         assert_eq!(
             recorder.0.lock().unwrap().len(),
             1,

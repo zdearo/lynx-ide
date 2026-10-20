@@ -178,6 +178,30 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 
 ---
 
+## Browser embutido (agentes)
+
+Decidido em vez de um browser no estilo Orca: o Chromium (CEF) roda num processo à parte (`lynx-browser-host`), a página é desenhada numa view GTK nativa sobre o webview e os agentes a usam por MCP. Ver a seção Browser do AGENTS.md.
+
+- [x] Motor em processo separado, com protocolo próprio (socket Unix + frames em memória compartilhada) e `bun run browser:engine`
+- [x] View nativa no Linux (Wayland), com barra, digitação com acentos, HiDPI, rolagem e redimensionamento
+- [x] Destacar a página para uma janela própria e devolvê-la, sem recarregar
+- [x] Ferramentas para o agente por MCP (`lynx --mcp`): snapshot com refs, navegar, clicar, digitar, teclas, rolar, esperar, screenshot, escolher opção, console e rede
+- [x] MCP instalado e removido junto dos hooks (Claude Code, Codex e OpenCode), sem diálogo de confirmação
+- [x] Limites do usuário: somente leitura ou desligado, e lista de sites
+- [x] O agente visível na página: cursor com a marca do agente, rótulo da ação, anel de carregamento e moldura; o browser não abre sozinho
+- [x] O que ninguém responde, o host responde: diálogos JS, permissões, downloads, seletor de arquivo e menu de contexto
+- [x] Download do motor de dentro do app, com manifesto, SHA-256, versão de protocolo e pacote gerado por `--bundle` (workflow `browser-engine.yml`)
+- [ ] **Publicar a primeira release com o pacote do motor** (o endereço padrão do manifesto aponta para ela; o workflow não foi executado)
+- [ ] Sandbox do Chromium (hoje `no_sandbox`) e perfil persistente (login salvo)
+- [ ] Várias abas, ou uma página por worktree; hoje há uma só e dois agentes disputam a mesma
+- [ ] Cópia e cola, Tab preso na página, atalhos do Lynx com a página em foco e o `<select>` nativo para o usuário
+- [ ] iframes no snapshot; hover, arrastar e enviar arquivo como ferramentas
+- [ ] MCP nos demais agentes (só Claude Code, Codex e OpenCode hoje)
+- [ ] Pré-autorizar as ferramentas `lynx` nos agentes, para não pedirem permissão a cada chamada (decisão do usuário)
+- [ ] Windows e macOS: view nativa, motor e pacote
+
+---
+
 ## Fase 4 — Avançado
 
 - [ ] Daemon de PTY separado, para as sessões sobreviverem a fechar a janela
@@ -187,7 +211,7 @@ Notificações de término e de "precisa de você" (Fase 3) dependem desta fase.
 - [ ] Execução remota por SSH
 - [ ] Contas de agente com troca rápida e acompanhamento de uso
 - [ ] Companion mobile
-- [ ] Browser embutido com Design Mode
+- [ ] Browser embutido: Design Mode (selecionar um elemento da página e mandar ao agente)
 
 ---
 

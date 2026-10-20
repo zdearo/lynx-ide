@@ -9,6 +9,7 @@ import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { EngineProgressBar } from "@/browser/EngineProgressBar";
 import { useBrowserStore } from "@/browser/browser-store";
 import { isBrowserWindow } from "@/browser/browser-window";
 import { copy } from "@/ui-copy";
@@ -180,25 +181,11 @@ function Notice({ starting }: { starting: boolean }) {
       </Centered>
     );
   }
-  if (failure?.kind === "browserEngineMissing") {
-    return (
-      <Centered>
-        <h2 className="text-sm font-medium">
-          {copy.browser.engineMissingTitle}
-        </h2>
-        <p className="mt-1 text-ui text-muted-foreground">
-          {copy.browser.engineMissingBody}
-        </p>
-        <code className="mt-2 inline-block rounded-md bg-muted px-2 py-1 text-ui">
-          {copy.browser.engineMissingCommand}
-        </code>
-        <div className="mt-3">
-          <Button variant="outline" size="sm" onClick={() => void start()}>
-            {copy.browser.retry}
-          </Button>
-        </div>
-      </Centered>
-    );
+  if (
+    failure?.kind === "browserEngineMissing" ||
+    failure?.kind === "browserEngineOutdated"
+  ) {
+    return <EngineNotice outdated={failure.kind === "browserEngineOutdated"} />;
   }
   return (
     <Centered>
@@ -211,6 +198,47 @@ function Notice({ starting }: { starting: boolean }) {
           {copy.browser.retry}
         </Button>
       </div>
+    </Centered>
+  );
+}
+
+/** The engine is not there, or is the wrong one: offer to download it, and show how it goes. */
+function EngineNotice({ outdated }: { outdated: boolean }) {
+  const busy = useBrowserStore((s) => s.engineBusy);
+  const error = useBrowserStore((s) => s.engineError);
+  const install = useBrowserStore((s) => s.installEngine);
+  const text = copy.browser.engine;
+
+  return (
+    <Centered>
+      <h2 className="text-sm font-medium">
+        {outdated ? text.outdatedTitle : text.missingTitle}
+      </h2>
+      <p className="mt-1 text-ui text-muted-foreground">
+        {outdated ? text.outdatedBody : text.missingBody}
+      </p>
+      {busy ? (
+        <div className="mt-3 text-left">
+          <EngineProgressBar />
+        </div>
+      ) : (
+        <div className="mt-3">
+          <Button size="sm" onClick={() => void install(outdated)}>
+            {error ? text.retry : outdated ? text.update : text.install}
+          </Button>
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="mt-2 text-ui text-destructive">
+          {error}
+        </p>
+      )}
+      <p className="mt-4 text-meta text-muted-foreground">
+        {text.developing}{" "}
+        <code className="rounded-md bg-muted px-1.5 py-0.5">
+          {text.developingCommand}
+        </code>
+      </p>
     </Centered>
   );
 }

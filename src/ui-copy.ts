@@ -159,6 +159,20 @@ export const copy = {
     },
     browser: {
       title: "Browser",
+      engine: {
+        label: "Browser engine",
+        hint: "The browser runs as a separate program, downloaded once. It is not part of the app.",
+        missing: "Not installed",
+        ready: (version: string | null) =>
+          version ? `Installed (${version})` : "Installed",
+        outdated: "Installed, but made for another version of Lynx",
+        install: "Download",
+        update: "Update",
+        reinstall: "Download again",
+        remove: "Remove",
+        removing: "Removing…",
+        failed: "The engine could not be changed",
+      },
       access: {
         label: "What agents can do in the browser",
         hint: "Agents you have turned on get the browser tools. You watch the same page they use. Read only lets them open and read pages but not click, type or choose.",
@@ -277,10 +291,27 @@ export const copy = {
     stop: "Stop loading",
     starting: "Starting the browser…",
     retry: "Try again",
-    engineMissingTitle: "The browser engine is not installed",
-    engineMissingBody:
-      "The browser runs as a separate program, installed once. In the project folder, run:",
-    engineMissingCommand: "bun run browser:engine",
+    engine: {
+      missingTitle: "The browser needs its engine",
+      missingBody:
+        "The browser runs as a separate program that is downloaded once and kept on this computer.",
+      outdatedTitle: "The browser engine needs an update",
+      outdatedBody:
+        "The installed engine was made for another version of Lynx. Download the one that matches.",
+      install: "Download the engine",
+      update: "Update the engine",
+      retry: "Try the download again",
+      installing: "Downloading the engine",
+      preparing: "Preparing…",
+      downloading: (received: string, total: string) =>
+        `Downloading ${received} of ${total}`,
+      verifying: "Checking the download…",
+      unpacking: "Unpacking…",
+      done: "Installed",
+      developing: "Building Lynx from source? Run:",
+      developingCommand: "bun run browser:engine",
+      failedTitle: "The engine could not be installed",
+    },
     failedTitle: "The browser could not start",
     stopped: "The browser engine stopped.",
     detach: "Open in a separate window",

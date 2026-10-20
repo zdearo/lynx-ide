@@ -1,6 +1,12 @@
 import { create } from "zustand";
 
-import { commands, type BrowserState, type IpcErrorKind } from "@/bindings";
+import {
+  commands,
+  type BrowserState,
+  type EngineProgress,
+  type EngineStatus,
+  type IpcErrorKind,
+} from "@/bindings";
 import { errorMessage } from "@/lib/error-message";
 import { IpcRequestError, unwrap } from "@/lib/ipc-result";
 
@@ -39,6 +45,14 @@ interface BrowserStoreState {
   /** A request to start the engine is in flight. */
   starting: boolean;
   failure: BrowserFailure | null;
+  /** What is installed, or null until the first read. */
+  engine: EngineStatus | null;
+  /** How far an install has got, while one runs. */
+  engineProgress: EngineProgress | null;
+  /** An install or a removal is running. */
+  engineBusy: boolean;
+  /** Why the last install or removal failed. */
+  engineError: string | null;
   /** What an agent is doing in the browser right now, or null a few seconds after it stops. */
   agentAction: AgentAction | null;
 
@@ -53,6 +67,11 @@ interface BrowserStoreState {
   /** Brings the page back to the main window. */
   attach: () => Promise<void>;
   apply: (state: BrowserState) => void;
+  loadEngine: () => Promise<void>;
+  /** Downloads the engine. With `force`, an engine of the same version is installed again. */
+  installEngine: (force?: boolean) => Promise<void>;
+  removeEngine: () => Promise<void>;
+  applyEngineProgress: (progress: EngineProgress) => void;
   /** An agent used the browser: remember who and what, for whoever has the browser open. */
   noteAgentAction: (agent: string, summary: string) => void;
   /** No agent is in control any more. */
@@ -71,6 +90,10 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
   state: STOPPED,
   starting: false,
   failure: null,
+  engine: null,
+  engineProgress: null,
+  engineBusy: false,
+  engineError: null,
   agentAction: null,
 
   setOpen: (open) => {
@@ -123,6 +146,43 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
   },
 
   apply: (state) => set({ state }),
+
+  loadEngine: async () => {
+    try {
+      set({ engine: await unwrap(commands.browserEngineStatus()) });
+    } catch (error) {
+      set({ engineError: errorMessage(error) });
+    }
+  },
+
+  installEngine: async (force = false) => {
+    if (get().engineBusy) return;
+    set({ engineBusy: true, engineError: null, engineProgress: null });
+    try {
+      const engine = await unwrap(commands.browserEngineInstall(force));
+      set({ engine, failure: null });
+      // The person was waiting to use the browser: start it now that it can run.
+      if (get().open && get().state.status !== "running") void get().start();
+    } catch (error) {
+      set({ engineError: errorMessage(error) });
+    } finally {
+      set({ engineBusy: false, engineProgress: null });
+    }
+  },
+
+  removeEngine: async () => {
+    if (get().engineBusy) return;
+    set({ engineBusy: true, engineError: null });
+    try {
+      set({ engine: await unwrap(commands.browserEngineRemove()) });
+    } catch (error) {
+      set({ engineError: errorMessage(error) });
+    } finally {
+      set({ engineBusy: false });
+    }
+  },
+
+  applyEngineProgress: (engineProgress) => set({ engineProgress }),
 
   noteAgentAction: (agent, summary) => {
     // The browser is not opened for the person: an agent works the page in the background, and

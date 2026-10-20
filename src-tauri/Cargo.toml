@@ -44,6 +44,9 @@ notify = "8.2.0"
 ignore = "0.4.33"
 lynx-browser-protocol = { version = "0.1.0", path = "crates/browser-protocol" }
 url = "2.5.8"
+ureq = "3"
+flate2 = "1"
+tar = "0.4"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

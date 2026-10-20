@@ -139,6 +139,7 @@ pub enum IpcErrorKind {
     Terminal,
     AgentHooks,
     BrowserEngineMissing,
+    BrowserEngineOutdated,
     Browser,
     Internal,
 }
@@ -212,6 +213,9 @@ impl From<AppError> for IpcError {
             AppError::AgentHooks(_) => IpcErrorKind::AgentHooks,
             AppError::Browser(crate::browser::BrowserError::EngineMissing(_)) => {
                 IpcErrorKind::BrowserEngineMissing
+            }
+            AppError::Browser(crate::browser::BrowserError::EngineOutdated(_)) => {
+                IpcErrorKind::BrowserEngineOutdated
             }
             AppError::Browser(_) => IpcErrorKind::Browser,
             AppError::TaskFailed(_) => IpcErrorKind::Internal,

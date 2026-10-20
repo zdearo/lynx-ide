@@ -4,8 +4,14 @@ use lynx_browser_protocol::link::LinkError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BrowserError {
-    #[error("the browser engine is not installed (expected {0}); run `bun run browser:engine`")]
+    #[error(
+        "the browser engine is not installed (expected {0}); install it in Lynx's settings, under Browser"
+    )]
     EngineMissing(PathBuf),
+    #[error(
+        "the browser engine at {0} is out of date for this Lynx; update it in Lynx's settings, under Browser"
+    )]
+    EngineOutdated(PathBuf),
     #[error("enter an http or https address")]
     InvalidAddress,
     #[error("the browser is not running")]
@@ -22,4 +28,6 @@ pub enum BrowserError {
     Unsupported,
     #[error(transparent)]
     Link(#[from] LinkError),
+    #[error(transparent)]
+    EngineInstall(#[from] super::engine_install_error::EngineInstallError),
 }

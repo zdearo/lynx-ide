@@ -16,7 +16,12 @@ mod browser_state;
 #[cfg(target_os = "linux")]
 mod click_counter;
 mod detached_window;
+pub mod engine_commands;
+mod engine_files;
+mod engine_install_error;
+mod engine_installer;
 mod engine_location;
+mod engine_manifest;
 #[cfg(target_os = "linux")]
 mod key_codes;
 mod key_names;
@@ -37,6 +42,7 @@ pub use agent_pointer::AgentPointer;
 pub use browser_error::BrowserError;
 pub use browser_service::{BrowserEvents, BrowserService, FrameSink};
 pub use browser_state::{BrowserState, BrowserStateChanged};
+pub use engine_commands::BrowserEngineProgress;
 
 /// Keeps the page and its windows in step: closing the browser window moves the page back to the
 /// main window, and closing the main window closes the browser window too.

@@ -123,6 +123,12 @@ function App() {
       useBrowserStore.getState().releaseAgent();
     });
 
+    const unlistenEngine = events.browserEngineProgress.listen(
+      ({ payload }) => {
+        useBrowserStore.getState().applyEngineProgress(payload.progress);
+      },
+    );
+
     const unlistenConfig = events.configChanged.listen(({ payload }) => {
       useConfigStore.getState().apply(payload.snapshot);
     });
@@ -149,6 +155,7 @@ function App() {
       void unlistenBrowser.then((unlisten) => unlisten());
       void unlistenAgentBrowser.then((unlisten) => unlisten());
       void unlistenAgentReleased.then((unlisten) => unlisten());
+      void unlistenEngine.then((unlisten) => unlisten());
     };
   }, []);
 

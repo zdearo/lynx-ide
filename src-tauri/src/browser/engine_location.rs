@@ -1,29 +1,38 @@
-//! Where the browser engine lives. It is a separate program, installed under the Lynx home by
-//! `bun run browser:engine` (and, later, by an optional download), so the app itself stays small.
+//! Where the browser engine lives. It is a separate program under the Lynx home, put there by the
+//! in-app install (or `bun run browser:engine` when developing Lynx), so the app itself stays small.
 
 use std::path::{Path, PathBuf};
 
 use super::browser_error::BrowserError;
-
-const HOST_NAME: &str = "lynx-browser-host";
-
-/// Where the installed engine's host program is, whether or not it exists.
-pub fn host_path(lynx_home: &Path) -> PathBuf {
-    lynx_home.join("engine").join("current").join(HOST_NAME)
-}
+use super::engine_files::{EngineState, host_path, read_status};
 
 pub fn locate(lynx_home: &Path) -> Result<PathBuf, BrowserError> {
     let host = host_path(lynx_home);
-    if host.is_file() {
-        Ok(host)
-    } else {
-        Err(BrowserError::EngineMissing(host))
+    match read_status(lynx_home).state {
+        EngineState::Ready => Ok(host),
+        EngineState::Missing => Err(BrowserError::EngineMissing(host)),
+        EngineState::Outdated => Err(BrowserError::EngineOutdated(host)),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use lynx_browser_protocol::message::PROTOCOL_VERSION;
+
     use super::*;
+    use crate::browser::engine_files::{INFO_FILE, current_dir};
+
+    fn install(home: &Path, protocol: u32) -> PathBuf {
+        let host = host_path(home);
+        std::fs::create_dir_all(host.parent().unwrap()).unwrap();
+        std::fs::write(&host, b"").unwrap();
+        std::fs::write(
+            current_dir(home).join(INFO_FILE),
+            format!(r#"{{"version":"v","protocol":{protocol}}}"#),
+        )
+        .unwrap();
+        host
+    }
 
     #[test]
     fn a_missing_engine_says_where_it_looked() {
@@ -39,10 +48,18 @@ mod tests {
     #[test]
     fn an_installed_engine_is_found() {
         let home = tempfile::tempdir().unwrap();
-        let host = host_path(home.path());
-        std::fs::create_dir_all(host.parent().unwrap()).unwrap();
-        std::fs::write(&host, b"").unwrap();
+        let host = install(home.path(), PROTOCOL_VERSION);
         assert_eq!(locate(home.path()).unwrap(), host);
+    }
+
+    #[test]
+    fn an_engine_of_another_protocol_is_outdated_not_started() {
+        let home = tempfile::tempdir().unwrap();
+        install(home.path(), PROTOCOL_VERSION + 1);
+        assert!(matches!(
+            locate(home.path()),
+            Err(BrowserError::EngineOutdated(_))
+        ));
     }
 
     #[test]

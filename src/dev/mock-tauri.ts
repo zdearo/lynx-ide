@@ -573,6 +573,29 @@ export function installMockTauri(scenario: string): void {
   // Mirrors the backend's hook state per harness so the Agents settings can be exercised in dev.
   const hookStates: Record<string, "notInstalled" | "installed"> = {};
   const browserToolsOn = new Set<string>();
+  // `?engine=missing` starts without the browser engine, to try the download.
+  let engineInstalled =
+    new URLSearchParams(window.location.search).get("engine") !== "missing";
+  const engineStatus = () => ({
+    state: engineInstalled ? "ready" : "missing",
+    version: engineInstalled ? "154.0.34-p2" : null,
+    path: "/home/dev/.lynx/engine/current/lynx-browser-host",
+  });
+  /** A download that reports a few steps, as the backend does. */
+  async function installMockEngine() {
+    const steps = [
+      { phase: "downloading", received: 35_000_000, total: 139_000_000 },
+      { phase: "downloading", received: 100_000_000, total: 139_000_000 },
+      { phase: "verifying", received: 139_000_000, total: 139_000_000 },
+      { phase: "unpacking", received: 0, total: 0 },
+    ];
+    for (const progress of steps) {
+      void emit("browser-engine-progress", { progress });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    engineInstalled = true;
+    return engineStatus();
+  }
   let agentReleaseTimer: ReturnType<typeof setTimeout> | undefined;
   let browserState = {
     status: "stopped",
@@ -1472,7 +1495,20 @@ export function installMockTauri(scenario: string): void {
           hookStates[String(args.harness)] = "notInstalled";
           browserToolsOn.delete(String(args.harness));
           return hookStatusOf(String(args.harness));
+        case "browser_engine_status":
+          return engineStatus();
+        case "browser_engine_install":
+          return await installMockEngine();
+        case "browser_engine_remove":
+          engineInstalled = false;
+          return engineStatus();
         case "browser_open":
+          if (!engineInstalled) {
+            throw {
+              kind: "browserEngineMissing",
+              message: "the browser engine is not installed",
+            };
+          }
           browserState = {
             ...browserState,
             status: "running",

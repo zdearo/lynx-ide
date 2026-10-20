@@ -34,6 +34,13 @@ export const commands = {
 	browserAttach: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_attach")),
 	/**  Stops the engine. The next open starts a new one. */
 	browserClose: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_close")),
+	browserEngineStatus: () => typedError<EngineStatus, IpcError>(__TAURI_INVOKE("browser_engine_status")),
+	/**
+	 *  Downloads the engine and puts it in place, reporting progress as events. With `force`, an
+	 *  engine of the same version is installed again.
+	 */
+	browserEngineInstall: (force: boolean) => typedError<EngineStatus, IpcError>(__TAURI_INVOKE("browser_engine_install", { force })),
+	browserEngineRemove: () => typedError<EngineStatus, IpcError>(__TAURI_INVOKE("browser_engine_remove")),
 	listRepos: () => typedError<Repo[], IpcError>(__TAURI_INVOKE("list_repos")),
 	addRepo: (path: string) => typedError<Repo, IpcError>(__TAURI_INVOKE("add_repo", { path })),
 	createProject: (parentPath: string, name: string) => typedError<Repo, IpcError>(__TAURI_INVOKE("create_project", { parentPath, name })),
@@ -208,6 +215,7 @@ export const events = {
 	agentStatusChanged: makeEvent<AgentStatusChanged>("agent-status-changed"),
 	browserAgentActivity: makeEvent<BrowserAgentActivity>("browser-agent-activity"),
 	browserAgentReleased: makeEvent<BrowserAgentReleased>("browser-agent-released"),
+	browserEngineProgress: makeEvent<BrowserEngineProgress>("browser-engine-progress"),
 	browserStateChanged: makeEvent<BrowserStateChanged>("browser-state-changed"),
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
@@ -310,6 +318,11 @@ export type BrowserConfig = {
 	agentAccess: AgentBrowserAccess,
 	/**  Sites agents may visit, each covering its subdomains. Empty means any site. */
 	allowedSites: string[],
+};
+
+/**  Sent while the engine downloads and unpacks. */
+export type BrowserEngineProgress = {
+	progress: EngineProgress,
 };
 
 /**  What the interface shows about the browser: its status and the page it is on. */
@@ -487,6 +500,32 @@ export type DraftedPullRequest = {
 	agentLabel: string,
 };
 
+export type EnginePhase = "downloading" | "verifying" | "unpacking" | "done";
+
+/**
+ *  How far an install has got, in bytes. `total` is zero while it is not known. (Sizes are `u32`
+ *  because the interface contract cannot carry 64-bit integers; an engine is far below 4 GB.)
+ */
+export type EngineProgress = {
+	phase: EnginePhase,
+	received: number,
+	total: number,
+};
+
+export type EngineState = "missing" | 
+/**  There, and speaking the protocol this app speaks. */
+"ready" | 
+/**  There, but built for another protocol: it has to be installed again. */
+"outdated";
+
+export type EngineStatus = {
+	state: EngineState,
+	/**  Which build is installed, when it says. */
+	version: string | null,
+	/**  Where the host program is, or would be. */
+	path: string,
+};
+
 /**  A side that is `None` does not exist there: a new file has no original, a deleted one no modified. */
 export type FileDiff = {
 	original: string | null,
@@ -557,7 +596,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "browserEngineMissing" | "browser" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "internal";
 
 export type LastCommitMessage = {
 	summary: string,

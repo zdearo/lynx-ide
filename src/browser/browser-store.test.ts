@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { commands, type BrowserState } from "@/bindings";
+import { commands, type BrowserState, type EngineStatus } from "@/bindings";
 import { STOPPED, useBrowserStore } from "@/browser/browser-store";
 import { failure, ok } from "@/test-support";
 
@@ -10,6 +10,9 @@ vi.mock("@/bindings", () => ({
     browserNavigate: vi.fn(),
     browserDetach: vi.fn(),
     browserAttach: vi.fn(),
+    browserEngineStatus: vi.fn(),
+    browserEngineInstall: vi.fn(),
+    browserEngineRemove: vi.fn(),
   },
 }));
 
@@ -216,5 +219,94 @@ describe("an agent using the browser", () => {
 
     expect(useBrowserStore.getState().agentAction).toBeNull();
     vi.useRealTimers();
+  });
+});
+
+describe("the browser engine", () => {
+  const ready: EngineStatus = {
+    state: "ready",
+    version: "154.0.34-p2",
+    path: "/home/dev/.lynx/engine/current/lynx-browser-host",
+  };
+  const missing: EngineStatus = { ...ready, state: "missing", version: null };
+
+  it("reads what is installed", async () => {
+    api.browserEngineStatus.mockResolvedValue(ok(missing));
+
+    await useBrowserStore.getState().loadEngine();
+
+    expect(useBrowserStore.getState().engine?.state).toBe("missing");
+  });
+
+  it("installs, clears the progress and starts the browser the person was waiting for", async () => {
+    useBrowserStore.setState({
+      open: true,
+      engineProgress: { phase: "unpacking", received: 0, total: 0 },
+    });
+    api.browserEngineInstall.mockResolvedValue(ok(ready));
+    api.browserOpen.mockResolvedValue(ok(running));
+
+    await useBrowserStore.getState().installEngine();
+
+    const state = useBrowserStore.getState();
+    expect(state.engine).toEqual(ready);
+    expect(state.engineProgress).toBeNull();
+    expect(state.engineBusy).toBe(false);
+    expect(api.browserEngineInstall).toHaveBeenCalledWith(false);
+    await vi.waitFor(() => expect(api.browserOpen).toHaveBeenCalled());
+  });
+
+  it("does not start a browser nobody opened", async () => {
+    api.browserEngineInstall.mockResolvedValue(ok(ready));
+
+    await useBrowserStore.getState().installEngine(true);
+
+    expect(api.browserEngineInstall).toHaveBeenCalledWith(true);
+    expect(api.browserOpen).not.toHaveBeenCalled();
+  });
+
+  it("keeps the reason when the download fails", async () => {
+    api.browserEngineInstall.mockResolvedValue(
+      failure("browser", "could not reach github.com"),
+    );
+
+    await useBrowserStore.getState().installEngine();
+
+    const state = useBrowserStore.getState();
+    expect(state.engineError).toBe("could not reach github.com");
+    expect(state.engineBusy).toBe(false);
+  });
+
+  it("ignores a second install while one runs", async () => {
+    let finish: (value: ReturnType<typeof ok<EngineStatus>>) => void = () => {};
+    api.browserEngineInstall.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+
+    const first = useBrowserStore.getState().installEngine();
+    await useBrowserStore.getState().installEngine();
+    finish(ok(ready));
+    await first;
+
+    expect(api.browserEngineInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes the engine", async () => {
+    useBrowserStore.setState({ engine: ready });
+    api.browserEngineRemove.mockResolvedValue(ok(missing));
+
+    await useBrowserStore.getState().removeEngine();
+
+    expect(useBrowserStore.getState().engine?.state).toBe("missing");
+  });
+
+  it("shows the progress it is given", () => {
+    useBrowserStore
+      .getState()
+      .applyEngineProgress({ phase: "downloading", received: 5, total: 10 });
+
+    expect(useBrowserStore.getState().engineProgress?.received).toBe(5);
   });
 });

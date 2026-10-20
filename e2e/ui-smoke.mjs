@@ -3006,6 +3006,74 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 });
 
+// Without its engine the browser offers to download it, shows how it goes, and then opens.
+await session("?mock=full&engine=missing", 1200, 760, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.getByRole("button", { name: "Browser", exact: true }).click();
+  await p.waitForTimeout(500);
+
+  check(
+    "a browser with no engine says so and offers the download",
+    (await p.getByText("The browser needs its engine").count()) === 1 &&
+      (await p.getByRole("button", { name: "Download the engine" }).count()) ===
+        1,
+  );
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the engine notice",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await p.getByRole("button", { name: "Download the engine" }).click();
+  await p.waitForTimeout(150);
+  const bar = p.getByRole("progressbar");
+  check(
+    "the download shows a progress bar with the size",
+    (await bar.count()) === 1 &&
+      (await p.getByText(/Downloading \d+ MB of 139 MB/).count()) === 1,
+  );
+
+  await p.waitForTimeout(2200);
+  check(
+    "when the engine is in, the browser the person asked for opens",
+    (await p.getByRole("toolbar", { name: "Browser" }).count()) === 1 &&
+      (await p.getByText("The browser needs its engine").count()) === 0,
+  );
+});
+
+// Settings shows the engine, and removing it makes the browser ask for it again.
+await session("?mock=full", 1200, 760, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(400);
+  await p.getByRole("tab", { name: "Browser", exact: true }).click();
+  await p.waitForTimeout(400);
+
+  const group = p.getByRole("group", { name: "Browser engine" });
+  check(
+    "the settings say which engine is installed",
+    ((await group.textContent()) ?? "").includes("Installed (154.0.34-p2)"),
+  );
+  await group.getByRole("button", { name: "Remove" }).click();
+  await p.waitForTimeout(400);
+  check(
+    "removing it says it is not installed and offers the download",
+    ((await group.textContent()) ?? "").includes("Not installed") &&
+      (await group
+        .getByRole("button", { name: "Download", exact: true })
+        .count()) === 1,
+  );
+});
+
 // The section buttons stage every file of their section at once.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();

@@ -6,6 +6,7 @@ use serde_json::{Map, Value};
 use specta::Type;
 
 use crate::agents::harness::{HarnessId, harness_name, harness_named};
+use crate::browser::AgentBrowserAccess;
 
 pub const DEFAULT_FONT_SIZE: u8 = 13;
 pub const MIN_FONT_SIZE: u8 = 8;
@@ -14,6 +15,8 @@ pub const DEFAULT_SCROLLBACK: u32 = 5_000;
 pub const MAX_SCROLLBACK: u32 = 100_000;
 pub const MAX_LAUNCH_ARGUMENTS_CHARS: usize = 500;
 pub const MAX_COMMIT_INSTRUCTIONS_CHARS: usize = 4_000;
+pub const MAX_ALLOWED_SITES: usize = 50;
+pub const MAX_SITE_CHARS: usize = 253;
 
 /// What a bell from a program does. Sound is left out: the terminal engine only reports the bell.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -167,6 +170,15 @@ impl Default for NotificationsConfig {
     }
 }
 
+/// What agents may do in Lynx's browser.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserConfig {
+    pub agent_access: AgentBrowserAccess,
+    /// Sites agents may visit, each covering its subdomains. Empty means any site.
+    pub allowed_sites: Vec<String>,
+}
+
 /// The effective settings: what `~/.lynx/config.json` says, with defaults for the rest.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -176,6 +188,7 @@ pub struct AppConfig {
     pub agents: AgentsConfig,
     pub git: GitConfig,
     pub notifications: NotificationsConfig,
+    pub browser: BrowserConfig,
 }
 
 /// One thing wrong with the config, addressed by its dotted key (`terminal.fontSize`).
@@ -220,6 +233,10 @@ impl AppConfig {
         for arguments in self.agents.launch_arguments.values_mut() {
             *arguments = arguments.trim().to_owned();
         }
+        for site in &mut self.browser.allowed_sites {
+            *site = site.trim().to_owned();
+        }
+        self.browser.allowed_sites.retain(|site| !site.is_empty());
         let instructions = &mut self.git.commit_message_instructions;
         if let Some(text) = instructions.as_deref().map(str::trim) {
             *instructions = (!text.is_empty()).then(|| text.to_owned());
@@ -280,6 +297,18 @@ impl AppConfig {
                 ));
             }
         }
+        let sites = &self.browser.allowed_sites;
+        if sites.len() > MAX_ALLOWED_SITES {
+            issues.push(ConfigIssue::new(
+                "browser.allowedSites",
+                format!("must list at most {MAX_ALLOWED_SITES} sites"),
+            ));
+        } else if let Some(site) = sites.iter().find(|site| !looks_like_site(site)) {
+            issues.push(ConfigIssue::new(
+                "browser.allowedSites",
+                format!("{site} is not a site name; use names like example.com"),
+            ));
+        }
         if let Some(text) = &self.git.commit_message_instructions {
             if text.chars().any(|c| c.is_control() && c != '\n') {
                 issues.push(ConfigIssue::new(
@@ -325,6 +354,8 @@ impl AppConfig {
             "notifications.onNeedsYou" => {
                 self.notifications.on_needs_you = defaults.notifications.on_needs_you;
             }
+            "browser.agentAccess" => self.browser.agent_access = defaults.browser.agent_access,
+            "browser.allowedSites" => self.browser.allowed_sites = defaults.browser.allowed_sites,
             "git.commitMessageAgent" => {
                 self.git.commit_message_agent = defaults.git.commit_message_agent;
             }
@@ -405,6 +436,11 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
             config.notifications.on_needs_you = value;
         }
     }
+    if let Some(browser) = section(root, "browser", &mut issues) {
+        config.browser.agent_access =
+            agent_browser_access(browser, &mut issues).unwrap_or_default();
+        config.browser.allowed_sites = allowed_sites(browser, &mut issues);
+    }
     if let Some(git) = section(root, "git", &mut issues) {
         config.git.commit_message_agent =
             commit_message_agent(git, &mut issues).unwrap_or_default();
@@ -429,6 +465,59 @@ fn launch_mode(agents: &Map<String, Value>, issues: &mut Vec<ConfigIssue>) -> Op
             None
         }
     }
+}
+
+fn agent_browser_access(
+    browser: &Map<String, Value>,
+    issues: &mut Vec<ConfigIssue>,
+) -> Option<AgentBrowserAccess> {
+    match optional_text(browser, "agentAccess", "browser", issues)?.as_str() {
+        "off" => Some(AgentBrowserAccess::Off),
+        "readOnly" => Some(AgentBrowserAccess::ReadOnly),
+        "full" => Some(AgentBrowserAccess::Full),
+        _ => {
+            issues.push(ConfigIssue::new(
+                "browser.agentAccess",
+                "must be off, readOnly or full",
+            ));
+            None
+        }
+    }
+}
+
+fn allowed_sites(browser: &Map<String, Value>, issues: &mut Vec<ConfigIssue>) -> Vec<String> {
+    let Some(value) = browser.get("allowedSites") else {
+        return Vec::new();
+    };
+    let sites = value.as_array().and_then(|list| {
+        list.iter()
+            .map(|site| site.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+    });
+    match sites {
+        Some(sites) => sites,
+        None => {
+            if !value.is_null() {
+                issues.push(ConfigIssue::new(
+                    "browser.allowedSites",
+                    "must be a list of site names",
+                ));
+            }
+            Vec::new()
+        }
+    }
+}
+
+/// A host name such as `example.com`, with an optional `*.` in front.
+fn looks_like_site(site: &str) -> bool {
+    let name = site.strip_prefix("*.").unwrap_or(site);
+    !name.is_empty()
+        && name.chars().count() <= MAX_SITE_CHARS
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+        && !name.starts_with(['.', '-'])
+        && !name.ends_with(['.', '-'])
 }
 
 fn commit_message_agent(
@@ -1038,5 +1127,41 @@ mod tests {
         let (config, issues) = parse(json!({ "notifications": { "onNeedsYou": "yes" } }));
         assert_eq!(keys(&issues), ["notifications.onNeedsYou"]);
         assert!(config.notifications.on_needs_you);
+    }
+
+    #[test]
+    fn the_browser_defaults_to_full_access_on_any_site() {
+        let (config, issues) = parse(json!({}));
+        assert!(issues.is_empty());
+        assert_eq!(config.browser.agent_access, AgentBrowserAccess::Full);
+        assert!(config.browser.allowed_sites.is_empty());
+    }
+
+    #[test]
+    fn the_browser_settings_are_read_and_sites_are_trimmed() {
+        let (config, issues) = parse(json!({
+            "browser": { "agentAccess": "readOnly", "allowedSites": [" example.com ", "", "*.docs.rs"] }
+        }));
+        assert!(issues.is_empty());
+        assert_eq!(config.browser.agent_access, AgentBrowserAccess::ReadOnly);
+        assert_eq!(config.browser.allowed_sites, ["example.com", "*.docs.rs"]);
+    }
+
+    #[test]
+    fn a_bad_browser_access_is_reported_and_keeps_the_default() {
+        let (config, issues) = parse(json!({ "browser": { "agentAccess": "sometimes" } }));
+        assert_eq!(keys(&issues), ["browser.agentAccess"]);
+        assert_eq!(config.browser.agent_access, AgentBrowserAccess::Full);
+    }
+
+    #[test]
+    fn a_site_list_that_is_not_names_is_reported_and_dropped() {
+        let (config, issues) =
+            parse(json!({ "browser": { "allowedSites": ["https://example.com/x"] } }));
+        assert_eq!(keys(&issues), ["browser.allowedSites"]);
+        assert!(config.browser.allowed_sites.is_empty());
+
+        let (_, issues) = parse(json!({ "browser": { "allowedSites": "example.com" } }));
+        assert_eq!(keys(&issues), ["browser.allowedSites"]);
     }
 }

@@ -30,7 +30,7 @@ pub struct HookInstallStatus {
     pub state: HookInstallState,
     /// The file Lynx changes for this harness.
     pub config_path: String,
-    /// The events Lynx listens to, so the confirmation can name them before anything changes.
+    /// The events Lynx listens to.
     pub events: Vec<String>,
     pub detail: Option<String>,
 }
@@ -43,6 +43,8 @@ pub enum HookInstallError {
     InvalidConfig { path: String },
     #[error("{path} has no agent file to add the hooks to")]
     NoAgentFiles { path: String },
+    #[error("`{command}` failed: {detail}")]
+    Command { command: String, detail: String },
     #[error("could not update {path}: {source}")]
     Io {
         path: String,

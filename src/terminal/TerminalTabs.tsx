@@ -5,7 +5,9 @@ import { SidebarLeftGlyph18 } from "@/components/icons/SidebarLeftGlyph18";
 import { SidebarRightGlyph18 } from "@/components/icons/SidebarRightGlyph18";
 import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 
+import { GlobeGlyph18 } from "@/components/icons/GlobeGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
+import { useBrowserStore } from "@/browser/browser-store";
 import { cn } from "@/lib/utils";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { NewTerminalMenu } from "@/terminal/NewTerminalMenu";
@@ -35,6 +37,8 @@ export function TerminalTabs({
   const allSessions = useTerminalStore((state) => state.sessions);
   const activeByWorktree = useTerminalStore((state) => state.activeByWorktree);
   const setActive = useTerminalStore((state) => state.setActive);
+  const browserOpen = useBrowserStore((state) => state.open);
+  const toggleBrowser = useBrowserStore((state) => state.toggle);
 
   const path = selected?.worktree.path ?? null;
   // While a file is on screen no terminal tab is the current one.
@@ -160,7 +164,14 @@ export function TerminalTabs({
           </NewTerminalMenu>
         </div>
       )}
-      <div className="ml-auto flex items-center px-1.5">
+      <div className="ml-auto flex items-center gap-0.5 px-1.5">
+        <TooltipIconButton
+          label={copy.browser.toggle}
+          aria-pressed={browserOpen}
+          onClick={toggleBrowser}
+        >
+          <GlobeGlyph18 />
+        </TooltipIconButton>
         <TooltipIconButton
           label={copy.rightPanel.toggle}
           shortcut={shortcutLabel("toggleFilesPanel")}

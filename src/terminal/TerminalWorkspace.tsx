@@ -5,6 +5,9 @@ import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
 import { Button } from "@/components/ui/button";
 import { useDialogStore } from "@/dialog-store";
 import { shortcutLabel } from "@/platform-shortcuts";
+import { BrowserView } from "@/browser/BrowserView";
+import { DetachedNotice } from "@/browser/DetachedNotice";
+import { useBrowserStore } from "@/browser/browser-store";
 import { FileTabs } from "@/editor/FileTabs";
 import { activeFileOf, useEditorStore } from "@/editor/editor-store";
 import { useVisiblePresets } from "@/agents/agent-catalog-store";
@@ -50,6 +53,8 @@ export function TerminalWorkspace({
   const activeId = activeSessionId(sessions, activeByWorktree, path);
   const hasSessions = sessions.some((session) => session.worktreePath === path);
   const openFile = useEditorStore((state) => activeFileOf(state, path));
+  const browserOpen = useBrowserStore((state) => state.open);
+  const browserDetached = useBrowserStore((state) => state.state.detached);
 
   // Looking at a finished agent is what clears its "done" mark.
   const activeFinished = sessions.some(
@@ -78,12 +83,12 @@ export function TerminalWorkspace({
             key={session.id}
             className={cn(
               "absolute inset-0",
-              (session.id !== activeId || openFile) && "hidden",
+              (session.id !== activeId || openFile || browserOpen) && "hidden",
             )}
           >
             <TerminalView
               terminalId={session.id}
-              active={session.id === activeId && !openFile}
+              active={session.id === activeId && !openFile && !browserOpen}
             />
           </div>
         ))}
@@ -95,9 +100,11 @@ export function TerminalWorkspace({
             </Suspense>
           </div>
         )}
-        {loaded && selected && !hasSessions && !openFile && (
+        {loaded && selected && !hasSessions && !openFile && !browserOpen && (
           <EmptyWorktree selected={selected} />
         )}
+        {browserOpen &&
+          (browserDetached ? <DetachedNotice /> : <BrowserView />)}
       </div>
     </main>
   );

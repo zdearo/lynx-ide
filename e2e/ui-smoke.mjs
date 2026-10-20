@@ -495,10 +495,6 @@ await session("?mock=full", 1200, 900, async (p) => {
 
   await p.getByRole("switch", { name: "Use Claude Code in Lynx" }).click();
   await p.waitForTimeout(300);
-  await p
-    .getByRole("alertdialog")
-    .getByRole("button", { name: "Turn on", exact: true })
-    .click();
   await p.waitForTimeout(600);
 
   const argumentsSwitch = p.getByRole("switch", {
@@ -567,7 +563,7 @@ await session("?mock=full", 1200, 900, async (p) => {
   );
 });
 
-// The agents found on this computer get a switch. Turning one on rewrites its settings, so it is asked first.
+// The agents found on this computer get a switch, and flipping it takes effect without a confirmation.
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await p.waitForTimeout(600);
@@ -602,38 +598,32 @@ await session("?mock=full", 1200, 760, async (p) => {
       .count()) === 0,
   );
 
+  // Turning an agent on needs no confirmation: the switch itself is the yes.
   await claudeSwitch.click();
-  await p.waitForTimeout(300);
-  const confirm = p.getByRole("alertdialog");
-  const confirmText = (await confirm.textContent()) ?? "";
-  check(
-    "turning it on asks first and names the settings file and the events",
-    (await confirm.count()) === 1 &&
-      confirmText.includes("/home/dev/.claude/settings.json") &&
-      confirmText.includes("SessionStart"),
-    confirmText,
-  );
-
-  await confirm.getByRole("button", { name: "Cancel" }).click();
-  await p.waitForTimeout(300);
-  check(
-    "cancelling leaves the switch off",
-    (await p.getByRole("alertdialog").count()) === 0 &&
-      (await claudeSwitch.getAttribute("aria-checked")) === "false",
-  );
-
-  await claudeSwitch.click();
-  await p.waitForTimeout(300);
-  await p
-    .getByRole("alertdialog")
-    .getByRole("button", { name: "Turn on", exact: true })
-    .click();
   await p.waitForTimeout(400);
   check(
-    "confirming turns Claude Code on",
+    "turning Claude Code on asks nothing and takes effect at once",
     (await p.getByRole("alertdialog").count()) === 0 &&
       (await claudeSwitch.getAttribute("aria-checked")) === "true",
   );
+  check(
+    "the browser tools went in with the hooks",
+    (await p.evaluate(() => window.__lynxMock.browserToolsOn("claude"))) ===
+      true,
+  );
+
+  await claudeSwitch.click();
+  await p.waitForTimeout(400);
+  check(
+    "turning it off asks nothing either",
+    (await p.getByRole("alertdialog").count()) === 0 &&
+      (await claudeSwitch.getAttribute("aria-checked")) === "false" &&
+      (await p.evaluate(() => window.__lynxMock.browserToolsOn("claude"))) ===
+        false,
+  );
+
+  await claudeSwitch.click();
+  await p.waitForTimeout(400);
 
   const axeAgents = await p.evaluate(async (src) => {
     window.eval(src);
@@ -2760,6 +2750,92 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 });
 
+// The Browser tab: how far agents may go in the page, and the sites they may visit.
+await session("?mock=full", 1200, 760, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(400);
+  await p.getByRole("tab", { name: "Browser", exact: true }).click();
+  await p.waitForTimeout(300);
+
+  check(
+    "agents get full control of the browser by default, on any site",
+    ((await p.locator("#browser-agent-access").textContent()) ?? "").includes(
+      "Full control",
+    ) && (await p.locator("#browser-allowed-sites").inputValue()) === "",
+  );
+
+  await p.locator("#browser-agent-access").click();
+  await p.getByRole("option", { name: "Read only", exact: true }).click();
+  await p.waitForTimeout(400);
+  check(
+    "the access choice saves",
+    ((await p.locator("#browser-agent-access").textContent()) ?? "").includes(
+      "Read only",
+    ),
+  );
+
+  const sites = p.locator("#browser-allowed-sites");
+  await sites.fill("example.com\n  docs.rs  \n");
+  await sites.blur();
+  await p.waitForTimeout(400);
+  check(
+    "the sites save one per line, trimmed",
+    (await sites.inputValue()) === "example.com\ndocs.rs",
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the Browser settings",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+});
+
+// An agent works the browser in the background; whoever opens it sees who is in control.
+await session("?mock=full", 1200, 760, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.waitForTimeout(400);
+  check(
+    "the browser is not on screen before an agent uses it",
+    (await p.getByRole("toolbar", { name: "Browser" }).count()) === 0,
+  );
+
+  await p.evaluate(() =>
+    window.__lynxMock.agentUsesBrowser("Opening example.com"),
+  );
+  await p.waitForTimeout(500);
+  check(
+    "an agent using the browser does not take over the screen",
+    (await p.getByRole("toolbar", { name: "Browser" }).count()) === 0,
+  );
+  await p.getByRole("button", { name: "Browser", exact: true }).click();
+  await p.waitForTimeout(500);
+  check(
+    "and the toolbar says what the agent is doing",
+    (await p
+      .getByRole("toolbar", { name: "Browser" })
+      .getByRole("status")
+      .textContent()) === "Claude Code is in control · Opening example.com",
+  );
+
+  await p.waitForTimeout(6400);
+  check(
+    "the mark goes away a few seconds after the agent stops",
+    (await p
+      .getByRole("toolbar", { name: "Browser" })
+      .getByRole("status")
+      .count()) === 0,
+  );
+});
+
 // The section buttons stage every file of their section at once.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
@@ -3607,10 +3683,6 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p.waitForTimeout(300);
   await p.getByRole("switch", { name: "Use Claude Code in Lynx" }).click();
   await p.waitForTimeout(300);
-  await p
-    .getByRole("alertdialog")
-    .getByRole("button", { name: "Turn on", exact: true })
-    .click();
   await p.waitForTimeout(600);
   await p.keyboard.press("Escape");
   await p.waitForTimeout(300);
@@ -3659,10 +3731,6 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p.waitForTimeout(300);
   await p.getByRole("switch", { name: "Use Claude Code in Lynx" }).click();
   await p.waitForTimeout(300);
-  await p
-    .getByRole("alertdialog")
-    .getByRole("button", { name: "Turn on", exact: true })
-    .click();
   await p.waitForTimeout(600);
   await p.keyboard.press("Escape");
   await p.waitForTimeout(300);

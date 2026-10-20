@@ -15,6 +15,7 @@ use super::agent_monitor::AgentInput;
 use super::harness::harness_named;
 
 pub const HOOK_PATH: &str = "/agent-hook";
+pub const TOOL_PATH: &str = "/agent-tool";
 pub const TOKEN_HEADER: &str = "X-Lynx-Token";
 pub const SESSION_ENV: &str = "LYNX_SESSION_ID";
 pub const PORT_ENV: &str = "LYNX_HOOK_PORT";
@@ -23,6 +24,14 @@ pub const TOKEN_ENV: &str = "LYNX_HOOK_TOKEN";
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_HEAD_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
+
+/// Runs the tools an agent calls through its MCP process. The hub only authenticates the call and
+/// finds the session it came from; what the tool does is up to the handler.
+pub trait ToolHandler: Send + Sync + 'static {
+    /// Returns the MCP `tools/call` result. Blocks while the tool works.
+    /// `agent` is the harness name the agent's MCP entry carries (`claude`, `codex`...), or empty.
+    fn call(&self, session_id: &str, agent: &str, tool: &str, arguments: Value) -> Value;
+}
 
 /// Clones share one listener, so every session in the app reports through the same port.
 #[derive(Clone)]
@@ -34,6 +43,30 @@ pub struct HookHub {
 struct Routes {
     token: String,
     sessions: Mutex<HashMap<String, Sender<AgentInput>>>,
+    tools: Mutex<Option<Arc<dyn ToolHandler>>>,
+}
+
+/// An answer to a request: the status line, and a JSON body when there is one.
+struct Reply {
+    status: &'static str,
+    body: Option<String>,
+}
+
+impl Reply {
+    fn status(status: &'static str) -> Self {
+        Self { status, body: None }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolCall {
+    session_id: String,
+    #[serde(default)]
+    agent: Option<String>,
+    tool: String,
+    #[serde(default)]
+    arguments: Value,
 }
 
 #[derive(Deserialize)]
@@ -51,6 +84,7 @@ impl HookHub {
         let routes = Arc::new(Routes {
             token: uuid::Uuid::new_v4().to_string(),
             sessions: Mutex::new(HashMap::new()),
+            tools: Mutex::new(None),
         });
         let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .ok()
@@ -73,6 +107,7 @@ impl HookHub {
             routes: Arc::new(Routes {
                 token: String::new(),
                 sessions: Mutex::new(HashMap::new()),
+                tools: Mutex::new(None),
             }),
         }
     }
@@ -87,6 +122,15 @@ impl HookHub {
             (PORT_ENV.to_owned(), port.to_string()),
             (TOKEN_ENV.to_owned(), self.routes.token.clone()),
         ]
+    }
+
+    /// Sets who answers an agent's tool calls. Until then they get "service unavailable".
+    pub fn set_tool_handler(&self, handler: Arc<dyn ToolHandler>) {
+        *self
+            .routes
+            .tools
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(handler);
     }
 
     pub fn register(&self, session_id: &str, input: Sender<AgentInput>) {
@@ -118,11 +162,16 @@ fn accept_loop(listener: &TcpListener, routes: &Arc<Routes>) {
 fn handle(mut stream: TcpStream, routes: &Routes) {
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-    let status = match read_request(&mut stream) {
+    let reply = match read_request(&mut stream) {
         Some(request) => route(&request, routes),
-        None => "400 Bad Request",
+        None => Reply::status("400 Bad Request"),
     };
-    let response = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let body = reply.body.unwrap_or_default();
+    let response = format!(
+        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        reply.status,
+        body.len()
+    );
     let _ = stream.write_all(response.as_bytes());
 }
 
@@ -195,14 +244,21 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn route(request: &Request, routes: &Routes) -> &'static str {
-    if request.method != "POST" || request.path != HOOK_PATH {
-        return "404 Not Found";
+fn route(request: &Request, routes: &Routes) -> Reply {
+    if request.method != "POST" || !(request.path == HOOK_PATH || request.path == TOOL_PATH) {
+        return Reply::status("404 Not Found");
     }
     if request.token.as_deref() != Some(routes.token.as_str()) {
-        return "401 Unauthorized";
+        return Reply::status("401 Unauthorized");
     }
-    let Ok(envelope) = serde_json::from_slice::<Envelope>(&request.body) else {
+    if request.path == TOOL_PATH {
+        return route_tool(&request.body, routes);
+    }
+    Reply::status(route_hook(&request.body, routes))
+}
+
+fn route_hook(body: &[u8], routes: &Routes) -> &'static str {
+    let Ok(envelope) = serde_json::from_slice::<Envelope>(body) else {
         return "400 Bad Request";
     };
     let Some(harness) = harness_named(&envelope.harness) else {
@@ -223,6 +279,40 @@ fn route(request: &Request, routes: &Routes) -> &'static str {
         "204 No Content"
     } else {
         "404 Not Found"
+    }
+}
+
+/// A tool call from a session's MCP process. Only a session that is open in Lynx may call.
+fn route_tool(body: &[u8], routes: &Routes) -> Reply {
+    let Ok(call) = serde_json::from_slice::<ToolCall>(body) else {
+        return Reply::status("400 Bad Request");
+    };
+    let known = routes
+        .sessions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains_key(&call.session_id);
+    if !known {
+        return Reply::status("404 Not Found");
+    }
+    let handler = routes
+        .tools
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    let Some(handler) = handler else {
+        return Reply::status("503 Service Unavailable");
+    };
+    // The lock is released: a tool can take many seconds, and other sessions keep reporting.
+    let result = handler.call(
+        &call.session_id,
+        call.agent.as_deref().unwrap_or_default(),
+        &call.tool,
+        call.arguments,
+    );
+    Reply {
+        status: "200 OK",
+        body: Some(result.to_string()),
     }
 }
 
@@ -350,5 +440,82 @@ mod tests {
     #[test]
     fn a_disabled_hub_gives_sessions_no_hook_variables() {
         assert!(HookHub::disabled().session_env("s1").is_empty());
+    }
+
+    struct Echo;
+
+    impl ToolHandler for Echo {
+        fn call(&self, session_id: &str, agent: &str, tool: &str, arguments: Value) -> Value {
+            serde_json::json!({ "session": session_id, "agent": agent, "tool": tool, "arguments": arguments })
+        }
+    }
+
+    /// Posts to the tool path and returns the status line and the body.
+    fn post_tool(port: u16, token: &str, body: &str) -> (String, String) {
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+        let request = format!(
+            "POST {TOOL_PATH} HTTP/1.1\r\nHost: 127.0.0.1\r\n{TOKEN_HEADER}: {token}\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).expect("write");
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).expect("read");
+        let (head, body) = answer.split_once("\r\n\r\n").unwrap_or((&answer, ""));
+        (
+            head.lines().next().unwrap_or_default().to_owned(),
+            body.to_owned(),
+        )
+    }
+
+    fn hub_with_session(handler: bool) -> (HookHub, u16, String) {
+        let hub = HookHub::start();
+        let (input, _inbox) = mpsc::channel();
+        hub.register("s1", input);
+        if handler {
+            hub.set_tool_handler(Arc::new(Echo));
+        }
+        let env = hub.session_env("s1");
+        let port = env_value(&env, PORT_ENV).parse().expect("port");
+        (hub, port, env_value(&env, TOKEN_ENV))
+    }
+
+    #[test]
+    fn a_tool_call_from_a_known_session_reaches_the_handler_and_gets_its_answer() {
+        let (_hub, port, token) = hub_with_session(true);
+
+        let (status, body) = post_tool(
+            port,
+            &token,
+            r#"{"sessionId":"s1","agent":"claude","tool":"browser_click","arguments":{"ref":"e1"}}"#,
+        );
+
+        assert_eq!(status, "HTTP/1.1 200 OK");
+        let answer: Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(answer["session"], "s1");
+        assert_eq!(answer["agent"], "claude");
+        assert_eq!(answer["tool"], "browser_click");
+        assert_eq!(answer["arguments"]["ref"], "e1");
+    }
+
+    #[test]
+    fn a_tool_call_needs_the_token_and_a_session_that_is_open() {
+        let (_hub, port, token) = hub_with_session(true);
+
+        let (wrong, _) = post_tool(port, "nope", r#"{"sessionId":"s1","tool":"t"}"#);
+        let (stranger, _) = post_tool(port, &token, r#"{"sessionId":"other","tool":"t"}"#);
+        let (malformed, _) = post_tool(port, &token, "not json");
+
+        assert_eq!(wrong, "HTTP/1.1 401 Unauthorized");
+        assert_eq!(stranger, "HTTP/1.1 404 Not Found");
+        assert_eq!(malformed, "HTTP/1.1 400 Bad Request");
+    }
+
+    #[test]
+    fn a_tool_call_before_a_handler_is_set_is_unavailable() {
+        let (_hub, port, token) = hub_with_session(false);
+
+        let (status, _) = post_tool(port, &token, r#"{"sessionId":"s1","tool":"t"}"#);
+
+        assert_eq!(status, "HTTP/1.1 503 Service Unavailable");
     }
 }

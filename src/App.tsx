@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 
 import { events } from "@/bindings";
+import { useBrowserStore } from "@/browser/browser-store";
 import { useAgentCatalogStore } from "@/agents/agent-catalog-store";
 import { DialogHost } from "@/dialog-host";
 import { useConfigStore } from "@/config/config-store";
@@ -104,6 +105,22 @@ function App() {
     });
 
     // The config file is meant to be edited by hand, so changes can arrive at any time.
+    const unlistenBrowser = events.browserStateChanged.listen(({ payload }) => {
+      useBrowserStore.getState().apply(payload.state);
+    });
+
+    const unlistenAgentBrowser = events.browserAgentActivity.listen(
+      ({ payload }) => {
+        useBrowserStore
+          .getState()
+          .noteAgentAction(payload.agent, payload.summary);
+      },
+    );
+
+    const unlistenAgentReleased = events.browserAgentReleased.listen(() => {
+      useBrowserStore.getState().releaseAgent();
+    });
+
     const unlistenConfig = events.configChanged.listen(({ payload }) => {
       useConfigStore.getState().apply(payload.snapshot);
     });
@@ -127,6 +144,9 @@ function App() {
       void unlistenAgentStatus.then((unlisten) => unlisten());
       void unlistenWorktree.then((unlisten) => unlisten());
       void unlistenConfig.then((unlisten) => unlisten());
+      void unlistenBrowser.then((unlisten) => unlisten());
+      void unlistenAgentBrowser.then((unlisten) => unlisten());
+      void unlistenAgentReleased.then((unlisten) => unlisten());
     };
   }, []);
 

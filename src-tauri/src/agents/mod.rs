@@ -18,6 +18,8 @@ pub mod hook_relay;
 pub mod hook_targets;
 pub mod json_hook_file;
 pub mod kiro_hooks;
+pub mod mcp_install;
+pub mod mcp_server;
 pub mod opencode_hooks;
 pub mod pi_hooks;
 pub mod plugin_file;

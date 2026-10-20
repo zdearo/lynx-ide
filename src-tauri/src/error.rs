@@ -77,6 +77,8 @@ pub enum AppError {
     OpenLink(#[source] std::io::Error),
     #[error(transparent)]
     AgentHooks(#[from] HookInstallError),
+    #[error(transparent)]
+    Browser(#[from] crate::browser::BrowserError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
 }
@@ -133,6 +135,8 @@ pub enum IpcErrorKind {
     TerminalNotRunning,
     Terminal,
     AgentHooks,
+    BrowserEngineMissing,
+    Browser,
     Internal,
 }
 
@@ -202,6 +206,10 @@ impl From<AppError> for IpcError {
             AppError::Terminal(TerminalError::NotRunning) => IpcErrorKind::TerminalNotRunning,
             AppError::Terminal(_) => IpcErrorKind::Terminal,
             AppError::AgentHooks(_) => IpcErrorKind::AgentHooks,
+            AppError::Browser(crate::browser::BrowserError::EngineMissing(_)) => {
+                IpcErrorKind::BrowserEngineMissing
+            }
+            AppError::Browser(_) => IpcErrorKind::Browser,
             AppError::TaskFailed(_) => IpcErrorKind::Internal,
         };
         Self {

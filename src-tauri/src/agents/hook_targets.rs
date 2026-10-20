@@ -6,11 +6,12 @@ use std::path::{Path, PathBuf};
 
 use super::claude_hooks::{self, ClaudeHookTarget};
 use super::codex_hooks::CodexHookTarget;
-use super::harness::{HarnessId, executable_name};
-use super::hook_install::{HookInstallError, HookInstallStatus, probe_version};
+use super::harness::{HarnessId, executable_name, supported};
+use super::hook_install::{HookInstallError, HookInstallState, HookInstallStatus, probe_version};
 use super::hook_layouts;
 use super::json_hook_file::JsonHookTarget;
 use super::kiro_hooks::KiroHookTarget;
+use super::mcp_install::McpTargets;
 use super::opencode_hooks;
 use super::pi_hooks;
 use super::plugin_file::PluginFileTarget;
@@ -45,6 +46,8 @@ pub struct HookTargets {
     cursor: HookTarget,
     copilot: HookTarget,
     antigravity: HookTarget,
+    /// The browser tools go in and out with the hooks, for the agents that take MCP servers.
+    mcp: McpTargets,
 }
 
 impl HookTargets {
@@ -59,7 +62,16 @@ impl HookTargets {
         let grok_home = folder_or("GROK_HOME", ".grok");
         let copilot_home = folder_or("COPILOT_HOME", ".copilot");
         let kiro_home = folder_or("KIRO_HOME", ".kiro");
+        let mcp = McpTargets::new(
+            folder("CLAUDE_CONFIG_DIR")
+                .unwrap_or_else(|| user_home.to_path_buf())
+                .join(".claude.json"),
+            folder_or("CODEX_HOME", ".codex").join("config.toml"),
+            opencode.join("opencode.json"),
+            executable,
+        );
         Self {
+            mcp,
             claude: HookTarget::Claude(ClaudeHookTarget::new(
                 claude_hooks::settings_path(folder("CLAUDE_CONFIG_DIR"), user_home),
                 executable,
@@ -117,23 +129,48 @@ impl HookTargets {
         }
     }
 
+    /// Turns the agent on: hooks first, then the browser tools. The hooks are what makes the
+    /// agent "on", so a refused MCP change leaves them in and says so in `detail`.
     pub fn install(&self, harness: HarnessId) -> Result<HookInstallStatus, HookInstallError> {
-        match self.target(harness) {
+        let mut status = match self.target(harness) {
             HookTarget::Claude(target) => target.install(probe_version(executable_name(harness))),
             HookTarget::Codex(target) => target.install(probe_version(executable_name(harness))),
             HookTarget::Json(target) => target.install(),
             HookTarget::Plugin(target) => target.install(),
             HookTarget::Kiro(target) => target.install(),
+        }?;
+        if let Err(error) = self.mcp.install(harness) {
+            status.detail = Some(format!("The browser tools were not added: {error}"));
         }
+        Ok(status)
     }
 
     pub fn remove(&self, harness: HarnessId) -> Result<HookInstallStatus, HookInstallError> {
-        match self.target(harness) {
+        let mut status = match self.target(harness) {
             HookTarget::Claude(target) => target.remove(probe_version(executable_name(harness))),
             HookTarget::Codex(target) => target.remove(probe_version(executable_name(harness))),
             HookTarget::Json(target) => target.remove(),
             HookTarget::Plugin(target) => target.remove(),
             HookTarget::Kiro(target) => target.remove(),
+        }?;
+        if let Err(error) = self.mcp.remove(harness) {
+            status.detail = Some(format!("The browser tools were not removed: {error}"));
+        }
+        Ok(status)
+    }
+
+    /// For agents that were turned on before the browser tools existed: adds the tools where they
+    /// are missing. Never rewrites an entry that is there. Blocks on the agent's CLI.
+    pub fn add_missing_browser_tools(&self) {
+        for harness in supported() {
+            if !McpTargets::supports(harness)
+                || self.status(harness).state != HookInstallState::Installed
+            {
+                continue;
+            }
+            if let Err(error) = self.mcp.install_if_missing(harness) {
+                eprintln!("lynx: could not add the browser tools to {harness:?}: {error}");
+            }
         }
     }
 }

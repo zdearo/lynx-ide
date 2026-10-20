@@ -388,6 +388,7 @@ const DEFAULT_CONFIG: AppConfig = {
   worktrees: { directory: null },
   agents: { launchMode: "manual", launchArguments: {} },
   notifications: { onDone: true, onNeedsYou: true },
+  browser: { agentAccess: "full", allowedSites: [] },
   git: {
     commitMessageAgent: "auto",
     commitMessageStyle: "conventional",
@@ -521,6 +522,18 @@ export function installMockTauri(scenario: string): void {
 
   // Mirrors the backend's hook state per harness so the Agents settings can be exercised in dev.
   const hookStates: Record<string, "notInstalled" | "installed"> = {};
+  const browserToolsOn = new Set<string>();
+  let agentReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+  let browserState = {
+    status: "stopped",
+    url: "",
+    title: "",
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null as string | null,
+    detached: false,
+  };
   const hookFiles: Record<string, { path: string; events: string[] }> = {
     claude: {
       path: "/home/dev/.claude/settings.json",
@@ -1299,10 +1312,24 @@ export function installMockTauri(scenario: string): void {
           return hookStatusOf(String(args.harness));
         case "install_hooks":
           hookStates[String(args.harness)] = "installed";
+          browserToolsOn.add(String(args.harness));
           return hookStatusOf(String(args.harness));
         case "remove_hooks":
           hookStates[String(args.harness)] = "notInstalled";
+          browserToolsOn.delete(String(args.harness));
           return hookStatusOf(String(args.harness));
+        case "browser_open":
+          browserState = {
+            ...browserState,
+            status: "running",
+            url: (args.url as string | null) ?? browserState.url,
+          };
+          return browserState;
+        case "browser_state":
+          return browserState;
+        case "browser_navigate":
+          browserState = { ...browserState, url: String(args.input) };
+          return null;
         case "write_agent_prompt":
           lastAgentPrompt = String(args.prompt);
           return "/tmp/lynx-prompts/prompt-mock.md";
@@ -1408,6 +1435,22 @@ export function installMockTauri(scenario: string): void {
         }
       },
       notifications: () => structuredClone(sentNotifications),
+      /** Whether the agent's browser tools were added together with its hooks. */
+      browserToolsOn: (harness: string) => browserToolsOn.has(harness),
+      /** Says an agent used the browser, as the backend does on each tool call. */
+      agentUsesBrowser(summary: string, agent = "Claude Code") {
+        void emit("browser-agent-activity", {
+          tool: "browser_navigate",
+          summary,
+          agent,
+        });
+        // The backend lets go six seconds after the agent's last action.
+        clearTimeout(agentReleaseTimer);
+        agentReleaseTimer = setTimeout(
+          () => void emit("browser-agent-released", {}),
+          6000,
+        );
+      },
       endAllTerminals() {
         for (const session of sessions) {
           if (!session.running) continue;

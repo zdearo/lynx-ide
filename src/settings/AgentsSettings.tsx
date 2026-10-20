@@ -37,12 +37,6 @@ import { errorMessage } from "@/lib/error-message";
 import { unwrap } from "@/lib/ipc-result";
 import { copy } from "@/ui-copy";
 
-/** A switch the user flipped, waiting for a yes before the agent's config is touched. */
-interface Pending {
-  entry: AgentEntry;
-  turnOn: boolean;
-}
-
 /** Reloads the catalog; the settings and the new-terminal menu both read it from the store. */
 function refreshCatalog(): Promise<void> {
   return useAgentCatalogStore
@@ -59,7 +53,6 @@ function refreshCatalog(): Promise<void> {
 export function AgentsSettings() {
   const entries = useAgentCatalogStore((state) => state.entries);
   const { config, disabled, save } = useSettings();
-  const [pending, setPending] = useState<Pending | null>(null);
   const [yoloPending, setYoloPending] = useState(false);
   const [busy, setBusy] = useState(false);
   const text = copy.settings.agents;
@@ -75,17 +68,19 @@ export function AgentsSettings() {
     (entry) => !(entry.found || entry.hooks.state !== "notInstalled"),
   );
 
-  async function confirm() {
-    if (!pending) return;
+  /** The switch is the yes: the agent's settings change as soon as it is flipped. */
+  async function setOn(entry: AgentEntry, turnOn: boolean) {
     setBusy(true);
     try {
-      const { entry, turnOn } = pending;
-      if (turnOn) {
-        await unwrap(commands.installHooks(entry.harness));
-      } else {
-        await unwrap(commands.removeHooks(entry.harness));
+      const status = await unwrap(
+        turnOn
+          ? commands.installHooks(entry.harness)
+          : commands.removeHooks(entry.harness),
+      );
+      // The agent is on once its hooks are in; the browser tools are a part that can fail alone.
+      if (status.detail) {
+        toast.warning(text.partlyDone, { description: status.detail });
       }
-      setPending(null);
       await refreshCatalog();
     } catch (error) {
       toast.error(text.failed, { description: errorMessage(error) });
@@ -162,7 +157,7 @@ export function AgentsSettings() {
                 aria-label={text.use(text.harnesses[entry.harness].name)}
                 checked={entry.hooks.state === "installed"}
                 disabled={busy || entry.hooks.state === "error"}
-                onCheckedChange={(turnOn) => setPending({ entry, turnOn })}
+                onCheckedChange={(turnOn) => void setOn(entry, turnOn)}
               />
             </div>
             {config && entry.hooks.state === "installed" && (
@@ -194,13 +189,6 @@ export function AgentsSettings() {
         </Section>
       )}
 
-      <ConfirmChange
-        pending={pending}
-        busy={busy}
-        onCancel={() => setPending(null)}
-        onConfirm={() => void confirm()}
-      />
-
       <AlertDialog
         open={yoloPending}
         onOpenChange={(open) => {
@@ -216,7 +204,7 @@ export function AgentsSettings() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy}>
-              {copy.settings.agents.hooks.cancel}
+              {text.launchMode.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
               disabled={busy}
@@ -332,75 +320,5 @@ function AgentIcon({
     >
       <AgentBrandIcon harness={harness} className="size-4 text-agent" />
     </span>
-  );
-}
-
-/** The wording depends on the direction: turning on, updating a partial install, or turning off. */
-function ConfirmChange({
-  pending,
-  busy,
-  onCancel,
-  onConfirm,
-}: {
-  pending: Pending | null;
-  busy: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const text = copy.settings.agents.hooks;
-  const name = pending
-    ? copy.settings.agents.harnesses[pending.entry.harness].name
-    : "";
-  const path = pending?.entry.hooks.configPath ?? "";
-  const partial = pending?.entry.hooks.state === "partial";
-
-  let title = text.connectTitle(name);
-  let body = text.connectBody(path);
-  let action: string = text.confirmConnect;
-  if (pending && !pending.turnOn) {
-    title = text.disconnectTitle(name);
-    body = text.disconnectBody(path);
-    action = text.confirmDisconnect;
-  } else if (partial) {
-    title = text.updateTitle(name);
-    body = text.updateBody(path);
-    action = text.confirmUpdate;
-  }
-
-  return (
-    <AlertDialog
-      open={pending !== null}
-      onOpenChange={(open) => {
-        if (!open && !busy) onCancel();
-      }}
-    >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {body}
-            {pending?.turnOn && (
-              <>
-                {" "}
-                {text.eventsLabel}: {pending.entry.hooks.events.join(", ")}.
-              </>
-            )}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>{text.cancel}</AlertDialogCancel>
-          <AlertDialogAction
-            disabled={busy}
-            onClick={(event) => {
-              // Stay open until the change lands, so a failure can be read here.
-              event.preventDefault();
-              onConfirm();
-            }}
-          >
-            {action}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
   );
 }

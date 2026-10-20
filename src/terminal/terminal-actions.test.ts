@@ -32,6 +32,7 @@ function withAgents(agents: AppConfig["agents"]) {
       worktrees: { directory: null },
       agents,
       notifications: { onDone: true, onNeedsYou: true },
+      browser: { agentAccess: "full", allowedSites: [] },
       usage: {
         visible: true,
         providers: ["claude", "codex"],

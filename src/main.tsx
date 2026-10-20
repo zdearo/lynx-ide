@@ -1,6 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { DetachedBrowserApp } from "@/browser/DetachedBrowserApp";
+import { isBrowserWindow } from "@/browser/browser-window";
 import "./index.css";
 
 /** `?mock=full` opens the interface in a plain browser against an in-memory backend. */
@@ -15,7 +17,7 @@ async function installDevBackend() {
 void installDevBackend().then(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
-      <App />
+      {isBrowserWindow() ? <DetachedBrowserApp /> : <App />}
     </React.StrictMode>,
   );
 });

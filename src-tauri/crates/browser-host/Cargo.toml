@@ -1,0 +1,19 @@
+[package]
+name = "lynx-browser-host"
+version = "0.1.0"
+description = "Runs the browser engine (CEF) in its own process and serves it to Lynx"
+edition = "2024"
+
+[dependencies]
+lynx-browser-protocol = { path = "../browser-protocol" }
+serde_json = "1"
+
+[dependencies.cef]
+version = "=154.5.0"
+default-features = false
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+embed-manifest = "1"

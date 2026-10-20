@@ -6,6 +6,41 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 /** Commands */
 export const commands = {
 	appInfo: () => __TAURI_INVOKE<AppInfo>("app_info"),
+	/**
+	 *  Starts the browser engine if needed and optionally opens an address. The engine's start-up
+	 *  blocks for a moment, so this runs off the async runtime.
+	 */
+	browserOpen: (url: string | null) => typedError<BrowserState, IpcError>(__TAURI_INVOKE("browser_open", { url })),
+	browserNavigate: (url: string) => typedError<null, IpcError>(__TAURI_INVOKE("browser_navigate", { url })),
+	browserBack: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_back")),
+	browserForward: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_forward")),
+	browserReload: (ignoreCache: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("browser_reload", { ignoreCache })),
+	browserStop: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_stop")),
+	browserState: () => typedError<BrowserState, IpcError>(__TAURI_INVOKE("browser_state")),
+	/**
+	 *  Shows the page in the window this is called from, over the rectangle the interface reserved
+	 *  for it: logical pixels, relative to the top-left corner of the window's content. A page is
+	 *  shown in one window at a time, so any other window loses it.
+	 */
+	browserPlace: (x: number | null, y: number | null, width: number | null, height: number | null) => typedError<null, IpcError>(__TAURI_INVOKE("browser_place", { x, y, width, height })),
+	/**
+	 *  Takes the page off the window this is called from, when its view is not shown or something
+	 *  must be drawn over it.
+	 */
+	browserHide: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_hide")),
+	/**  Moves the page to a window of its own. The page keeps running: only where it is shown changes. */
+	browserDetach: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_detach")),
+	/**  Brings the page back to the main window and closes the browser window. */
+	browserAttach: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_attach")),
+	/**  Stops the engine. The next open starts a new one. */
+	browserClose: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_close")),
+	browserEngineStatus: () => typedError<EngineStatus, IpcError>(__TAURI_INVOKE("browser_engine_status")),
+	/**
+	 *  Downloads the engine and puts it in place, reporting progress as events. With `force`, an
+	 *  engine of the same version is installed again.
+	 */
+	browserEngineInstall: (force: boolean) => typedError<EngineStatus, IpcError>(__TAURI_INVOKE("browser_engine_install", { force })),
+	browserEngineRemove: () => typedError<EngineStatus, IpcError>(__TAURI_INVOKE("browser_engine_remove")),
 	listRepos: () => typedError<Repo[], IpcError>(__TAURI_INVOKE("list_repos")),
 	addRepo: (path: string) => typedError<Repo, IpcError>(__TAURI_INVOKE("add_repo", { path })),
 	createProject: (parentPath: string, name: string) => typedError<Repo, IpcError>(__TAURI_INVOKE("create_project", { parentPath, name })),
@@ -35,7 +70,10 @@ export const commands = {
 	/**  Every supported agent: whether it is on this computer, and whether its hooks are in. */
 	agentCatalog: () => typedError<AgentEntry[], IpcError>(__TAURI_INVOKE("agent_catalog")),
 	hookStatus: (harness: HarnessId) => typedError<HookInstallStatus, IpcError>(__TAURI_INVOKE("hook_status", { harness })),
-	/**  Writes a harness's config. The frontend asks the user first; nothing here runs on its own. */
+	/**
+	 *  Turns an agent on: writes its hooks and adds the browser tools. The switch in the settings is
+	 *  the user's yes; nothing here runs on its own.
+	 */
 	installHooks: (harness: HarnessId) => typedError<HookInstallStatus, IpcError>(__TAURI_INVOKE("install_hooks", { harness })),
 	removeHooks: (harness: HarnessId) => typedError<HookInstallStatus, IpcError>(__TAURI_INVOKE("remove_hooks", { harness })),
 	/**  Saves a long prompt to a file and returns its path, for an agent to be told to read. */
@@ -175,6 +213,10 @@ export const commands = {
 /** Events */
 export const events = {
 	agentStatusChanged: makeEvent<AgentStatusChanged>("agent-status-changed"),
+	browserAgentActivity: makeEvent<BrowserAgentActivity>("browser-agent-activity"),
+	browserAgentReleased: makeEvent<BrowserAgentReleased>("browser-agent-released"),
+	browserEngineProgress: makeEvent<BrowserEngineProgress>("browser-engine-progress"),
+	browserStateChanged: makeEvent<BrowserStateChanged>("browser-state-changed"),
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
 	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
@@ -182,6 +224,15 @@ export const events = {
 };
 
 /* Types */
+/**  How far an agent may go in the page. */
+export type AgentBrowserAccess = 
+/**  The agent gets no browser tools at all. */
+"off" | 
+/**  It can open pages, read them and take screenshots, but not click, type or choose. */
+"readOnly" | 
+/**  It can use the page like a person. */
+"full";
+
 export type AgentEntry = {
 	harness: HarnessId,
 	/**  The CLI is on this computer's PATH. */
@@ -220,6 +271,7 @@ export type AppConfig = {
 	agents: AgentsConfig,
 	git: GitConfig,
 	notifications: NotificationsConfig,
+	browser: BrowserConfig,
 	usage: UsageConfig,
 };
 
@@ -248,6 +300,54 @@ export type BranchSync = {
 	 */
 	rewritten: boolean,
 };
+
+/**  Sent when an agent uses the browser, so the interface can show the page it is working on. */
+export type BrowserAgentActivity = {
+	tool: string,
+	/**  A short line for the interface, such as "Opening example.com". */
+	summary: string,
+	/**  Who is acting, as the person knows it: "Claude Code", "Codex"... */
+	agent: string,
+};
+
+/**  Sent when no agent is in control of the page any more. */
+export type BrowserAgentReleased = Record<string, never>;
+
+/**  What agents may do in Lynx's browser. */
+export type BrowserConfig = {
+	agentAccess: AgentBrowserAccess,
+	/**  Sites agents may visit, each covering its subdomains. Empty means any site. */
+	allowedSites: string[],
+};
+
+/**  Sent while the engine downloads and unpacks. */
+export type BrowserEngineProgress = {
+	progress: EngineProgress,
+};
+
+/**  What the interface shows about the browser: its status and the page it is on. */
+export type BrowserState = {
+	status: BrowserStatus,
+	url: string,
+	title: string,
+	loading: boolean,
+	canGoBack: boolean,
+	canGoForward: boolean,
+	error: string | null,
+	/**  The page is shown in its own window, not in the main one. */
+	detached: boolean,
+};
+
+/**  Sent whenever the browser's state changes. */
+export type BrowserStateChanged = {
+	state: BrowserState,
+};
+
+export type BrowserStatus = 
+/**  No engine process: never started, closed, or stopped on purpose. */
+"stopped" | "starting" | "running" | 
+/**  The engine could not start or went away; `error` says why. */
+"failed";
 
 export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "typeChanged" | "untracked" | "conflicted";
 
@@ -400,6 +500,32 @@ export type DraftedPullRequest = {
 	agentLabel: string,
 };
 
+export type EnginePhase = "downloading" | "verifying" | "unpacking" | "done";
+
+/**
+ *  How far an install has got, in bytes. `total` is zero while it is not known. (Sizes are `u32`
+ *  because the interface contract cannot carry 64-bit integers; an engine is far below 4 GB.)
+ */
+export type EngineProgress = {
+	phase: EnginePhase,
+	received: number,
+	total: number,
+};
+
+export type EngineState = "missing" | 
+/**  There, and speaking the protocol this app speaks. */
+"ready" | 
+/**  There, but built for another protocol: it has to be installed again. */
+"outdated";
+
+export type EngineStatus = {
+	state: EngineState,
+	/**  Which build is installed, when it says. */
+	version: string | null,
+	/**  Where the host program is, or would be. */
+	path: string,
+};
+
 /**  A side that is `None` does not exist there: a new file has no original, a deleted one no modified. */
 export type FileDiff = {
 	original: string | null,
@@ -459,7 +585,7 @@ export type HookInstallStatus = {
 	state: HookInstallState,
 	/**  The file Lynx changes for this harness. */
 	configPath: string,
-	/**  The events Lynx listens to, so the confirmation can name them before anything changes. */
+	/**  The events Lynx listens to. */
 	events: string[],
 	detail: string | null,
 };
@@ -470,7 +596,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "internal";
 
 export type LastCommitMessage = {
 	summary: string,

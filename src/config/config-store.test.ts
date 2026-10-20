@@ -22,6 +22,7 @@ function snapshot(fontSize: number): ConfigSnapshot {
       worktrees: { directory: null },
       agents: { launchMode: "manual", launchArguments: {} },
       notifications: { onDone: true, onNeedsYou: true },
+      browser: { agentAccess: "full", allowedSites: [] },
       usage: {
         visible: true,
         providers: ["claude", "codex"],

@@ -26,7 +26,8 @@ pub async fn hook_status(
     run_blocking(move || Ok(targets.status(harness))).await
 }
 
-/// Writes a harness's config. The frontend asks the user first; nothing here runs on its own.
+/// Turns an agent on: writes its hooks and adds the browser tools. The switch in the settings is
+/// the user's yes; nothing here runs on its own.
 #[tauri::command]
 #[specta::specta]
 pub async fn install_hooks(

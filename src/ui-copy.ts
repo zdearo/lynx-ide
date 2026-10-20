@@ -99,18 +99,20 @@ export const copy = {
       title: "Agents",
       tabs: { label: "Agent settings", setup: "Setup" },
       intro:
-        "Turn an agent on to let Lynx follow its sessions and offer it in the new terminal menu. Turning it on adds hooks to the agent's own settings, after you confirm.",
+        "Turn an agent on to let Lynx follow its sessions, offer it in the new terminal menu and give it the browser tools. Turning it on adds Lynx's own entries to the agent's settings, and turning it off removes them.",
       detected: "On this computer",
       undetected: "Other supported agents",
       notFound: "Not found on this computer",
       refresh: "Check again",
       use: (name: string) => `Use ${name} in Lynx`,
       failed: "Could not update the agent settings",
+      partlyDone: "The agent is on, but one part did not go in",
       launchMode: {
         label: "Launch mode",
         hint: "Manual keeps each agent's permission prompts. YOLO starts every agent with the flag that skips them, after you confirm.",
         manual: "Manual",
         yolo: "YOLO",
+        cancel: "Cancel",
         confirmTitle: "Start agents in YOLO mode?",
         confirmBody:
           "Each agent you have turned on starts without asking before it runs tools. Terminals opened from now on use it; sessions already running do not change.",
@@ -144,20 +146,6 @@ export const copy = {
           partial: "Partly on",
           error: "Settings cannot be read",
         },
-        eventsLabel: "Events",
-        connectTitle: (name: string) => `Turn on ${name}?`,
-        updateTitle: (name: string) => `Update ${name}?`,
-        disconnectTitle: (name: string) => `Turn off ${name}?`,
-        connectBody: (path: string) =>
-          `Lynx adds its entries to ${path}. Your other settings and hooks stay as they are.`,
-        updateBody: (path: string) =>
-          `Lynx rewrites its own entries in ${path} so they match this version. Your other settings and hooks stay as they are.`,
-        disconnectBody: (path: string) =>
-          `Lynx removes only its own entries from ${path}.`,
-        cancel: "Cancel",
-        confirmConnect: "Turn on",
-        confirmUpdate: "Update",
-        confirmDisconnect: "Turn off",
       },
     },
     worktrees: {
@@ -167,6 +155,35 @@ export const copy = {
         hint: "New worktrees are created in <folder>/<repository>/<name>. Leave empty to create them next to each repository. Existing worktrees do not move.",
         placeholder: "Next to each repository",
         browse: "Choose folder…",
+      },
+    },
+    browser: {
+      title: "Browser",
+      engine: {
+        label: "Browser engine",
+        hint: "The browser runs as a separate program, downloaded once. It is not part of the app.",
+        missing: "Not installed",
+        ready: (version: string | null) =>
+          version ? `Installed (${version})` : "Installed",
+        outdated: "Installed, but made for another version of Lynx",
+        install: "Download",
+        update: "Update",
+        reinstall: "Download again",
+        remove: "Remove",
+        removing: "Removing…",
+        failed: "The engine could not be changed",
+      },
+      access: {
+        label: "What agents can do in the browser",
+        hint: "Agents you have turned on get the browser tools. You watch the same page they use. Read only lets them open and read pages but not click, type or choose.",
+        off: "Nothing",
+        readOnly: "Read only",
+        full: "Full control",
+      },
+      sites: {
+        label: "Sites agents may visit",
+        hint: "One site per line, like example.com. A site includes its subdomains. Leave empty to allow any site.",
+        placeholder: "example.com",
       },
     },
     notifications: {
@@ -261,6 +278,49 @@ export const copy = {
       issuesTitle: "Some values in the config file were ignored",
       usingDefault: "using the default",
     },
+  },
+
+  browser: {
+    toggle: "Browser",
+    label: "Browser",
+    address: "Web address",
+    addressPlaceholder: "Search or enter an address",
+    back: "Back",
+    forward: "Forward",
+    reload: "Reload",
+    stop: "Stop loading",
+    starting: "Starting the browser…",
+    retry: "Try again",
+    engine: {
+      missingTitle: "The browser needs its engine",
+      missingBody:
+        "The browser runs as a separate program that is downloaded once and kept on this computer.",
+      outdatedTitle: "The browser engine needs an update",
+      outdatedBody:
+        "The installed engine was made for another version of Lynx. Download the one that matches.",
+      install: "Download the engine",
+      update: "Update the engine",
+      retry: "Try the download again",
+      installing: "Downloading the engine",
+      preparing: "Preparing…",
+      downloading: (received: string, total: string) =>
+        `Downloading ${received} of ${total}`,
+      verifying: "Checking the download…",
+      unpacking: "Unpacking…",
+      done: "Installed",
+      developing: "Building Lynx from source? Run:",
+      developingCommand: "bun run browser:engine",
+      failedTitle: "The engine could not be installed",
+    },
+    failedTitle: "The browser could not start",
+    stopped: "The browser engine stopped.",
+    detach: "Open in a separate window",
+    attach: "Return to the main window",
+    detachedTitle: "The browser is in its own window",
+    detachedBody:
+      "Close that window, or bring the browser back here, to see it in this one.",
+    bringBack: "Bring it back",
+    inControl: (agent: string) => `${agent} is in control`,
   },
 
   rightPanel: {

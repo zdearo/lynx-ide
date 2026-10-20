@@ -6,6 +6,13 @@ edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# The browser engine runs in its own process. Its crates are members so they share the lockfile
+# and the message contract, but only the app is a default member: a plain `cargo build` never
+# needs the CEF runtime (see scripts/browser-engine.mjs).
+[workspace]
+members = [".", "crates/browser-protocol", "crates/browser-host"]
+default-members = ["."]
+
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
@@ -35,6 +42,13 @@ sha2 = "0.10"
 tauri-plugin-notification = "2.7.0"
 notify = "8.2.0"
 ignore = "0.4.33"
+lynx-browser-protocol = { version = "0.1.0", path = "crates/browser-protocol" }
+url = "2.5.8"
+ureq = "3"
+flate2 = "1"
+tar = "0.4"
+tiny-skia = "0.11"
+fontdue = "0.9"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -53,3 +67,15 @@ nix = { version = "0.31.3", features = ["signal"] }
 
 [target."cfg(windows)".dependencies]
 sysinfo = "0.39.6"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+

@@ -12,8 +12,8 @@ use specta::Type;
 use crate::agents::harness::{HarnessId, harness_name, supported};
 
 use super::app_config::{
-    AppConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, GitConfig, LaunchMode,
-    NotificationsConfig, TerminalConfig, UsageConfig, expand_home, parse_config,
+    AppConfig, BrowserConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, GitConfig,
+    LaunchMode, NotificationsConfig, TerminalConfig, UsageConfig, expand_home, parse_config,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -432,6 +432,21 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
         git.commit_message_instructions
             .as_ref()
             .map(|text| json!(text)),
+    );
+    let browser = &config.browser;
+    let browser_defaults = BrowserConfig::default();
+    put(
+        root,
+        "browser",
+        "agentAccess",
+        (browser.agent_access != browser_defaults.agent_access)
+            .then(|| json!(browser.agent_access)),
+    );
+    put(
+        root,
+        "browser",
+        "allowedSites",
+        (!browser.allowed_sites.is_empty()).then(|| json!(browser.allowed_sites)),
     );
 }
 
@@ -959,6 +974,25 @@ mod tests {
                     "commitMessageInstructions": "Write in Portuguese."
                 }
             })
+        );
+
+        store
+            .update(AppConfig::default())
+            .expect("back to defaults");
+        assert_eq!(file_json(&store), json!({}));
+    }
+
+    #[test]
+    fn the_browser_settings_are_written_only_when_they_differ_from_defaults() {
+        let (store, _dir) = setup();
+        let mut config = AppConfig::default();
+        config.browser.agent_access = crate::browser::AgentBrowserAccess::ReadOnly;
+        config.browser.allowed_sites = vec!["example.com".to_owned()];
+
+        store.update(config).expect("update");
+        assert_eq!(
+            file_json(&store),
+            json!({ "browser": { "agentAccess": "readOnly", "allowedSites": ["example.com"] } })
         );
 
         store

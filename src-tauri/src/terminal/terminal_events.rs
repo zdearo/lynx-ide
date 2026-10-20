@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::time::Instant;
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::AppHandle;
@@ -5,6 +8,7 @@ use tauri_specta::Event;
 
 use crate::agents::activity::AgentStatus;
 use crate::agents::harness::HarnessId;
+use crate::browser::AgentPointer;
 
 /// A chunk of terminal output. `seq` counts chunks per session from 1, so a view
 /// that attached from a snapshot can skip chunks the snapshot already contains.
@@ -43,11 +47,16 @@ pub trait TerminalEventSink: Send + Sync + 'static {
 
 pub struct TauriEventSink {
     app: AppHandle,
+    /// Told when an agent starts or stops working, so the browser knows how long its control lasts.
+    browser_pointer: Option<Arc<AgentPointer>>,
 }
 
 impl TauriEventSink {
-    pub fn new(app: AppHandle) -> Self {
-        Self { app }
+    pub fn new(app: AppHandle, browser_pointer: Option<Arc<AgentPointer>>) -> Self {
+        Self {
+            app,
+            browser_pointer,
+        }
     }
 }
 
@@ -71,6 +80,9 @@ impl TerminalEventSink for TauriEventSink {
     }
 
     fn agent_state(&self, id: &str, harness: Option<HarnessId>, status: Option<AgentStatus>) {
+        if let Some(pointer) = &self.browser_pointer {
+            pointer.session_status(id, status == Some(AgentStatus::Working), Instant::now());
+        }
         let _ = AgentStatusChanged {
             id: id.to_owned(),
             harness,

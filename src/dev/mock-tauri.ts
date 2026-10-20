@@ -413,6 +413,7 @@ const DEFAULT_CONFIG: AppConfig = {
   worktrees: { directory: null },
   agents: { launchMode: "manual", launchArguments: {} },
   notifications: { onDone: true, onNeedsYou: true },
+  browser: { agentAccess: "full", allowedSites: [] },
   usage: {
     visible: true,
     providers: ["claude", "codex"],
@@ -571,6 +572,41 @@ export function installMockTauri(scenario: string): void {
 
   // Mirrors the backend's hook state per harness so the Agents settings can be exercised in dev.
   const hookStates: Record<string, "notInstalled" | "installed"> = {};
+  const browserToolsOn = new Set<string>();
+  // `?engine=missing` starts without the browser engine, to try the download.
+  let engineInstalled =
+    new URLSearchParams(window.location.search).get("engine") !== "missing";
+  const engineStatus = () => ({
+    state: engineInstalled ? "ready" : "missing",
+    version: engineInstalled ? "154.0.34-p2" : null,
+    path: "/home/dev/.lynx/engine/current/lynx-browser-host",
+  });
+  /** A download that reports a few steps, as the backend does. */
+  async function installMockEngine() {
+    const steps = [
+      { phase: "downloading", received: 35_000_000, total: 139_000_000 },
+      { phase: "downloading", received: 100_000_000, total: 139_000_000 },
+      { phase: "verifying", received: 139_000_000, total: 139_000_000 },
+      { phase: "unpacking", received: 0, total: 0 },
+    ];
+    for (const progress of steps) {
+      void emit("browser-engine-progress", { progress });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    engineInstalled = true;
+    return engineStatus();
+  }
+  let agentReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+  let browserState = {
+    status: "stopped",
+    url: "",
+    title: "",
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null as string | null,
+    detached: false,
+  };
   const hookFiles: Record<string, { path: string; events: string[] }> = {
     claude: {
       path: "/home/dev/.claude/settings.json",
@@ -1453,10 +1489,37 @@ export function installMockTauri(scenario: string): void {
           return hookStatusOf(String(args.harness));
         case "install_hooks":
           hookStates[String(args.harness)] = "installed";
+          browserToolsOn.add(String(args.harness));
           return hookStatusOf(String(args.harness));
         case "remove_hooks":
           hookStates[String(args.harness)] = "notInstalled";
+          browserToolsOn.delete(String(args.harness));
           return hookStatusOf(String(args.harness));
+        case "browser_engine_status":
+          return engineStatus();
+        case "browser_engine_install":
+          return await installMockEngine();
+        case "browser_engine_remove":
+          engineInstalled = false;
+          return engineStatus();
+        case "browser_open":
+          if (!engineInstalled) {
+            throw {
+              kind: "browserEngineMissing",
+              message: "the browser engine is not installed",
+            };
+          }
+          browserState = {
+            ...browserState,
+            status: "running",
+            url: (args.url as string | null) ?? browserState.url,
+          };
+          return browserState;
+        case "browser_state":
+          return browserState;
+        case "browser_navigate":
+          browserState = { ...browserState, url: String(args.input) };
+          return null;
         case "write_agent_prompt":
           lastAgentPrompt = String(args.prompt);
           return "/tmp/lynx-prompts/prompt-mock.md";
@@ -1576,6 +1639,22 @@ export function installMockTauri(scenario: string): void {
         }
       },
       notifications: () => structuredClone(sentNotifications),
+      /** Whether the agent's browser tools were added together with its hooks. */
+      browserToolsOn: (harness: string) => browserToolsOn.has(harness),
+      /** Says an agent used the browser, as the backend does on each tool call. */
+      agentUsesBrowser(summary: string, agent = "Claude Code") {
+        void emit("browser-agent-activity", {
+          tool: "browser_navigate",
+          summary,
+          agent,
+        });
+        // The backend lets go six seconds after the agent's last action.
+        clearTimeout(agentReleaseTimer);
+        agentReleaseTimer = setTimeout(
+          () => void emit("browser-agent-released", {}),
+          6000,
+        );
+      },
       endAllTerminals() {
         for (const session of sessions) {
           if (!session.running) continue;

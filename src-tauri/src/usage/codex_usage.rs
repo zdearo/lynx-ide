@@ -139,6 +139,7 @@ fn window_of(value: &Value) -> Option<PlanWindow> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::fs;
 
     use super::super::plan_usage::PlanUsageState;

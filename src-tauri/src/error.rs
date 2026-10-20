@@ -67,6 +67,8 @@ pub enum AppError {
     PromptFile(#[from] crate::agents::agent_prompt_file::PromptFileError),
     #[error(transparent)]
     CreatePullRequest(#[from] crate::pull_request::pull_request_create::CreatePullRequestError),
+    #[error(transparent)]
+    LinkedFolder(#[from] crate::workspace::linked_folders::LinkedFolderError),
     #[error("only https links can be opened")]
     InvalidLink,
     #[error("{0}")]
@@ -119,6 +121,7 @@ pub enum IpcErrorKind {
     CannotRemoveMainWorktree,
     FolderNotFound,
     FolderCycle,
+    LinkedFolder,
     Git,
     Storage,
     InvalidConfig,
@@ -184,6 +187,7 @@ impl From<AppError> for IpcError {
             AppError::CannotRemoveMainWorktree => IpcErrorKind::CannotRemoveMainWorktree,
             AppError::FolderNotFound(_) => IpcErrorKind::FolderNotFound,
             AppError::FolderCycle => IpcErrorKind::FolderCycle,
+            AppError::LinkedFolder(_) => IpcErrorKind::LinkedFolder,
             AppError::LocationNotFound(_) => IpcErrorKind::PathNotFound,
             AppError::LocationNotADirectory(_) => IpcErrorKind::NotADirectory,
             AppError::CreateDirectory { .. } => IpcErrorKind::FileSystem,

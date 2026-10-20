@@ -12,6 +12,8 @@ vi.mock("@/bindings", () => ({
     renameFolder: vi.fn(),
     moveFolder: vi.fn(),
     deleteFolder: vi.fn(),
+    unlinkFolder: vi.fn(),
+    syncLinkedFolders: vi.fn(),
     setFolderCollapsed: vi.fn(),
     moveRepo: vi.fn(),
     addRepo: vi.fn(),
@@ -26,8 +28,22 @@ vi.mock("@/bindings", () => ({
 const api = vi.mocked(commands);
 const initialState = useWorkspaceStore.getState();
 
-const repoA = { id: "a", name: "api", path: "/work/api", folderId: null };
-const repoB = { id: "b", name: "web", path: "/work/web", folderId: null };
+const repoA = {
+  id: "a",
+  name: "api",
+  path: "/work/api",
+  folderId: null,
+  linkedRootId: null,
+  missing: false,
+};
+const repoB = {
+  id: "b",
+  name: "web",
+  path: "/work/web",
+  folderId: null,
+  linkedRootId: null,
+  missing: false,
+};
 const mainA = worktree("/work/api", { isMain: true, branch: "main" });
 const mainB = worktree("/work/web", { isMain: true, branch: "main" });
 
@@ -107,6 +123,8 @@ describe("createProject", () => {
       name: "notes",
       path: "/work/notes",
       folderId: null,
+      linkedRootId: null,
+      missing: false,
     };
     api.createProject.mockResolvedValue(ok(created));
     listsByRepo({
@@ -310,12 +328,21 @@ describe("repo sections and the dialog", () => {
 });
 
 describe("folders", () => {
-  const work = { id: "work", name: "Work", parentId: null, collapsed: false };
+  const ordinary = { sourcePath: null, linkedRootId: null, missing: false };
+  const work = {
+    id: "work",
+    name: "Work",
+    parentId: null,
+    collapsed: false,
+    ...ordinary,
+  };
   const repoInWork = {
     id: "a",
     name: "api",
     path: "/work/api",
     folderId: "work",
+    linkedRootId: null,
+    missing: false,
   };
 
   it("loads folders together with repos", async () => {
@@ -332,7 +359,13 @@ describe("folders", () => {
     const collapsed = { ...work, collapsed: true };
     useWorkspaceStore.setState({ folders: [collapsed] });
     api.createFolder.mockResolvedValue(
-      ok({ id: "x", name: "X", parentId: "work", collapsed: false }),
+      ok({
+        id: "x",
+        name: "X",
+        parentId: "work",
+        collapsed: false,
+        ...ordinary,
+      }),
     );
     api.setFolderCollapsed.mockResolvedValue(ok(null));
     api.listFolders.mockResolvedValue(ok([{ ...work, collapsed: false }]));
@@ -382,5 +415,126 @@ describe("folders", () => {
 
     expect(useWorkspaceStore.getState().folders).toEqual([]);
     expect(useWorkspaceStore.getState().repos[0].folderId).toBeNull();
+  });
+});
+
+describe("linked folders", () => {
+  const linkedRoot = {
+    id: "code",
+    name: "Code",
+    parentId: null,
+    collapsed: false,
+    sourcePath: "/home/dev/code",
+    linkedRootId: "code",
+    missing: false,
+  };
+  const found = {
+    id: "n",
+    name: "new-repo",
+    path: "/home/dev/code/new-repo",
+    folderId: "code",
+    linkedRootId: "code",
+    missing: false,
+  };
+
+  it("creates a folder that follows a directory when given its path", async () => {
+    api.createFolder.mockResolvedValue(ok(linkedRoot));
+    api.listFolders.mockResolvedValue(ok([linkedRoot]));
+    api.listRepos.mockResolvedValue(ok([]));
+
+    await useWorkspaceStore
+      .getState()
+      .createFolder("Code", null, "/home/dev/code");
+
+    expect(api.createFolder).toHaveBeenCalledWith(
+      "Code",
+      null,
+      "/home/dev/code",
+    );
+  });
+
+  it("creates an ordinary folder without a path", async () => {
+    api.createFolder.mockResolvedValue(ok({ ...linkedRoot, sourcePath: null }));
+    api.listRepos.mockResolvedValue(ok([]));
+
+    await useWorkspaceStore.getState().createFolder("Code", null);
+
+    expect(api.createFolder).toHaveBeenCalledWith("Code", null, null);
+  });
+
+  it("leaves the sidebar alone when the scan found nothing new", async () => {
+    useWorkspaceStore.setState({ folders: [linkedRoot], repos: [repoA] });
+    api.syncLinkedFolders.mockResolvedValue(ok(false));
+
+    const changed = await useWorkspaceStore.getState().syncLinkedFolders();
+
+    expect(changed).toBe(false);
+    expect(api.listRepos).not.toHaveBeenCalled();
+    expect(api.listWorktrees).not.toHaveBeenCalled();
+  });
+
+  it("reloads the tree after a change and reads worktrees only for new repos", async () => {
+    useWorkspaceStore.setState({
+      folders: [linkedRoot],
+      repos: [repoA],
+      worktrees: { a: [mainA] },
+    });
+    api.syncLinkedFolders.mockResolvedValue(ok(true));
+    api.listFolders.mockResolvedValue(ok([linkedRoot]));
+    api.listRepos.mockResolvedValue(ok([repoA, found]));
+    listsByRepo({
+      n: [worktree("/home/dev/code/new-repo", { isMain: true })],
+    });
+
+    const changed = await useWorkspaceStore
+      .getState()
+      .syncLinkedFolders("code");
+
+    expect(changed).toBe(true);
+    expect(api.syncLinkedFolders).toHaveBeenCalledWith("code");
+    expect(useWorkspaceStore.getState().repos).toEqual([repoA, found]);
+    expect(api.listWorktrees).toHaveBeenCalledTimes(1);
+    expect(api.listWorktrees).toHaveBeenCalledWith("n");
+  });
+
+  it("unlinks and reloads, so the folders and projects read as ordinary ones", async () => {
+    useWorkspaceStore.setState({ folders: [linkedRoot], repos: [found] });
+    api.unlinkFolder.mockResolvedValue(ok(null));
+    const ordinary = {
+      ...linkedRoot,
+      sourcePath: null,
+      linkedRootId: null,
+    };
+    api.listFolders.mockResolvedValue(ok([ordinary]));
+    api.listRepos.mockResolvedValue(ok([{ ...found, linkedRootId: null }]));
+
+    await useWorkspaceStore.getState().unlinkFolder("code");
+
+    expect(api.unlinkFolder).toHaveBeenCalledWith("code");
+    expect(useWorkspaceStore.getState().folders).toEqual([ordinary]);
+  });
+
+  it("reads many repos' worktrees with a bounded number at once", async () => {
+    const repos = Array.from({ length: 20 }, (_, index) => ({
+      ...repoA,
+      id: `r${index}`,
+      name: `r${index}`,
+      path: `/work/r${index}`,
+    }));
+    api.listRepos.mockResolvedValue(ok(repos));
+    let running = 0;
+    let peak = 0;
+    api.listWorktrees.mockImplementation(async () => {
+      running++;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      running--;
+      return ok([]);
+    });
+
+    await useWorkspaceStore.getState().load();
+
+    expect(api.listWorktrees).toHaveBeenCalledTimes(20);
+    expect(peak).toBeLessThanOrEqual(6);
   });
 });

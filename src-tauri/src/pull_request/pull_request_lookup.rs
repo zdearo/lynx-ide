@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::app_image_environment;
 use crate::bounded_command::{BoundedError, run_bounded};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -141,6 +142,7 @@ pub fn lookup(root: &Path) -> Result<Option<PullRequest>, PullRequestError> {
         .current_dir(root)
         // Without this, gh would stop to ask questions that nothing here can answer.
         .env("GH_PROMPT_DISABLED", "1");
+    app_image_environment::clean_command(&mut command);
     let output = run_bounded(&mut command, &[], TIMEOUT).map_err(|error| match error {
         BoundedError::TimedOut => PullRequestError::TimedOut,
         BoundedError::Spawn(source) if source.kind() == std::io::ErrorKind::NotFound => {

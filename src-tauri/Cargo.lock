@@ -2524,6 +2524,7 @@ dependencies = [
 name = "lynx-ide"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "gtk",
  "ignore",
  "lynx-browser-protocol",

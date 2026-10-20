@@ -28,7 +28,7 @@ interface WorktreeRowProps {
 }
 
 /**
- * The worktree's own line. It draws no selection background: when selected, the
+ * The worktree's own line. It draws no background, selected or hovered: the
  * surrounding `WorktreeGroup` paints one surface for the line and its agents.
  */
 export function WorktreeRow({
@@ -52,7 +52,7 @@ export function WorktreeRow({
           "flex h-7 w-full items-center gap-2 rounded-md pr-2 pl-7 text-left text-ui",
           selected
             ? "text-sidebar-accent-foreground"
-            : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+            : "text-muted-foreground hover:text-sidebar-foreground",
         )}
       >
         <StateDot state={runningCount > 0 ? "running" : "idle"} />

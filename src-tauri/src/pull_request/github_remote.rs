@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::app_image_environment;
 use crate::bounded_command::{BoundedError, run_bounded};
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -184,6 +185,7 @@ pub(super) fn run_gh_with_input<S: AsRef<str>>(
     if let Some(dir) = dir {
         command.current_dir(dir);
     }
+    app_image_environment::clean_command(&mut command);
     let output = run_bounded(&mut command, input, timeout).map_err(|error| match error {
         BoundedError::TimedOut => GitHubRemoteError::TimedOut,
         BoundedError::Spawn(source) if source.kind() == std::io::ErrorKind::NotFound => {

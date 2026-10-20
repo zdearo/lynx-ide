@@ -4,6 +4,7 @@ use crate::blocking_task::run_blocking;
 use crate::error::IpcError;
 use crate::git::worktree_manager::RepoRefs;
 
+use super::linked_folders::LinkedFolderPreview;
 use super::workspace_models::{Folder, RemoveWorktreeResult, Repo, WorktreeInfo};
 use super::workspace_service::WorkspaceService;
 
@@ -102,9 +103,45 @@ pub async fn create_folder(
     service: State<'_, WorkspaceService>,
     name: String,
     parent_id: Option<String>,
+    source_path: Option<String>,
 ) -> Result<Folder, IpcError> {
     let service = service.inner().clone();
-    run_blocking(move || service.create_folder(&name, parent_id.as_deref())).await
+    run_blocking(move || match source_path {
+        Some(path) => service.link_folder(&name, parent_id.as_deref(), &path),
+        None => service.create_folder(&name, parent_id.as_deref()),
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_linked_folder(
+    service: State<'_, WorkspaceService>,
+    path: String,
+) -> Result<LinkedFolderPreview, IpcError> {
+    let service = service.inner().clone();
+    run_blocking(move || service.preview_linked_folder(&path)).await
+}
+
+/// Reads the linked folders again (all, or just `folder_id`). True when something changed.
+#[tauri::command]
+#[specta::specta]
+pub async fn sync_linked_folders(
+    service: State<'_, WorkspaceService>,
+    folder_id: Option<String>,
+) -> Result<bool, IpcError> {
+    let service = service.inner().clone();
+    run_blocking(move || service.sync_linked_folders(folder_id.as_deref())).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn unlink_folder(
+    service: State<'_, WorkspaceService>,
+    folder_id: String,
+) -> Result<(), IpcError> {
+    let service = service.inner().clone();
+    run_blocking(move || service.unlink_folder(&folder_id)).await
 }
 
 #[tauri::command]

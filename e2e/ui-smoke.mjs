@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 
-const PORT = 1431;
+const PORT = Number(process.env.E2E_PORT ?? 1431);
 const BASE = `http://localhost:${PORT}/`;
 const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
@@ -1031,6 +1031,8 @@ await session("?mock=full", 1200, 760, async (p) => {
 
 await session("?mock=broken", 1200, 760, async (p) => {
   await p.keyboard.press("Control+,");
+  // The settings code loads the first time the dialog opens, which can take longer than a fixed wait.
+  await p.getByRole("tab", { name: "Terminal", exact: true }).waitFor();
   await p.waitForTimeout(400);
   check(
     "a broken config file is called out",
@@ -1815,6 +1817,57 @@ await session("?mock=full", 1300, 760, async (p) => {
     (await agent(/^claude, idle$/).getAttribute("aria-current")) === "true",
   );
 
+  const claudeCurrent = (value) =>
+    p
+      .waitForFunction(
+        (expected) =>
+          document
+            .querySelector("[data-agent-id]")
+            ?.getAttribute("aria-current") === expected,
+        value,
+        { timeout: 5000 },
+      )
+      .then(
+        () => true,
+        () => false,
+      );
+  await p.getByRole("button", { name: /^fix\/pty/ }).click();
+  check(
+    "an agent of a worktree that is not selected is not marked current",
+    await claudeCurrent(null),
+  );
+  await agent(/^claude, idle$/).click();
+  check(
+    "clicking it selects its worktree and brings its tab forward",
+    (await claudeCurrent("true")) &&
+      (await p.getByRole("tab", { name: /claude/, selected: true }).count()) ===
+        1,
+  );
+
+  // The card around a worktree and its agents is one click target, not just the name line.
+  await p.getByRole("button", { name: /^fix\/pty/ }).click();
+  const featCard = groupOf(featPath).locator("xpath=../..");
+  const featCardBox = await featCard.boundingBox();
+  await featCard.click({
+    position: { x: 10, y: (featCardBox?.height ?? 4) - 2 },
+  });
+  check(
+    "clicking the card outside its buttons selects the worktree",
+    await p
+      .waitForFunction(
+        () =>
+          [...document.querySelectorAll("button[aria-current]")].some((b) =>
+            /^feat\/auth/.test(b.textContent ?? ""),
+          ),
+        null,
+        { timeout: 5000 },
+      )
+      .then(
+        () => true,
+        () => false,
+      ),
+  );
+
   await p.getByRole("button", { name: /^feat\/auth/ }).focus();
   await p.keyboard.press("ArrowDown");
   await p.waitForTimeout(120);
@@ -2225,6 +2278,123 @@ await session("?mock=full", 1300, 760, async (p) => {
     axeTree.length === 0,
     axeTree.join(" || "),
   );
+});
+
+// A folder linked to a directory on disk: its subfolders and repos appear, follow later clones, and unlink.
+await session("?mock=full", 1300, 760, async (p) => {
+  const tree = p.getByRole("complementary", { name: "Projects" });
+  const rowOf = (name) =>
+    tree
+      .getByRole("button", { name: new RegExp(`^(Collapse|Expand) ${name}$`) })
+      .first();
+  const menuOf = async (name, isFolder) => {
+    await rowOf(name).hover();
+    await tree
+      .getByRole("button", {
+        name: isFolder ? `Actions for folder ${name}` : `Actions for ${name}`,
+      })
+      .first()
+      .click();
+  };
+  const menuItems = async () =>
+    p
+      .getByRole("menuitem")
+      .evaluateAll((items) => items.map((el) => el.textContent?.trim()));
+
+  await tree
+    .getByRole("button", { name: "New folder", exact: true })
+    .first()
+    .click();
+  await p.getByRole("button", { name: "Choose folder…" }).click();
+  await p.getByText("2 projects in 1 folder").waitFor({ timeout: 5000 });
+  check(
+    "choosing a directory names the folder after it and previews what it holds",
+    (await p.locator("#folder-name").inputValue()) === "web-app",
+  );
+  await p.locator("#folder-name").fill("Code");
+  await p.getByRole("button", { name: "Create and link" }).click();
+  await p.waitForTimeout(400);
+
+  check(
+    "the linked folder shows its repo and the folder the scan made",
+    (await p.locator('[data-project-id]:has-text("lynx")').count()) >= 1 &&
+      (await p.locator('[data-folder-id]:has-text("clients")').count()) >= 1,
+  );
+  check(
+    "a repo inside a mirrored folder sits in that folder",
+    (await p
+      .locator(
+        '[data-folder-id]:has-text("clients") [data-project-id]:has-text("acme")',
+      )
+      .count()) >= 1,
+  );
+
+  await menuOf("clients", true);
+  const mirroredMenu = await menuItems();
+  check(
+    "a mirrored folder cannot be deleted from its menu",
+    !mirroredMenu.includes("Delete folder…") &&
+      mirroredMenu.includes("Rename…"),
+    JSON.stringify(mirroredMenu),
+  );
+  await p.keyboard.press("Escape");
+
+  await menuOf("Code", true);
+  const rootMenu = await menuItems();
+  check(
+    "the linked folder offers Rescan and Unlink",
+    rootMenu.includes("Rescan folder") &&
+      rootMenu.includes("Unlink from disk…"),
+    JSON.stringify(rootMenu),
+  );
+  await p.keyboard.press("Escape");
+
+  await p.evaluate(() => window.__lynxMock.cloneIntoLinkedFolder("fresh"));
+  await menuOf("Code", true);
+  await p.getByRole("menuitem", { name: "Rescan folder" }).click();
+  await p.getByText("Found changes on disk").waitFor({ timeout: 5000 });
+  check(
+    "a repo cloned into the directory appears after a rescan",
+    (await p.locator('[data-project-id]:has-text("fresh")').count()) === 1,
+  );
+
+  await p.evaluate(() => window.__lynxMock.setRepoMissing("fresh", true));
+  await menuOf("Code", true);
+  await p.getByRole("menuitem", { name: "Rescan folder" }).click();
+  await p.waitForTimeout(400);
+  const missingRow = p.locator('[data-project-id]:has-text("fresh")');
+  check(
+    "a repo gone from disk says so in words, not only by dimming",
+    (await missingRow.textContent())?.includes("Not found") === true,
+  );
+
+  const axe = await p.evaluate(async (src) => {
+    window.eval(src);
+    const r = await window.axe.run(document, {
+      runOnly: ["wcag2a", "wcag2aa"],
+    });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 140)}`,
+    );
+  }, axeSource);
+  check(
+    "axe: no WCAG A/AA violations with a linked folder",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await menuOf("Code", true);
+  await p.getByRole("menuitem", { name: "Unlink from disk…" }).click();
+  await p.getByRole("button", { name: "Unlink", exact: true }).click();
+  await p.waitForTimeout(400);
+  await menuOf("clients", true);
+  const afterUnlink = await menuItems();
+  check(
+    "after unlinking, the folders it made are ordinary and can be deleted",
+    afterUnlink.includes("Delete folder…"),
+    JSON.stringify(afterUnlink),
+  );
+  await p.keyboard.press("Escape");
 });
 
 await session("?mock=full", 1300, 760, async (p) => {
@@ -3891,6 +4061,267 @@ await session("?mock=full", 1400, 800, async (p) => {
       .getByRole("tree", { name: /^Untracked files/ })
       .getByRole("treeitem", { name: /^plan\.md/ })
       .count()) === 1,
+  );
+});
+
+// Plan limits in the footer: one button per plan, with the fullest window, and the details in a popover.
+await session("?mock=full", 1400, 800, async (p) => {
+  const footer = p.getByRole("contentinfo", { name: "Status bar" });
+  const codex = footer.getByRole("button", { name: /^Codex:/ });
+  check(
+    "the footer shows the Codex plan with its share used and no other plan",
+    (await codex.count()) === 1 &&
+      ((await codex.innerText()) ?? "").includes("0%") &&
+      (await footer.getByRole("group", { name: "Plan limits" }).count()) === 1,
+  );
+
+  await codex.click();
+  await p.waitForTimeout(300);
+  const details = p.getByRole("dialog");
+  check(
+    "its popover names the plan and window and says when it resets",
+    ((await details.innerText()) ?? "").includes("Free") &&
+      ((await details.innerText()) ?? "").includes("Monthly window") &&
+      ((await details.innerText()) ?? "").includes("Resets in 29d"),
+  );
+  check(
+    "the window's bar is a progress bar with its value, not only a colour",
+    (await details
+      .getByRole("progressbar", { name: "Monthly window" })
+      .count()) === 1,
+  );
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the plan limits popover open",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(200);
+  check(
+    "Escape closes the popover",
+    (await p.getByRole("dialog").count()) === 0,
+  );
+
+  // A plan that is nearly out says so in words, and so does one that is not signed in.
+  await p.evaluate(() => {
+    const now = Math.floor(Date.now() / 1000);
+    window.__lynxMock.setPlanUsage([
+      {
+        harness: "codex",
+        plan: "plus",
+        state: "ready",
+        reason: null,
+        observedAt: now,
+        windows: [
+          {
+            kind: "session",
+            minutes: 300,
+            usedPercent: 40,
+            resetsAt: now + 3600,
+          },
+          {
+            kind: "weekly",
+            minutes: 10080,
+            usedPercent: 93,
+            resetsAt: now + 86400,
+          },
+        ],
+      },
+      {
+        harness: "claude",
+        plan: null,
+        state: "signInNeeded",
+        reason: null,
+        windows: [],
+        observedAt: now,
+      },
+    ]);
+    window.dispatchEvent(new Event("focus"));
+  });
+  await p.waitForTimeout(500);
+  check(
+    "the footer shows the fullest window, so a nearly used up plan reads 93%",
+    (
+      (await footer.getByRole("button", { name: /^Codex:/ }).innerText()) ?? ""
+    ).includes("93%"),
+  );
+  check(
+    "a plan that is not signed in says so",
+    (await footer
+      .getByRole("button", { name: /Sign in to Claude Code/ })
+      .count()) === 1,
+  );
+  await footer.getByRole("button", { name: /^Codex:/ }).click();
+  await p.waitForTimeout(300);
+  check(
+    "the popover lists both windows and flags the nearly used up one in words",
+    (await p.getByRole("dialog").getByText("Almost used up").count()) === 1 &&
+      (await p.getByRole("dialog").getByRole("progressbar").count()) === 2,
+  );
+});
+
+// The plan limits settings: what shows in the footer, how it reads, and the warning levels that stay in order.
+await session("?mock=full", 1400, 800, async (p) => {
+  const footer = p.getByRole("contentinfo", { name: "Status bar" });
+  const claude = footer.getByRole("button", { name: /^Claude Code:/ });
+  const codex = footer.getByRole("button", { name: /^Codex:/ });
+  // An open dialog hides the page behind it from role queries, so the footer is read by CSS meanwhile.
+  const claudeBehind = p.locator("footer button", { hasText: "Claude Code" });
+  const codexBehind = p.locator("footer button", { hasText: "Codex" });
+  await p.evaluate(() => {
+    const now = Math.floor(Date.now() / 1000);
+    window.__lynxMock.setPlanUsage([
+      {
+        harness: "claude",
+        plan: "pro",
+        state: "ready",
+        reason: null,
+        observedAt: now,
+        windows: [
+          {
+            kind: "session",
+            minutes: 300,
+            usedPercent: 82,
+            resetsAt: now + 2 * 3600 + 900,
+          },
+          {
+            kind: "weekly",
+            minutes: 10080,
+            usedPercent: 31,
+            resetsAt: now + 4 * 86400,
+          },
+        ],
+      },
+      {
+        harness: "codex",
+        plan: "plus",
+        state: "ready",
+        reason: null,
+        observedAt: now,
+        windows: [
+          {
+            kind: "monthly",
+            minutes: 43200,
+            usedPercent: 12,
+            resetsAt: now + 20 * 86400,
+          },
+        ],
+      },
+    ]);
+    window.dispatchEvent(new Event("focus"));
+  });
+  await p.waitForTimeout(400);
+  check(
+    "both plans show in the footer by default, compact, with the countdown",
+    (await claude.count()) === 1 &&
+      (await codex.count()) === 1 &&
+      ((await claude.textContent()) ?? "").includes("82% used") &&
+      ((await claude.textContent()) ?? "").includes("2h 15m"),
+  );
+
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  // The limits are a tab of the Agents page.
+  await p.getByRole("tab", { name: "Agents", exact: true }).click();
+  await p.getByRole("tab", { name: "Plan limits", exact: true }).click();
+  await p.waitForTimeout(300);
+  const settings = p.locator('[role="dialog"]');
+  const switchOn = async (name) =>
+    (await settings
+      .getByRole("switch", { name, exact: true })
+      .getAttribute("aria-checked")) === "true";
+  check(
+    "the page offers the footer switch and one switch per plan, all on",
+    (await switchOn("Show in the footer")) &&
+      (await switchOn("Claude Code")) &&
+      (await switchOn("Codex")),
+  );
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the Plan limits page",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await settings.getByRole("switch", { name: "Codex", exact: true }).click();
+  await p.waitForTimeout(400);
+  check(
+    "turning a plan off takes it out of the footer",
+    (await codexBehind.count()) === 0 && (await claudeBehind.count()) === 1,
+  );
+  await settings.getByRole("switch", { name: "Codex", exact: true }).click();
+  await p.waitForTimeout(400);
+
+  await settings.getByRole("combobox", { name: "Footer layout" }).click();
+  await p.getByRole("option", { name: "Detailed", exact: true }).click();
+  await p.waitForTimeout(300);
+  await settings.getByRole("combobox", { name: "Percentages" }).click();
+  await p.getByRole("option", { name: "Left", exact: true }).click();
+  await p.waitForTimeout(400);
+  const detailed = (await claudeBehind.textContent()) ?? "";
+  check(
+    "detailed layout names each window and reads what is left",
+    detailed.includes("5h") &&
+      detailed.includes("wk") &&
+      detailed.includes("18% left") &&
+      detailed.includes("69% left"),
+    detailed,
+  );
+
+  // The warning levels cannot cross: the warning stops one below the critical level.
+  await p.evaluate(() => window.__lynxMock.setUsageConfig({ warnAt: 89 }));
+  await p.waitForTimeout(400);
+  check(
+    "the warning level cannot go up to the critical one",
+    await settings
+      .locator("#usage-warn-at")
+      .locator("xpath=..")
+      .getByRole("button", { name: "Increase" })
+      .isDisabled(),
+  );
+  check(
+    "the critical level cannot go down to the warning one",
+    await settings
+      .locator("#usage-critical-at")
+      .locator("xpath=..")
+      .getByRole("button", { name: "Decrease" })
+      .isDisabled(),
+  );
+
+  await settings
+    .getByRole("switch", { name: "Show plan names", exact: true })
+    .click();
+  await p.waitForTimeout(400);
+  const marks = p.locator('footer [role="group"] button');
+  check(
+    "with names off the footer keeps each plan's number but not its name, which stays in the label",
+    (await marks.count()) === 2 &&
+      !((await marks.first().textContent()) ?? "").includes("Claude") &&
+      ((await marks.first().getAttribute("aria-label")) ?? "").includes(
+        "Claude Code",
+      ),
+  );
+
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(300);
+  await p.evaluate(() => window.__lynxMock.setUsageConfig({ visible: false }));
+  await p.waitForTimeout(400);
+  check(
+    "switching the footer off hides every plan",
+    (await footer.getByRole("group", { name: "Plan limits" }).count()) === 0,
   );
 });
 

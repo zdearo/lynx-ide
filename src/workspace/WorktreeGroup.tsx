@@ -39,7 +39,24 @@ export function WorktreeGroup({
   onCloseAgent,
 }: WorktreeGroupProps) {
   return (
-    <li className={cn("rounded-lg", selected && "bg-sidebar-accent")}>
+    <li
+      // The whole block selects the worktree, and lights up as one card on hover. Real
+      // controls inside keep their own click; the worktree button stays the keyboard path.
+      onClick={(event) => {
+        if (selected || !event.currentTarget.contains(event.target as Node)) {
+          return;
+        }
+        const control = (event.target as Element).closest("button, a, [role]");
+        if (control && event.currentTarget.contains(control)) return;
+        onSelect();
+      }}
+      className={cn(
+        "rounded-lg",
+        selected
+          ? "bg-sidebar-accent"
+          : "cursor-pointer hover:bg-sidebar-accent/50",
+      )}
+    >
       <WorktreeRow
         repoId={repoId}
         worktree={worktree}

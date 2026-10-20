@@ -10,6 +10,8 @@ use crate::persistence::AppDatabase;
 
 use super::empty_project::create_empty_project;
 use super::folder_hierarchy::would_create_cycle;
+use super::linked_folder_sync::canonical_key;
+use super::linked_folders::LinkedFolderError;
 use super::workspace_models::{Folder, RemoveWorktreeResult, Repo, WorktreeInfo, WorktreeMeta};
 
 pub(super) const MAX_NAME_LENGTH: usize = 100;
@@ -23,11 +25,13 @@ pub type WorktreesRoot = Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>;
 /// each worktree was branched from).
 #[derive(Clone)]
 pub struct WorkspaceService {
-    database: Arc<AppDatabase>,
+    pub(super) database: Arc<AppDatabase>,
     worktrees_root: WorktreesRoot,
     /// Worktree paths per repo as Git last reported them: the only folders the
     /// file explorer may read, so the frontend cannot ask for arbitrary paths.
     known_worktrees: Arc<Mutex<HashMap<String, HashSet<PathBuf>>>>,
+    /// Held while a linked folder is scanned and applied, so two scans never plan the same folder.
+    pub(super) linked_sync: Arc<Mutex<()>>,
 }
 
 impl WorkspaceService {
@@ -36,6 +40,7 @@ impl WorkspaceService {
             database: Arc::new(database),
             worktrees_root,
             known_worktrees: Arc::new(Mutex::new(HashMap::new())),
+            linked_sync: Arc::new(Mutex::new(())),
         }
     }
 
@@ -63,12 +68,25 @@ impl WorkspaceService {
             return Err(AppError::BareRepo);
         }
 
+        // A linked folder may have registered it under another spelling of the same path.
+        let key = canonical_key(&main.path);
+        if let Some(known) = self
+            .database
+            .list_repos()?
+            .into_iter()
+            .find(|repo| canonical_key(Path::new(&repo.path)) == key)
+        {
+            return Ok(known);
+        }
+
         // The database keeps the first repo registered for this path.
         let candidate = Repo {
             id: uuid::Uuid::new_v4().to_string(),
             name: directory_name(&main.path),
             path: path_to_string(&main.path),
             folder_id: None,
+            linked_root_id: None,
+            missing: false,
         };
         Ok(self.database.get_or_insert_repo(&candidate)?)
     }
@@ -270,6 +288,9 @@ impl WorkspaceService {
             name,
             parent_id: parent_id.map(str::to_owned),
             collapsed: false,
+            source_path: None,
+            linked_root_id: None,
+            missing: false,
         };
         self.database.insert_folder(&folder)?;
         Ok(folder)
@@ -296,8 +317,12 @@ impl WorkspaceService {
         Ok(())
     }
 
-    /// Projects and folders inside move up one level. Nothing is removed from disk.
+    /// Projects and folders inside move up one level. Nothing is removed from disk. A folder made
+    /// by a linked folder stays: the next scan would bring it back.
     pub fn delete_folder(&self, folder_id: &str) -> Result<(), AppError> {
+        if self.find_folder(folder_id)?.is_mirrored() {
+            return Err(LinkedFolderError::Managed.into());
+        }
         if self.database.delete_folder(folder_id)? {
             Ok(())
         } else {
@@ -322,7 +347,7 @@ impl WorkspaceService {
         Ok(())
     }
 
-    fn find_folder(&self, folder_id: &str) -> Result<Folder, AppError> {
+    pub(super) fn find_folder(&self, folder_id: &str) -> Result<Folder, AppError> {
         self.database
             .find_folder(folder_id)?
             .ok_or_else(|| AppError::FolderNotFound(folder_id.to_owned()))
@@ -423,7 +448,7 @@ fn validate_name(repo_path: &Path, name: &str) -> Result<String, AppError> {
 }
 
 /// Folder names are only labels, so the rules are just: not blank, not absurdly long.
-fn validate_folder_name(raw: &str) -> Result<String, AppError> {
+pub(super) fn validate_folder_name(raw: &str) -> Result<String, AppError> {
     let name = raw.trim();
     if name.is_empty() {
         return Err(AppError::InvalidName("the folder name is empty".to_owned()));
@@ -482,6 +507,6 @@ fn directory_name(path: &Path) -> String {
     )
 }
 
-fn path_to_string(path: &Path) -> String {
+pub(super) fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }

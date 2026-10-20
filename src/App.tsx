@@ -28,6 +28,7 @@ import { copy } from "@/ui-copy";
 import { notifyAgentStatus } from "@/notifications/notify-agent-status";
 import { applyWorktreeChange } from "@/watching/apply-worktree-change";
 import { useWorktreeWatch } from "@/watching/use-worktree-watch";
+import { useLinkedFolderSync } from "@/workspace/use-linked-folder-sync";
 import { useAppShortcuts } from "@/use-app-shortcuts";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import {
@@ -48,6 +49,7 @@ function App() {
     (state) => state.selectedWorktreePath,
   );
   useWorktreeWatch(selectedWorktreePath);
+  useLinkedFolderSync();
   const wide = useMediaQuery(WIDE_LAYOUT_QUERY);
   const panelCollapsed = useNavigationStore((state) => state.panelCollapsed);
   const drawerOpen = useNavigationStore((state) => state.drawerOpen);

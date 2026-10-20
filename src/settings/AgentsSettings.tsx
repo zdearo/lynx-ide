@@ -18,6 +18,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { GaugeGlyph18 } from "@/components/icons/GaugeGlyph18";
+import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { UsageSettings } from "@/settings/UsageSettings";
 import { Switch } from "@/components/ui/switch";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
@@ -103,91 +107,108 @@ export function AgentsSettings() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-sm text-muted-foreground">{text.intro}</p>
-        <TooltipIconButton
-          label={text.refresh}
-          className="size-7 shrink-0"
-          onClick={() => void refreshCatalog()}
-        >
-          <RefreshGlyph18 />
-        </TooltipIconButton>
-      </div>
+    <Tabs defaultValue="setup" className="gap-6">
+      <TabsList variant="line" aria-label={text.tabs.label}>
+        <TabsTrigger value="setup">
+          <SparkleGlyph18 aria-hidden className="size-3.5" />
+          {text.tabs.setup}
+        </TabsTrigger>
+        <TabsTrigger value="limits">
+          <GaugeGlyph18 aria-hidden className="size-3.5" />
+          {copy.settings.usage.title}
+        </TabsTrigger>
+      </TabsList>
 
-      {config && (
-        <ChoiceSetting
-          id="agents-launch-mode"
-          label={text.launchMode.label}
-          hint={text.launchMode.hint}
-          value={config.agents.launchMode}
-          defaultValue="manual"
-          options={[
-            { value: "manual", label: text.launchMode.manual },
-            { value: "yolo", label: text.launchMode.yolo },
-          ]}
-          disabled={disabled}
-          onCommit={async (mode) => {
-            // YOLO skips every permission prompt, so it waits for a yes; the select keeps its value.
-            if (mode === "yolo") setYoloPending(true);
-            else await save(withLaunchMode(config, "manual"));
-          }}
-        />
-      )}
+      <TabsContent value="setup" className="flex flex-col gap-6">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm text-muted-foreground">{text.intro}</p>
+          <TooltipIconButton
+            label={text.refresh}
+            className="size-7 shrink-0"
+            onClick={() => void refreshCatalog()}
+          >
+            <RefreshGlyph18 />
+          </TooltipIconButton>
+        </div>
 
-      <Section id="agents-detected" title={text.detected}>
-        {onThisComputer.map((entry) => (
-          <li key={entry.harness} className="grid gap-3 py-2.5">
-            <div className="flex items-center gap-3">
-              <AgentIcon harness={entry.harness} />
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {text.harnesses[entry.harness].name}
-              </span>
-              {entry.hooks.state === "partial" && (
-                <span className="shrink-0 text-meta text-muted-foreground">
-                  {text.hooks.states.partial}
+        {config && (
+          <ChoiceSetting
+            id="agents-launch-mode"
+            label={text.launchMode.label}
+            hint={text.launchMode.hint}
+            value={config.agents.launchMode}
+            defaultValue="manual"
+            options={[
+              { value: "manual", label: text.launchMode.manual },
+              { value: "yolo", label: text.launchMode.yolo },
+            ]}
+            disabled={disabled}
+            onCommit={async (mode) => {
+              // YOLO skips every permission prompt, so it waits for a yes; the select keeps its value.
+              if (mode === "yolo") setYoloPending(true);
+              else await save(withLaunchMode(config, "manual"));
+            }}
+          />
+        )}
+
+        <Section id="agents-detected" title={text.detected}>
+          {onThisComputer.map((entry) => (
+            <li key={entry.harness} className="grid gap-3 py-2.5">
+              <div className="flex items-center gap-3">
+                <AgentIcon harness={entry.harness} />
+                <span className="min-w-0 flex-1 truncate text-sm">
+                  {text.harnesses[entry.harness].name}
                 </span>
+                {entry.hooks.state === "partial" && (
+                  <span className="shrink-0 text-meta text-muted-foreground">
+                    {text.hooks.states.partial}
+                  </span>
+                )}
+                {entry.hooks.state === "error" && (
+                  <span className="shrink-0 text-meta text-destructive">
+                    {text.hooks.states.error}
+                  </span>
+                )}
+                <Switch
+                  aria-label={text.use(text.harnesses[entry.harness].name)}
+                  checked={entry.hooks.state === "installed"}
+                  disabled={busy || entry.hooks.state === "error"}
+                  onCheckedChange={(turnOn) => void setOn(entry, turnOn)}
+                />
+              </div>
+              {config && entry.hooks.state === "installed" && (
+                <ArgumentsField
+                  harness={entry.harness}
+                  config={config}
+                  disabled={disabled}
+                  save={save}
+                />
               )}
-              {entry.hooks.state === "error" && (
-                <span className="shrink-0 text-meta text-destructive">
-                  {text.hooks.states.error}
-                </span>
-              )}
-              <Switch
-                aria-label={text.use(text.harnesses[entry.harness].name)}
-                checked={entry.hooks.state === "installed"}
-                disabled={busy || entry.hooks.state === "error"}
-                onCheckedChange={(turnOn) => void setOn(entry, turnOn)}
-              />
-            </div>
-            {config && entry.hooks.state === "installed" && (
-              <ArgumentsField
-                harness={entry.harness}
-                config={config}
-                disabled={disabled}
-                save={save}
-              />
-            )}
-          </li>
-        ))}
-      </Section>
-
-      {elsewhere.length > 0 && (
-        <Section id="agents-elsewhere" title={text.undetected}>
-          {elsewhere.map((entry) => (
-            <li
-              key={entry.harness}
-              className="flex items-center gap-3 py-2.5 text-muted-foreground"
-            >
-              <AgentIcon harness={entry.harness} muted />
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {text.harnesses[entry.harness].name}
-              </span>
-              <span className="shrink-0 text-meta">{text.notFound}</span>
             </li>
           ))}
         </Section>
-      )}
+
+        {elsewhere.length > 0 && (
+          <Section id="agents-elsewhere" title={text.undetected}>
+            {elsewhere.map((entry) => (
+              <li
+                key={entry.harness}
+                className="flex items-center gap-3 py-2.5 text-muted-foreground"
+              >
+                <AgentIcon harness={entry.harness} muted />
+                <span className="min-w-0 flex-1 truncate text-sm">
+                  {text.harnesses[entry.harness].name}
+                </span>
+                <span className="shrink-0 text-meta">{text.notFound}</span>
+              </li>
+            ))}
+          </Section>
+        )}
+      </TabsContent>
+
+      <TabsContent value="limits" className="grid gap-5">
+        <UsageSettings />
+      </TabsContent>
 
       <AlertDialog
         open={yoloPending}
@@ -219,7 +240,7 @@ export function AgentsSettings() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </Tabs>
   );
 }
 

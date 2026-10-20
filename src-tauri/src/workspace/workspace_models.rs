@@ -10,6 +10,10 @@ pub struct Repo {
     pub path: String,
     /// The folder the repo sits in; `None` at the top level.
     pub folder_id: Option<String>,
+    /// The linked folder that found this repo; `None` for a repo added by hand.
+    pub linked_root_id: Option<String>,
+    /// A linked repo that the last scan no longer found on disk.
+    pub missing: bool,
 }
 
 /// A user-made folder that groups repositories and other folders in the sidebar.
@@ -21,6 +25,24 @@ pub struct Folder {
     /// `None` for a folder at the top level.
     pub parent_id: Option<String>,
     pub collapsed: bool,
+    /// Directory this folder mirrors. Set on a linked folder and on the folders made under it.
+    pub source_path: Option<String>,
+    /// The linked folder this one belongs to: its own id for the linked folder itself.
+    pub linked_root_id: Option<String>,
+    /// A mirrored folder that the last scan no longer found on disk.
+    pub missing: bool,
+}
+
+impl Folder {
+    /// True for a folder the user linked to a directory (not the folders made under it).
+    pub fn is_linked_root(&self) -> bool {
+        self.linked_root_id.as_deref() == Some(self.id.as_str())
+    }
+
+    /// True for a folder the scan made under a linked folder.
+    pub fn is_mirrored(&self) -> bool {
+        self.linked_root_id.is_some() && !self.is_linked_root()
+    }
 }
 
 /// What the app remembers about a worktree that Git itself does not.

@@ -43,7 +43,11 @@ export const commands = {
 	removeWorktree: (repoId: string, worktreePath: string, force: boolean) => typedError<RemoveWorktreeResult, IpcError>(__TAURI_INVOKE("remove_worktree", { repoId, worktreePath, force })),
 	repoRefs: (repoId: string) => typedError<RepoRefs, IpcError>(__TAURI_INVOKE("repo_refs", { repoId })),
 	listFolders: () => typedError<Folder[], IpcError>(__TAURI_INVOKE("list_folders")),
-	createFolder: (name: string, parentId: string | null) => typedError<Folder, IpcError>(__TAURI_INVOKE("create_folder", { name, parentId })),
+	createFolder: (name: string, parentId: string | null, sourcePath: string | null) => typedError<Folder, IpcError>(__TAURI_INVOKE("create_folder", { name, parentId, sourcePath })),
+	previewLinkedFolder: (path: string) => typedError<LinkedFolderPreview, IpcError>(__TAURI_INVOKE("preview_linked_folder", { path })),
+	/**  Reads the linked folders again (all, or just `folder_id`). True when something changed. */
+	syncLinkedFolders: (folderId: string | null) => typedError<boolean, IpcError>(__TAURI_INVOKE("sync_linked_folders", { folderId })),
+	unlinkFolder: (folderId: string) => typedError<null, IpcError>(__TAURI_INVOKE("unlink_folder", { folderId })),
 	renameFolder: (folderId: string, name: string) => typedError<Folder, IpcError>(__TAURI_INVOKE("rename_folder", { folderId, name })),
 	moveFolder: (folderId: string, parentId: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("move_folder", { folderId, parentId })),
 	deleteFolder: (folderId: string) => typedError<null, IpcError>(__TAURI_INVOKE("delete_folder", { folderId })),
@@ -192,6 +196,11 @@ export const commands = {
 	 *  the interface then reads it again on a timer.
 	 */
 	watchWorktree: (worktreePath: string | null) => typedError<boolean, IpcError>(__TAURI_INVOKE("watch_worktree", { worktreePath })),
+	/**
+	 *  The plan limits the settings ask for. Nothing is read while the footer's limits are off.
+	 *  `force` skips the cache: used on refresh.
+	 */
+	getPlanUsage: (force: boolean) => typedError<PlanUsage[], IpcError>(__TAURI_INVOKE("get_plan_usage", { force })),
 };
 
 /** Events */
@@ -255,6 +264,7 @@ export type AppConfig = {
 	git: GitConfig,
 	notifications: NotificationsConfig,
 	browser: BrowserConfig,
+	usage: UsageConfig,
 };
 
 export type AppInfo = {
@@ -506,6 +516,12 @@ export type Folder = {
 	/**  `None` for a folder at the top level. */
 	parentId: string | null,
 	collapsed: boolean,
+	/**  Directory this folder mirrors. Set on a linked folder and on the folders made under it. */
+	sourcePath: string | null,
+	/**  The linked folder this one belongs to: its own id for the linked folder itself. */
+	linkedRootId: string | null,
+	/**  A mirrored folder that the last scan no longer found on disk. */
+	missing: boolean,
 };
 
 /**  Git settings: which agent writes the commit message, and how it should write it. */
@@ -541,7 +557,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "browserEngineMissing" | "browser" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "browserEngineMissing" | "browser" | "internal";
 
 export type LastCommitMessage = {
 	summary: string,
@@ -557,6 +573,15 @@ export type LaunchMode = "manual" | "yolo";
 export type LineCounts = {
 	added: number,
 	removed: number,
+};
+
+/**  What linking a directory would bring in, shown before anything is created. */
+export type LinkedFolderPreview = {
+	/**  Folders that would be made under the linked one. */
+	folders: number,
+	projects: number,
+	/**  A limit cut the scan short, so there may be more. */
+	truncated: boolean,
 };
 
 export type MergeMethod = "merge" | "squash" | "rebase";
@@ -578,6 +603,35 @@ export type NotificationsConfig = {
 	onDone: boolean,
 	/**  An agent is waiting for an answer or a permission. */
 	onNeedsYou: boolean,
+};
+
+export type PlanUsage = {
+	harness: HarnessId,
+	/**  The plan's name as the provider writes it, such as `free` or `plus`. */
+	plan: string | null,
+	state: PlanUsageState,
+	reason: string | null,
+	windows: PlanWindow[],
+	/**  Unix seconds when these numbers were read. */
+	observedAt: number,
+};
+
+export type PlanUsageState = 
+/**  The windows below are what the provider reported. */
+"ready" | 
+/**  The provider is there but not signed in, so there is nothing to read. */
+"signInNeeded" | 
+/**  Something went wrong; `reason` says what, in the provider's own words where it gave them. */
+"unavailable";
+
+export type PlanWindow = {
+	kind: WindowKind,
+	/**  How long the window lasts, when the source says. */
+	minutes: number | null,
+	/**  Share of the window already used, rounded to a whole percent and possibly above 100 when the plan allows it. */
+	usedPercent: number,
+	/**  Unix seconds when the window starts over. */
+	resetsAt: number | null,
 };
 
 /**  How a pull joins the remote's commits. */
@@ -650,6 +704,10 @@ export type Repo = {
 	path: string,
 	/**  The folder the repo sits in; `None` at the top level. */
 	folderId: string | null,
+	/**  The linked folder that found this repo; `None` for a repo added by hand. */
+	linkedRootId: string | null,
+	/**  A linked repo that the last scan no longer found on disk. */
+	missing: boolean,
 };
 
 export type RepoRefs = {
@@ -743,6 +801,32 @@ export type TerminalSnapshot = {
 	running: boolean,
 	exitCode: number | null,
 };
+
+/**  Plan limits in the footer: whether they show, which plans, how a share reads, and when a bar warns. */
+export type UsageConfig = {
+	/**  Off also stops Lynx from reading the limits at all. */
+	visible: boolean,
+	/**  The plans to show, in order. */
+	providers: HarnessId[],
+	/**  Whether each plan's name shows beside its mark. Off leaves the mark, the bar and the number. */
+	showNames: boolean,
+	display: UsageDisplay,
+	layout: UsageLayout,
+	/**  From this share used, a bar warns. Between 1 and 99. */
+	warnAt: number,
+	/**  From this share used, a bar is nearly out. Between 2 and 100, and above `warn_at`. */
+	criticalAt: number,
+};
+
+/**  How the footer shows a plan's share: the percentage used, or what is left. */
+export type UsageDisplay = "used" | "remaining";
+
+/**  How much of each plan the footer shows: a percentage per plan, or every window with its bar. */
+export type UsageLayout = "compact" | "detailed";
+
+export type WindowKind = "session" | "weekly" | "monthly" | 
+/**  A window of a length Lynx does not name; the minutes still say how long it is. */
+"other";
 
 /**  Files changed in the watched worktree. Sent once a burst of changes has settled. */
 export type WorktreeChanged = {

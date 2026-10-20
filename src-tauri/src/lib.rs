@@ -1,4 +1,5 @@
 mod agents;
+mod app_image_environment;
 mod app_info;
 mod blocking_task;
 mod bounded_command;
@@ -12,6 +13,7 @@ mod ipc;
 mod persistence;
 mod pull_request;
 mod terminal;
+mod usage;
 mod watching;
 mod workspace;
 
@@ -27,6 +29,8 @@ use config::config_events::start_config_watcher;
 use persistence::AppDatabase;
 use terminal::terminal_events::TauriEventSink;
 use terminal::terminal_manager::TerminalManager;
+use usage::plan_usage_service::PlanUsageService;
+use usage::{claude_usage, codex_usage};
 use watching::watch_commands::WatchState;
 use workspace::workspace_service::WorkspaceService;
 
@@ -58,7 +62,7 @@ pub fn run() {
             builder.mount_events(app);
 
             let user_home = app.path().home_dir()?;
-            let executable = std::env::current_exe().ok();
+            let executable = app_image_environment::launch_executable(std::env::current_exe().ok());
             let hook_targets = HookTargets::from_environment(&user_home, executable.as_deref());
             // Agents turned on before the browser tools existed get them too; this waits on the
             // agents' CLIs, so it stays off the startup path.
@@ -83,6 +87,10 @@ pub fn run() {
             ));
 
             app.manage(WatchState::default());
+            app.manage(PlanUsageService::new(
+                codex_usage::installed(),
+                claude_usage::installed(),
+            ));
 
             let browser_home = lynx_home(app.path().home_dir()?);
             let browser_service = Arc::new(browser::BrowserService::new(

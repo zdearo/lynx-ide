@@ -23,6 +23,15 @@ function snapshot(fontSize: number): ConfigSnapshot {
       agents: { launchMode: "manual", launchArguments: {} },
       notifications: { onDone: true, onNeedsYou: true },
       browser: { agentAccess: "full", allowedSites: [] },
+      usage: {
+        visible: true,
+        providers: ["claude", "codex"],
+        showNames: true,
+        display: "used",
+        layout: "compact",
+        warnAt: 75,
+        criticalAt: 90,
+      },
       git: {
         commitMessageAgent: "auto",
         commitMessageStyle: "conventional",

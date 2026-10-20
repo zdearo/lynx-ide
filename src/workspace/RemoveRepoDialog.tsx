@@ -50,7 +50,9 @@ export function RemoveRepoDialog() {
               {copy.removeRepo.title(repo.name)}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {copy.removeRepo.body}
+              {repo.linkedRootId
+                ? copy.removeRepo.linkedBody
+                : copy.removeRepo.body}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

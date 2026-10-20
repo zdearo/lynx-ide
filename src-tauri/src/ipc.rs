@@ -15,6 +15,7 @@ use crate::files::files_commands as files;
 use crate::pull_request::pull_request_commands as pull_request;
 use crate::terminal::terminal_commands as terminal;
 use crate::terminal::terminal_events::{AgentStatusChanged, TerminalExit, TerminalOutput};
+use crate::usage::usage_commands as usage;
 use crate::watching::watch_commands as watching;
 use crate::watching::worktree_events::WorktreeChanged;
 use crate::workspace::workspace_commands as workspace;
@@ -45,6 +46,9 @@ pub fn builder() -> Builder<tauri::Wry> {
             workspace::repo_refs,
             workspace::list_folders,
             workspace::create_folder,
+            workspace::preview_linked_folder,
+            workspace::sync_linked_folders,
+            workspace::unlink_folder,
             workspace::rename_folder,
             workspace::move_folder,
             workspace::delete_folder,
@@ -102,6 +106,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             pull_request::draft_pull_request_text,
             pull_request::create_pull_request,
             watching::watch_worktree,
+            usage::get_plan_usage,
         ])
         .events(collect_events![
             TerminalOutput,

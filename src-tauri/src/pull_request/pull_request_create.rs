@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::app_image_environment;
 use crate::bounded_command::{BoundedError, run_bounded};
 use crate::changes::branch_sync;
 use crate::error::AppError;
@@ -281,6 +282,7 @@ pub fn create(
         .args(create_args(request))
         .current_dir(root)
         .env("GH_PROMPT_DISABLED", "1");
+    app_image_environment::clean_command(&mut command);
     let output =
         run_bounded(&mut command, request.body.as_bytes(), CREATE_TIMEOUT).map_err(|error| {
             match error {

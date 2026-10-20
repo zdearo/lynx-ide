@@ -13,6 +13,8 @@ use std::process::{Command, Stdio};
 use crate::agents::agent_monitor::Foreground;
 #[cfg(any(windows, test))]
 use crate::agents::harness::harness_of_job;
+#[cfg(unix)]
+use crate::app_image_environment;
 
 /// The arguments of a process, as it was started. None when the process no longer exists.
 #[cfg(unix)]
@@ -27,12 +29,13 @@ pub fn command_line(pid: i32) -> Option<Vec<String>> {
         return (!args.is_empty()).then_some(args);
     }
     // Elsewhere ps prints the line joined by spaces, so an argument with a space in it is split.
-    let output = Command::new("ps")
+    let mut command = Command::new("ps");
+    command
         .args(["-o", "args=", "-p", &pid.to_string()])
         .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+        .stderr(Stdio::null());
+    app_image_environment::clean_command(&mut command);
+    let output = command.output().ok()?;
     let args: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .split_whitespace()
         .map(str::to_owned)

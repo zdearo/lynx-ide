@@ -522,7 +522,12 @@ mod tests {
     fn setup() -> (ConfigStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join(".lynx").join("config.json");
-        (ConfigStore::open(path, PathBuf::from("/home/dev")), dir)
+        let home = if cfg!(windows) {
+            r"C:\home\dev"
+        } else {
+            "/home/dev"
+        };
+        (ConfigStore::open(path, PathBuf::from(home)), dir)
     }
 
     fn with_font_size(size: u8) -> AppConfig {
@@ -852,7 +857,11 @@ mod tests {
 
         assert_eq!(
             store.worktrees_directory(),
-            Some(PathBuf::from("/home/dev/trees"))
+            Some(PathBuf::from(if cfg!(windows) {
+                r"C:\home\dev\trees"
+            } else {
+                "/home/dev/trees"
+            }))
         );
     }
 

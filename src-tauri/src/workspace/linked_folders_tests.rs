@@ -8,6 +8,7 @@ use crate::error::AppError;
 use crate::git::git_command::git;
 use crate::persistence::AppDatabase;
 
+use super::linked_folder_sync::without_verbatim_prefix;
 use super::linked_folders::LinkedFolderError;
 use super::workspace_models::{Folder, Repo};
 use super::workspace_service::WorkspaceService;
@@ -28,7 +29,7 @@ fn init_repo(path: &Path) {
 /// ~/code with `lynx`, `clients/acme` and `clients/beta/api` as repos, and a `notes` folder.
 fn setup() -> Setup {
     let code_dir = tempfile::tempdir().expect("code dir");
-    let code = fs::canonicalize(code_dir.path()).expect("canonical");
+    let code = without_verbatim_prefix(fs::canonicalize(code_dir.path()).expect("canonical"));
     init_repo(&code.join("lynx"));
     init_repo(&code.join("clients/acme"));
     init_repo(&code.join("clients/beta/api"));
@@ -515,7 +516,7 @@ fn syncing_an_unknown_or_unlinked_folder_is_an_error() {
 #[test]
 fn links_and_their_flags_survive_reopening_the_database() {
     let code_dir = tempfile::tempdir().expect("code dir");
-    let code = fs::canonicalize(code_dir.path()).expect("canonical");
+    let code = without_verbatim_prefix(fs::canonicalize(code_dir.path()).expect("canonical"));
     init_repo(&code.join("app"));
     let state_dir = tempfile::tempdir().expect("state dir");
     let open = || {

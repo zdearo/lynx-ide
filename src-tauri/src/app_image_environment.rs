@@ -110,7 +110,8 @@ fn launch_executable_from(
         .or(fallback)
 }
 
-#[cfg(test)]
+// AppImage sets these variables and they only exist on Linux, where the paths are `:`-separated.
+#[cfg(all(test, unix))]
 mod tests {
     use std::ffi::OsStr;
 

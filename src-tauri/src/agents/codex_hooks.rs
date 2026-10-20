@@ -629,8 +629,10 @@ mod tests {
         let config = fs::read_to_string(dir.path().join("config.toml")).expect("config");
         assert!(config.contains("hooks = true"));
         let source = dir.path().join("hooks.json").to_string_lossy().into_owned();
+        // Read back as TOML: the quotes toml_edit picks for a Windows path do not matter.
+        let document: DocumentMut = config.parse().expect("config.toml");
         assert!(
-            config.contains(&format!("\"{source}:stop:0:0\"")),
+            trust_value(&document, &format!("{source}:stop:0:0")).is_some(),
             "{config}"
         );
     }
@@ -647,7 +649,7 @@ mod tests {
         fs::write(
             dir.path().join("config.toml"),
             format!(
-                "# my codex settings\nmodel = \"x\"\n\n[hooks.state.\"{source}:stop:0:0\"]\ntrusted_hash = \"sha256:other\"\n"
+                "# my codex settings\nmodel = \"x\"\n\n[hooks.state.'{source}:stop:0:0']\ntrusted_hash = \"sha256:other\"\n"
             ),
         )
         .expect("write config");
@@ -687,7 +689,7 @@ mod tests {
         fs::write(
             dir.path().join("config.toml"),
             format!(
-                "[hooks.state.\"{source}:stop:0:0\"]\ntrusted_hash = \"sha256:ours\"\n\n[hooks.state.\"{source}:stop:1:0\"]\ntrusted_hash = \"sha256:other\"\n"
+                "[hooks.state.'{source}:stop:0:0']\ntrusted_hash = \"sha256:ours\"\n\n[hooks.state.'{source}:stop:1:0']\ntrusted_hash = \"sha256:other\"\n"
             ),
         )
         .expect("write config");
@@ -699,7 +701,12 @@ mod tests {
         target.remove(Some([0, 160, 1])).expect("remove");
 
         let config = fs::read_to_string(dir.path().join("config.toml")).expect("config");
-        assert!(config.contains(&format!("\"{source}:stop:0:0\"")));
+        let document: DocumentMut = config.parse().expect("config.toml");
+        assert_eq!(
+            trust_value(&document, &format!("{source}:stop:0:0")),
+            Some("sha256:other"),
+            "{config}"
+        );
         assert!(config.contains("sha256:other"), "{config}");
         assert!(!config.contains("sha256:ours"), "{config}");
         assert!(!config.contains(":stop:1:0"), "{config}");

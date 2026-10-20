@@ -9,6 +9,7 @@ use crate::git::git_command::git;
 use crate::git::test_repository::{TestRepository, commit_file_in};
 use crate::persistence::AppDatabase;
 
+use super::linked_folder_sync::without_verbatim_prefix;
 use super::workspace_models::Repo;
 use super::workspace_service::WorkspaceService;
 
@@ -66,7 +67,8 @@ fn add_repo_registers_the_main_worktree_even_when_given_a_subdirectory() {
         .add_repo(&subdirectory.to_string_lossy())
         .expect("add repo");
 
-    assert_eq!(repo.path, git_repo.path.to_string_lossy());
+    // Compared as paths: Git reports Windows paths with forward slashes.
+    assert_eq!(Path::new(&repo.path), git_repo.path.as_path());
     assert_eq!(repo.name, "repo");
 }
 
@@ -180,7 +182,7 @@ fn create_worktree_makes_the_branch_the_directory_and_remembers_the_base() {
         .path
         .with_file_name("repo-worktrees")
         .join("feature-login");
-    assert_eq!(created.path, expected.to_string_lossy());
+    assert_eq!(Path::new(&created.path), expected.as_path());
     assert_eq!(created.name, "feature-login");
     assert_eq!(created.branch.as_deref(), Some("feature/login"));
     assert_eq!(created.base_ref.as_deref(), Some("main"));
@@ -661,7 +663,7 @@ fn a_configured_root_holds_worktrees_grouped_by_repository() {
     let git_repo = TestRepository::new();
     let state_dir = tempfile::tempdir().expect("state dir");
     let root = tempfile::tempdir().expect("root dir");
-    let root_path = fs::canonicalize(root.path()).expect("canonical");
+    let root_path = without_verbatim_prefix(fs::canonicalize(root.path()).expect("canonical"));
     let service = service_with_root(&state_dir, Some(root_path.clone()));
     let repo = service
         .add_repo(&git_repo.path.to_string_lossy())
@@ -672,11 +674,8 @@ fn a_configured_root_holds_worktrees_grouped_by_repository() {
         .expect("create worktree");
 
     assert_eq!(
-        created.path,
-        root_path
-            .join("repo")
-            .join("feature-login")
-            .to_string_lossy()
+        Path::new(&created.path),
+        root_path.join("repo").join("feature-login").as_path()
     );
     assert!(Path::new(&created.path).join("README.md").is_file());
     assert!(

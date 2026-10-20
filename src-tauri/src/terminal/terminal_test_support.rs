@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::agents::activity::AgentStatus;
 use crate::agents::harness::HarnessId;
+use crate::workspace::linked_folder_sync::without_verbatim_prefix;
 
 use super::terminal_events::TerminalEventSink;
 
@@ -125,8 +126,8 @@ pub(super) fn output_of(events: &Events, id: &str) -> String {
 }
 
 pub(super) fn path_of(dir: &tempfile::TempDir) -> String {
-    fs::canonicalize(dir.path())
-        .expect("canonical")
+    // cmd.exe cannot change into a `\\?\` path.
+    without_verbatim_prefix(fs::canonicalize(dir.path()).expect("canonical"))
         .to_string_lossy()
         .into_owned()
 }

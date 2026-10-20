@@ -103,14 +103,13 @@ mod tests {
             PathBuf::from("/home/me/.omp/agent"),
             Some(Path::new(EXE)),
         );
+        // Compared by path component, because Windows writes the separators as backslashes.
         assert!(
-            pi.status()
-                .config_path
+            Path::new(&pi.status().config_path)
                 .ends_with(".pi/agent/extensions/lynx-agent-status.ts")
         );
         assert!(
-            omp.status()
-                .config_path
+            Path::new(&omp.status().config_path)
                 .ends_with(".omp/agent/extensions/lynx-agent-status.ts")
         );
     }

@@ -123,8 +123,9 @@ mod tests {
 
     #[test]
     fn another_platform_is_refused() {
+        // Not the platform this test runs on: `windows-x64` is that on Windows.
         let mut other = manifest();
-        other.platform = "windows-x64".to_owned();
+        other.platform = "darwin-arm64".to_owned();
         assert!(matches!(
             other.check(2),
             Err(EngineInstallError::WrongPlatform { .. })

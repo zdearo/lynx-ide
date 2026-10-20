@@ -894,7 +894,12 @@ mod tests {
 
     use super::*;
 
-    const HOME: &str = "/home/dev";
+    // Absolute on the platform the tests run on, so `~` expands to a real directory.
+    const HOME: &str = if cfg!(windows) {
+        r"C:\home\dev"
+    } else {
+        "/home/dev"
+    };
 
     fn parse(value: Value) -> (AppConfig, Vec<ConfigIssue>) {
         parse_config(&value, Path::new(HOME))
@@ -1019,7 +1024,12 @@ mod tests {
 
     #[test]
     fn directories_accept_absolute_paths_and_a_home_prefix() {
-        for ok in ["/srv/trees", "~", "~/trees"] {
+        let absolute = if cfg!(windows) {
+            r"C:\srv\trees"
+        } else {
+            "/srv/trees"
+        };
+        for ok in [absolute, "~", "~/trees"] {
             let config = AppConfig {
                 worktrees: WorktreesConfig {
                     directory: Some(ok.to_owned()),
@@ -1033,10 +1043,10 @@ mod tests {
     #[test]
     fn expands_the_home_prefix_only_at_the_start() {
         let home = Path::new(HOME);
-        assert_eq!(expand_home("~", home), PathBuf::from("/home/dev"));
+        assert_eq!(expand_home("~", home), PathBuf::from(HOME));
         assert_eq!(
             expand_home("~/trees", home),
-            PathBuf::from("/home/dev/trees")
+            PathBuf::from(HOME).join("trees")
         );
         assert_eq!(expand_home("/a/~/b", home), PathBuf::from("/a/~/b"));
         assert_eq!(expand_home("~user/x", home), PathBuf::from("~user/x"));

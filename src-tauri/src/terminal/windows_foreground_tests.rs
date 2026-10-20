@@ -47,6 +47,13 @@ fn an_agent_typed_into_cmd_is_followed_until_it_is_interrupted() {
         .expect("create");
     assert_eq!(info.harness, None, "a new shell is not an agent");
 
+    // ConPTY asks where the cursor is and waits for the answer before cmd draws its prompt. A
+    // real terminal (xterm.js) answers that; this test has none, so it answers as one would.
+    sink.wait_for_text(&info.id, "\u{1b}[6n");
+    manager
+        .write(&info.id, "\u{1b}[1;1R")
+        .expect("answer the cursor request");
+
     // Quoted, because the user's folder can hold a space, as in C:\Users\Some Name.
     manager
         .write(

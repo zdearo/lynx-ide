@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use super::git_command::git;
+use crate::workspace::linked_folder_sync::without_verbatim_prefix;
 
 pub struct TestRepository {
     // Held so the directory is removed when the repository goes out of scope.
@@ -17,15 +18,18 @@ impl TestRepository {
     /// A repository on `main` with one commit.
     pub fn new() -> Self {
         let root = tempfile::tempdir().expect("temp dir");
-        // Canonical because Git reports real paths (macOS temp dirs are symlinks).
-        let path = fs::canonicalize(root.path())
-            .expect("canonical temp dir")
-            .join("repo");
+        // Canonical because Git reports real paths (macOS temp dirs are symlinks). Without the
+        // verbatim prefix on Windows, which git cannot read.
+        let path =
+            without_verbatim_prefix(fs::canonicalize(root.path()).expect("canonical temp dir"))
+                .join("repo");
         fs::create_dir(&path).expect("create repo dir");
 
         let repository = Self { _root: root, path };
         repository.git(&["init", "--quiet"]);
         repository.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+        // A Windows runner's global autocrlf would rewrite the test files' line endings.
+        repository.git(&["config", "core.autocrlf", "false"]);
         set_identity(&repository.path);
         repository.commit_file("README.md", "hello\n", "initial commit");
         repository

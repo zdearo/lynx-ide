@@ -17,12 +17,17 @@ const folder = (
   name,
   parentId,
   collapsed: false,
+  sourcePath: null,
+  linkedRootId: null,
+  missing: false,
 });
 const repo = (id: string, folderId: string | null = null): Repo => ({
   id,
   name: id,
   path: `/work/${id}`,
   folderId,
+  linkedRootId: null,
+  missing: false,
 });
 
 /** A compact view of the tree: folder names in brackets, repo ids bare. */

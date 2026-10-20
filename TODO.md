@@ -77,6 +77,9 @@ Abrir um repo, criar dois worktrees, rodar um agente em cada um e ver os dois es
 
 - [x] Pastas aninhadas no painel Projects (ex.: Work > Client X > projeto): criar (no topo ou dentro de outra), renomear, mover, excluir (o conteúdo sobe um nível) e recolher; o recolhido fica salvo
 - [x] Mover repo ou pasta pelo menu, num diálogo com a árvore; uma pasta não entra em si mesma nem em descendente (checado na interface e no backend)
+- [x] Pasta vinculada a um diretório do disco: os subdiretórios viram pastas e o primeiro repo git de cada caminho vira projeto; segue o disco (varredura ao abrir, a cada 60 s, ao focar e por "Rescan folder"), marca "Not found" o que sumiu e desvincula sem perder nada (ver "Pastas vinculadas" no AGENTS.md)
+  - [ ] Vigiar o diretório com `notify` em vez de varrer a cada 60 s, se o polling pesar com vínculos muito grandes
+  - [ ] Desfazer a exclusão de um projeto achado pela varredura sem desvincular a pasta (hoje só desvincular e vincular de novo limpa `linked_exclusions`)
 - [ ] Arrastar e soltar repos e pastas na sidebar (hoje só pelo menu "Mover para pasta")
 - [ ] Abrir um repositório já dentro de uma pasta, e criar worktree a partir da pasta
 - [ ] Ordenação manual dentro de uma pasta (hoje: pastas por nome, repos pela ordem em que foram adicionados)

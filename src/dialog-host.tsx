@@ -51,6 +51,11 @@ const DeleteFolderDialog = lazy(() =>
     default: m.DeleteFolderDialog,
   })),
 );
+const UnlinkFolderDialog = lazy(() =>
+  import("@/workspace/UnlinkFolderDialog").then((m) => ({
+    default: m.UnlinkFolderDialog,
+  })),
+);
 const NewWorktreeDialog = lazy(() =>
   import("@/workspace/NewWorktreeDialog").then((m) => ({
     default: m.NewWorktreeDialog,
@@ -84,6 +89,7 @@ const DIALOG_MODULES = [
   () => import("@/workspace/FolderDialog"),
   () => import("@/workspace/MoveDialog"),
   () => import("@/workspace/DeleteFolderDialog"),
+  () => import("@/workspace/UnlinkFolderDialog"),
   () => import("@/workspace/NewWorktreeDialog"),
   () => import("@/workspace/RemoveWorktreeDialog"),
   () => import("@/workspace/RemoveRepoDialog"),
@@ -118,6 +124,9 @@ export function DialogHost() {
   const deleteFolderTarget = useDialogStore(
     (state) => state.deleteFolderTarget,
   );
+  const unlinkFolderTarget = useDialogStore(
+    (state) => state.unlinkFolderTarget,
+  );
   const removeWorktreeTarget = useDialogStore(
     (state) => state.removeWorktreeTarget,
   );
@@ -137,6 +146,7 @@ export function DialogHost() {
       {folderDialog !== null && <FolderDialog />}
       {moveTarget !== null && <MoveDialog />}
       {deleteFolderTarget !== null && <DeleteFolderDialog />}
+      {unlinkFolderTarget !== null && <UnlinkFolderDialog />}
       {newWorktreeDraft !== null && <NewWorktreeDialog />}
       {removeWorktreeTarget !== null && <RemoveWorktreeDialog />}
       {cleanUpTarget !== null && <CleanUpMergedDialog />}

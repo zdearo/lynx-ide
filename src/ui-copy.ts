@@ -660,6 +660,33 @@ export const copy = {
       "Its folders and projects move up one level. Nothing is removed from disk.",
     deleteConfirm: "Delete folder",
     failed: "Could not save the folder",
+    deleteLinkedBody:
+      "The folder stops following its directory on disk. Its folders and projects move up one level. Nothing is removed from disk.",
+    linkLabel: "Link to a folder on disk",
+    linkHint:
+      "Subfolders become folders here, and the first git repository on each path becomes a project. Nothing on disk changes.",
+    linkChoose: "Choose folder…",
+    linkChange: "Change folder…",
+    linkClear: "Don't link",
+    linkNone: "Not linked",
+    linkChecking: "Looking at the folder…",
+    linkPreview: (projects: number, folders: number, truncated: boolean) =>
+      `${projects === 1 ? "1 project" : `${projects} projects`} in ${folders === 1 ? "1 folder" : `${folders} folders`}${truncated ? " or more" : ""}`,
+    linkNothingYet: "No projects there yet. New ones appear on their own.",
+    linkedTo: (path: string) => `Linked to ${path}`,
+    notFound: "Not found",
+    notFoundHint: (path: string) => `${path} was not found on disk`,
+    rescan: "Rescan folder",
+    rescanned: "Folder is up to date",
+    rescanFound: "Found changes on disk",
+    unlink: "Unlink from disk…",
+    unlinkTitle: (name: string) => `Unlink ${name}?`,
+    unlinkBody:
+      "It stops following its directory. The folders and projects it made stay here as ordinary ones. Nothing is removed from disk.",
+    unlinkConfirm: "Unlink",
+    unlinkFailed: "Could not unlink the folder",
+    syncFailed: "Could not read the linked folders",
+    createLinked: "Create and link",
   },
 
   move: {
@@ -709,6 +736,8 @@ export const copy = {
     actions: (name: string) => `Actions for ${name}`,
     collapse: (name: string) => `Collapse ${name}`,
     expand: (name: string) => `Expand ${name}`,
+    missing: "Not found",
+    missingHint: (path: string) => `${path} was not found on disk`,
   },
 
   agent: {
@@ -791,6 +820,8 @@ export const copy = {
   removeRepo: {
     title: (name: string) => `Remove ${name} from the list?`,
     body: "Nothing is deleted from disk. Its worktrees stay where they are.",
+    linkedBody:
+      "Nothing is deleted from disk. It was found by a linked folder, so it stays out of the list until you unlink that folder.",
     confirm: "Remove from list",
     cancel: "Cancel",
   },

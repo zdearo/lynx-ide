@@ -4,6 +4,7 @@ import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
 import { FolderGlyph18 } from "@/components/icons/FolderGlyph18";
 import { FolderOpenGlyph18 } from "@/components/icons/FolderOpenGlyph18";
 import { FolderPlusGlyph18 } from "@/components/icons/FolderPlusGlyph18";
+import { Link2Glyph18 } from "@/components/icons/Link2Glyph18";
 import { toast } from "sonner";
 
 import type { Folder } from "@/bindings";
@@ -21,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
 import { CollapsedSummary } from "@/workspace/CollapsedSummary";
 import type { GroupSummary } from "@/workspace/collapsed-summary";
+import { isLinkedRoot, isMirrored } from "@/workspace/linked-folders";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 interface FolderSectionProps {
@@ -48,6 +50,12 @@ export function FolderSection({
   const askFolderDialog = useDialogStore((state) => state.askFolderDialog);
   const askMove = useDialogStore((state) => state.askMove);
   const askDeleteFolder = useDialogStore((state) => state.askDeleteFolder);
+  const askUnlinkFolder = useDialogStore((state) => state.askUnlinkFolder);
+  const syncLinkedFolders = useWorkspaceStore(
+    (state) => state.syncLinkedFolders,
+  );
+  const linked = isLinkedRoot(folder);
+  const mirrored = isMirrored(folder);
   const expanded = !folder.collapsed;
 
   async function toggle() {
@@ -55,6 +63,19 @@ export function FolderSection({
       await setFolderCollapsed(folder.id, expanded);
     } catch (error) {
       toast.error(copy.folders.failed, { description: errorMessage(error) });
+    }
+  }
+
+  async function rescan() {
+    try {
+      const changed = await syncLinkedFolders(folder.id);
+      toast.success(
+        changed ? copy.folders.rescanFound : copy.folders.rescanned,
+      );
+    } catch (error) {
+      toast.error(copy.folders.syncFailed, {
+        description: errorMessage(error),
+      });
     }
   }
 
@@ -72,7 +93,9 @@ export function FolderSection({
               : copy.folders.expand(folder.name)
           }
           onClick={() => void toggle()}
-          className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-ui text-sidebar-foreground hover:bg-sidebar-accent/50"
+          className={cn(
+            "flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-ui text-sidebar-foreground hover:bg-sidebar-accent/50",
+          )}
         >
           {!root &&
             (expanded ? (
@@ -92,11 +115,29 @@ export function FolderSection({
               root &&
                 "text-meta font-medium tracking-wide text-muted-foreground uppercase",
               !root && "text-sidebar-foreground/80",
+              folder.missing && "text-muted-foreground",
             )}
-            title={folder.name}
+            title={
+              linked && folder.sourcePath
+                ? copy.folders.linkedTo(folder.sourcePath)
+                : folder.missing && folder.sourcePath
+                  ? copy.folders.notFoundHint(folder.sourcePath)
+                  : folder.name
+            }
           >
             {folder.name}
           </span>
+          {linked && (
+            <Link2Glyph18
+              aria-hidden
+              className="size-3 shrink-0 text-muted-foreground"
+            />
+          )}
+          {folder.missing && (
+            <span className="shrink-0 text-meta text-muted-foreground">
+              {copy.folders.notFound}
+            </span>
+          )}
           {!expanded && (
             <CollapsedSummary id={summaryId} kind="folder" summary={summary} />
           )}
@@ -132,13 +173,27 @@ export function FolderSection({
               >
                 {copy.folders.moveTo}
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => askDeleteFolder(folder)}
-              >
-                {copy.folders.delete}
-              </DropdownMenuItem>
+              {linked && (
+                <>
+                  <DropdownMenuItem onSelect={() => void rescan()}>
+                    {copy.folders.rescan}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => askUnlinkFolder(folder)}>
+                    {copy.folders.unlink}
+                  </DropdownMenuItem>
+                </>
+              )}
+              {!mirrored && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => askDeleteFolder(folder)}
+                  >
+                    {copy.folders.delete}
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
           <span

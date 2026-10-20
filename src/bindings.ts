@@ -15,7 +15,11 @@ export const commands = {
 	removeWorktree: (repoId: string, worktreePath: string, force: boolean) => typedError<RemoveWorktreeResult, IpcError>(__TAURI_INVOKE("remove_worktree", { repoId, worktreePath, force })),
 	repoRefs: (repoId: string) => typedError<RepoRefs, IpcError>(__TAURI_INVOKE("repo_refs", { repoId })),
 	listFolders: () => typedError<Folder[], IpcError>(__TAURI_INVOKE("list_folders")),
-	createFolder: (name: string, parentId: string | null) => typedError<Folder, IpcError>(__TAURI_INVOKE("create_folder", { name, parentId })),
+	createFolder: (name: string, parentId: string | null, sourcePath: string | null) => typedError<Folder, IpcError>(__TAURI_INVOKE("create_folder", { name, parentId, sourcePath })),
+	previewLinkedFolder: (path: string) => typedError<LinkedFolderPreview, IpcError>(__TAURI_INVOKE("preview_linked_folder", { path })),
+	/**  Reads the linked folders again (all, or just `folder_id`). True when something changed. */
+	syncLinkedFolders: (folderId: string | null) => typedError<boolean, IpcError>(__TAURI_INVOKE("sync_linked_folders", { folderId })),
+	unlinkFolder: (folderId: string) => typedError<null, IpcError>(__TAURI_INVOKE("unlink_folder", { folderId })),
 	renameFolder: (folderId: string, name: string) => typedError<Folder, IpcError>(__TAURI_INVOKE("rename_folder", { folderId, name })),
 	moveFolder: (folderId: string, parentId: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("move_folder", { folderId, parentId })),
 	deleteFolder: (folderId: string) => typedError<null, IpcError>(__TAURI_INVOKE("delete_folder", { folderId })),
@@ -419,6 +423,12 @@ export type Folder = {
 	/**  `None` for a folder at the top level. */
 	parentId: string | null,
 	collapsed: boolean,
+	/**  Directory this folder mirrors. Set on a linked folder and on the folders made under it. */
+	sourcePath: string | null,
+	/**  The linked folder this one belongs to: its own id for the linked folder itself. */
+	linkedRootId: string | null,
+	/**  A mirrored folder that the last scan no longer found on disk. */
+	missing: boolean,
 };
 
 /**  Git settings: which agent writes the commit message, and how it should write it. */
@@ -454,7 +464,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "internal";
 
 export type LastCommitMessage = {
 	summary: string,
@@ -470,6 +480,15 @@ export type LaunchMode = "manual" | "yolo";
 export type LineCounts = {
 	added: number,
 	removed: number,
+};
+
+/**  What linking a directory would bring in, shown before anything is created. */
+export type LinkedFolderPreview = {
+	/**  Folders that would be made under the linked one. */
+	folders: number,
+	projects: number,
+	/**  A limit cut the scan short, so there may be more. */
+	truncated: boolean,
 };
 
 export type MergeMethod = "merge" | "squash" | "rebase";
@@ -563,6 +582,10 @@ export type Repo = {
 	path: string,
 	/**  The folder the repo sits in; `None` at the top level. */
 	folderId: string | null,
+	/**  The linked folder that found this repo; `None` for a repo added by hand. */
+	linkedRootId: string | null,
+	/**  A linked repo that the last scan no longer found on disk. */
+	missing: boolean,
 };
 
 export type RepoRefs = {

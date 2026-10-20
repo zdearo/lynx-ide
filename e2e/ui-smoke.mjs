@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 
-const PORT = 1431;
+const PORT = Number(process.env.E2E_PORT ?? 1431);
 const BASE = `http://localhost:${PORT}/`;
 const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
@@ -2235,6 +2235,123 @@ await session("?mock=full", 1300, 760, async (p) => {
     axeTree.length === 0,
     axeTree.join(" || "),
   );
+});
+
+// A folder linked to a directory on disk: its subfolders and repos appear, follow later clones, and unlink.
+await session("?mock=full", 1300, 760, async (p) => {
+  const tree = p.getByRole("complementary", { name: "Projects" });
+  const rowOf = (name) =>
+    tree
+      .getByRole("button", { name: new RegExp(`^(Collapse|Expand) ${name}$`) })
+      .first();
+  const menuOf = async (name, isFolder) => {
+    await rowOf(name).hover();
+    await tree
+      .getByRole("button", {
+        name: isFolder ? `Actions for folder ${name}` : `Actions for ${name}`,
+      })
+      .first()
+      .click();
+  };
+  const menuItems = async () =>
+    p
+      .getByRole("menuitem")
+      .evaluateAll((items) => items.map((el) => el.textContent?.trim()));
+
+  await tree
+    .getByRole("button", { name: "New folder", exact: true })
+    .first()
+    .click();
+  await p.getByRole("button", { name: "Choose folder…" }).click();
+  await p.getByText("2 projects in 1 folder").waitFor({ timeout: 5000 });
+  check(
+    "choosing a directory names the folder after it and previews what it holds",
+    (await p.locator("#folder-name").inputValue()) === "web-app",
+  );
+  await p.locator("#folder-name").fill("Code");
+  await p.getByRole("button", { name: "Create and link" }).click();
+  await p.waitForTimeout(400);
+
+  check(
+    "the linked folder shows its repo and the folder the scan made",
+    (await p.locator('[data-project-id]:has-text("lynx")').count()) >= 1 &&
+      (await p.locator('[data-folder-id]:has-text("clients")').count()) >= 1,
+  );
+  check(
+    "a repo inside a mirrored folder sits in that folder",
+    (await p
+      .locator(
+        '[data-folder-id]:has-text("clients") [data-project-id]:has-text("acme")',
+      )
+      .count()) >= 1,
+  );
+
+  await menuOf("clients", true);
+  const mirroredMenu = await menuItems();
+  check(
+    "a mirrored folder cannot be deleted from its menu",
+    !mirroredMenu.includes("Delete folder…") &&
+      mirroredMenu.includes("Rename…"),
+    JSON.stringify(mirroredMenu),
+  );
+  await p.keyboard.press("Escape");
+
+  await menuOf("Code", true);
+  const rootMenu = await menuItems();
+  check(
+    "the linked folder offers Rescan and Unlink",
+    rootMenu.includes("Rescan folder") &&
+      rootMenu.includes("Unlink from disk…"),
+    JSON.stringify(rootMenu),
+  );
+  await p.keyboard.press("Escape");
+
+  await p.evaluate(() => window.__lynxMock.cloneIntoLinkedFolder("fresh"));
+  await menuOf("Code", true);
+  await p.getByRole("menuitem", { name: "Rescan folder" }).click();
+  await p.getByText("Found changes on disk").waitFor({ timeout: 5000 });
+  check(
+    "a repo cloned into the directory appears after a rescan",
+    (await p.locator('[data-project-id]:has-text("fresh")').count()) === 1,
+  );
+
+  await p.evaluate(() => window.__lynxMock.setRepoMissing("fresh", true));
+  await menuOf("Code", true);
+  await p.getByRole("menuitem", { name: "Rescan folder" }).click();
+  await p.waitForTimeout(400);
+  const missingRow = p.locator('[data-project-id]:has-text("fresh")');
+  check(
+    "a repo gone from disk says so in words, not only by dimming",
+    (await missingRow.textContent())?.includes("Not found") === true,
+  );
+
+  const axe = await p.evaluate(async (src) => {
+    window.eval(src);
+    const r = await window.axe.run(document, {
+      runOnly: ["wcag2a", "wcag2aa"],
+    });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 140)}`,
+    );
+  }, axeSource);
+  check(
+    "axe: no WCAG A/AA violations with a linked folder",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await menuOf("Code", true);
+  await p.getByRole("menuitem", { name: "Unlink from disk…" }).click();
+  await p.getByRole("button", { name: "Unlink", exact: true }).click();
+  await p.waitForTimeout(400);
+  await menuOf("clients", true);
+  const afterUnlink = await menuItems();
+  check(
+    "after unlinking, the folders it made are ordinary and can be deleted",
+    afterUnlink.includes("Delete folder…"),
+    JSON.stringify(afterUnlink),
+  );
+  await p.keyboard.press("Escape");
 });
 
 await session("?mock=full", 1300, 760, async (p) => {

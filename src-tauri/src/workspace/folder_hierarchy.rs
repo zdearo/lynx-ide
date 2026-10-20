@@ -36,6 +36,9 @@ mod tests {
             name: id.to_owned(),
             parent_id: parent.map(str::to_owned),
             collapsed: false,
+            source_path: None,
+            linked_root_id: None,
+            missing: false,
         }
     }
 

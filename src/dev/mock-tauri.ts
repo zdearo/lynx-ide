@@ -89,12 +89,16 @@ function seedRepos(): {
       name: "lynx-ide",
       path: "/home/dev/lynx-ide",
       folderId: null,
+      linkedRootId: null,
+      missing: false,
     },
     {
       id: "r2",
       name: "api-server",
       path: "/home/dev/api-server",
       folderId: "f-client",
+      linkedRootId: null,
+      missing: false,
     },
   ];
   return {
@@ -443,15 +447,29 @@ export function installMockTauri(scenario: string): void {
     scenario === "empty"
       ? []
       : [
-          { id: "f-work", name: "Work", parentId: null, collapsed: false },
+          {
+            id: "f-work",
+            name: "Work",
+            parentId: null,
+            collapsed: false,
+            sourcePath: null,
+            linkedRootId: null,
+            missing: false,
+          },
           {
             id: "f-client",
             name: "Client X",
             parentId: "f-work",
             collapsed: false,
+            sourcePath: null,
+            linkedRootId: null,
+            missing: false,
           },
         ];
   let nextFolderId = 0;
+  // Repos "cloned" into a linked folder show up on the next scan; a flag asks for one without a clone.
+  const clonedIntoLinked: string[] = [];
+  let linkedChanged = false;
   const descendantsOf = (id: string): Set<string> => {
     const ids = new Set([id]);
     let grew = true;
@@ -487,6 +505,8 @@ export function installMockTauri(scenario: string): void {
       name: path.split("/").at(-1) ?? path,
       path,
       folderId: null,
+      linkedRootId: null,
+      missing: false,
     };
     repos.push(repo);
     worktrees[repo.id] = [worktree(path, repo.name, "main", null, true)];
@@ -1148,9 +1168,83 @@ export function installMockTauri(scenario: string): void {
             name,
             parentId,
             collapsed: false,
+            sourcePath: null,
+            linkedRootId: null,
+            missing: false,
           };
           folders.push(folder);
+          const sourcePath = (args.sourcePath as string | null) ?? null;
+          if (sourcePath) {
+            // What a scan of a code folder finds: a repo at the top and one inside a subfolder.
+            folder.sourcePath = sourcePath;
+            folder.linkedRootId = folder.id;
+            const clients: Folder = {
+              id: `f${++nextFolderId}`,
+              name: "clients",
+              parentId: folder.id,
+              collapsed: false,
+              sourcePath: `${sourcePath}/clients`,
+              linkedRootId: folder.id,
+              missing: false,
+            };
+            folders.push(clients);
+            const top = addMockRepo(`${sourcePath}/lynx`);
+            top.folderId = folder.id;
+            top.linkedRootId = folder.id;
+            const inner = addMockRepo(`${sourcePath}/clients/acme`);
+            inner.folderId = clients.id;
+            inner.linkedRootId = folder.id;
+          }
           return structuredClone(folder);
+        }
+        case "preview_linked_folder": {
+          const path = String(args.path);
+          if (path.endsWith("/repo-itself"))
+            throw {
+              kind: "linkedFolder",
+              message: `${path} is a git repository; add it as a project instead`,
+            };
+          return { folders: 1, projects: 2, truncated: false };
+        }
+        case "sync_linked_folders": {
+          const roots = folders.filter(
+            (f) =>
+              f.linkedRootId === f.id &&
+              (args.folderId == null || f.id === args.folderId),
+          );
+          if (args.folderId != null && roots.length === 0)
+            findFolder(args.folderId);
+          let changed = linkedChanged;
+          linkedChanged = false;
+          for (const name of clonedIntoLinked.splice(0)) {
+            const root = roots[0];
+            if (!root?.sourcePath) continue;
+            const repo = addMockRepo(`${root.sourcePath}/${name}`);
+            repo.folderId = root.id;
+            repo.linkedRootId = root.id;
+            changed = true;
+          }
+          return changed;
+        }
+        case "unlink_folder": {
+          const root = findFolder(args.folderId);
+          if (root.linkedRootId !== root.id)
+            throw {
+              kind: "linkedFolder",
+              message: "this folder is not linked to a folder on disk",
+            };
+          for (const f of folders)
+            if (f.linkedRootId === root.id) {
+              f.linkedRootId = null;
+              f.sourcePath = null;
+              f.missing = false;
+            }
+          for (const r of repos)
+            if (r.linkedRootId === root.id) {
+              r.linkedRootId = null;
+              r.missing = false;
+            }
+          return null;
         }
         case "rename_folder": {
           const folder = findFolder(args.folderId);
@@ -1173,6 +1267,25 @@ export function installMockTauri(scenario: string): void {
         }
         case "delete_folder": {
           const folder = findFolder(args.folderId);
+          if (folder.linkedRootId && folder.linkedRootId !== folder.id)
+            throw {
+              kind: "linkedFolder",
+              message:
+                "this folder mirrors a folder on disk; unlink the folder it belongs to first",
+            };
+          if (folder.linkedRootId === folder.id) {
+            for (const f of folders)
+              if (f.linkedRootId === folder.id) {
+                f.linkedRootId = null;
+                f.sourcePath = null;
+                f.missing = false;
+              }
+            for (const r of repos)
+              if (r.linkedRootId === folder.id) {
+                r.linkedRootId = null;
+                r.missing = false;
+              }
+          }
           for (const child of folders)
             if (child.parentId === folder.id) child.parentId = folder.parentId;
           for (const repo of repos)
@@ -1366,6 +1479,16 @@ export function installMockTauri(scenario: string): void {
         prompt: lastAgentPrompt,
         command: lastTerminalCommand,
       }),
+      /** A repo is cloned into the linked folder: the next scan finds it. */
+      cloneIntoLinkedFolder(name: string) {
+        clonedIntoLinked.push(name);
+      },
+      /** The next scan stops finding this repo (or finds it again). */
+      setRepoMissing(name: string, missing: boolean) {
+        const repo = repos.find((r) => r.name === name);
+        if (repo) repo.missing = missing;
+        linkedChanged = true;
+      },
       /** Pretends the remote has this many commits the branch lacks. */
       setBehind(count: number) {
         mockBehind = count;

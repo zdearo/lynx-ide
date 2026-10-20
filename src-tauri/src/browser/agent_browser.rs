@@ -15,6 +15,7 @@ use super::agent_tool_definitions::Tool;
 use super::browser_error::BrowserError;
 use super::browser_service::BrowserService;
 use super::key_names;
+use super::page_log::Level;
 use super::page_snapshot::{RefTable, render};
 use super::web_address::normalize;
 
@@ -157,7 +158,19 @@ impl AgentBrowser {
         );
         self.activity.used(&caller.name, name, &label);
 
-        let output = self.run(tool, arguments);
+        let mut output = self.run(tool, arguments);
+        // What the engine answered by itself (a dialog, a refused permission) while this ran.
+        let notices = self.service.log().take_notices();
+        if let (Ok(output), false) = (&mut output, notices.is_empty()) {
+            let list = notices
+                .iter()
+                .map(|notice| format!("- {notice}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            output.content.push(Content::Text(format!(
+                "Lynx handled these for the page:\n{list}"
+            )));
+        }
         // Whatever happened, the dots stop and the label stays as the last thing it did.
         self.service.agent_ends();
         output
@@ -178,6 +191,8 @@ impl AgentBrowser {
             Tool::Wait => self.wait(arguments)?,
             Tool::Screenshot => self.screenshot()?,
             Tool::SelectOption => self.select_option(arguments)?,
+            Tool::Console => self.console(arguments)?,
+            Tool::Network => self.network(arguments)?,
         })
     }
 
@@ -222,6 +237,8 @@ impl AgentBrowser {
             Tool::Wait => "Waiting".to_owned(),
             Tool::Screenshot => "Taking a screenshot".to_owned(),
             Tool::SelectOption => format!("Choosing \"{}\"", detail("value")),
+            Tool::Console => "Reading the console".to_owned(),
+            Tool::Network => "Checking the network".to_owned(),
         }
     }
 
@@ -544,6 +561,29 @@ impl AgentBrowser {
         })
     }
 
+    fn console(&self, arguments: &Value) -> Result<ToolOutput, ToolFailure> {
+        self.require_allowed_page()?;
+        let minimum = match arguments.get("level").and_then(Value::as_str) {
+            Some("error") => Level::Error,
+            Some("all") => Level::Debug,
+            Some("warning") | None => Level::Warning,
+            Some(other) => {
+                return Err(ToolFailure::BadArguments(format!(
+                    "level must be error, warning or all, not {other}"
+                )));
+            }
+        };
+        Ok(ToolOutput::text(
+            self.service.log().console_text(minimum, 100),
+        ))
+    }
+
+    fn network(&self, arguments: &Value) -> Result<ToolOutput, ToolFailure> {
+        self.require_allowed_page()?;
+        let all = arguments.get("all").and_then(Value::as_bool) == Some(true);
+        Ok(ToolOutput::text(self.service.log().network_text(all, 100)))
+    }
+
     fn select_option(&self, arguments: &Value) -> Result<ToolOutput, ToolFailure> {
         self.require_allowed_page()?;
         let node = self.node_of(&text_argument(arguments, "ref")?)?;
@@ -791,8 +831,15 @@ mod tests {
             <select id='plan' aria-label='Plan'><option value='free'>Free</option><option value='pro'>Pro plan</option></select>\
             <button id='send' onclick=\"document.title='sent:'+document.getElementById('name').value+':'+document.getElementById('plan').value\">Send</button>\
             <a href='/second'>Next page</a>\
+            <a href='/download'>Get the file</a>\
+            <button onclick=\"navigator.geolocation.getCurrentPosition(() => {}, () => {})\">Locate me</button>\
+            <button onclick=\"document.getElementById('f').click()\">Pick a file</button>\
+            <input id='f' type='file' style='display:none'>\
+            <button id='del' onclick=\"document.title = confirm('Delete everything?') ? 'deleted' : 'kept'\">Delete</button>\
             <div style='height:3000px'>tall</div><p id='end'>The end</p>\
-            <script>setTimeout(() => { document.body.append('Loaded late'); }, 600);\
+            <script>console.error('boom', 42); fetch('/missing.json');\
+            setTimeout(() => { throw new Error('late failure'); }, 200);\
+            setTimeout(() => { document.body.append('Loaded late'); }, 600);\
             document.addEventListener('keydown', e => { if (e.key === 'Escape') document.title = 'escaped'; });</script>";
 
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -804,6 +851,20 @@ mod tests {
                     let mut request = [0u8; 2048];
                     let read = stream.read(&mut request).unwrap_or(0);
                     let request = String::from_utf8_lossy(&request[..read]);
+                    if request.starts_with("GET /missing.json") {
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        );
+                        return;
+                    }
+                    if request.starts_with("GET /download") {
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=a.bin\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc"
+                        );
+                        return;
+                    }
                     let body = if request.starts_with("GET /second") {
                         "<!doctype html><title>Second</title><h1>Second page</h1>"
                     } else {
@@ -844,6 +905,18 @@ mod tests {
             let start = line.find("[ref=").unwrap() + 5;
             line[start..].split(']').next().unwrap().to_owned()
         };
+
+        fn again_for_delete(
+            browser: &AgentBrowser,
+            caller: &Caller,
+            text_of: &dyn Fn(&ToolOutput) -> String,
+        ) -> String {
+            text_of(
+                &browser
+                    .call(caller, "browser_snapshot", &json!({}))
+                    .expect("snapshot"),
+            )
+        }
 
         let opened = browser
             .call(
@@ -893,6 +966,88 @@ mod tests {
             .call(&caller(), "browser_click", &json!({ "ref": send }))
             .expect("click again");
         assert_eq!(service.state().title, "sent:Bia:pro");
+
+        // The console and the network show why a page misbehaves. The page has to finish first.
+        browser
+            .call(&caller(), "browser_wait", &json!({ "text": "Loaded late" }))
+            .expect("the page finishes");
+        let console = text_of(
+            &browser
+                .call(&caller(), "browser_console", &json!({}))
+                .expect("console"),
+        );
+        assert!(console.contains("[error] boom 42"), "{console}");
+        assert!(
+            console.contains("Uncaught Error: late failure"),
+            "{console}"
+        );
+        let network = text_of(
+            &browser
+                .call(&caller(), "browser_network", &json!({}))
+                .expect("network"),
+        );
+        assert!(network.contains("404 GET http://127.0.0.1"), "{network}");
+        assert!(network.contains("/missing.json (fetch)"), "{network}");
+
+        // A dialog nobody can answer is answered, and the agent is told.
+        let delete = find_ref(
+            &again_for_delete(&browser, &caller(), &text_of),
+            "button",
+            "Delete",
+        );
+        let deleted = browser
+            .call(&caller(), "browser_click", &json!({ "ref": delete }))
+            .expect("click delete");
+        assert_eq!(service.state().title, "kept");
+        let notes: String = deleted
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                Content::Text(text) => Some(text.as_str()),
+                Content::Image { .. } => None,
+            })
+            .collect();
+        assert!(notes.contains("Lynx handled these"), "{notes}");
+        assert!(notes.contains("confirm \"Delete everything?\""), "{notes}");
+
+        // Downloads, permissions and file choosers are refused, and the agent hears about each.
+        let notes_of = |output: &ToolOutput| -> String {
+            output
+                .content
+                .iter()
+                .filter_map(|part| match part {
+                    Content::Text(text) => Some(text.as_str()),
+                    Content::Image { .. } => None,
+                })
+                .collect()
+        };
+        let page = text_of(
+            &browser
+                .call(&caller(), "browser_snapshot", &json!({}))
+                .expect("snapshot"),
+        );
+        for (name, expected) in [
+            ("Get the file", "download"),
+            ("Locate me", "permission"),
+            ("Pick a file", "no file chooser"),
+        ] {
+            let role = if name == "Get the file" {
+                "link"
+            } else {
+                "button"
+            };
+            let target = find_ref(&page, role, name);
+            let answer = browser
+                .call(&caller(), "browser_click", &json!({ "ref": target }))
+                .expect("click");
+            // The refusal can land just after the click returns; the next result carries it.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let late = browser
+                .call(&caller(), "browser_wait", &json!({ "ms": 50 }))
+                .expect("wait");
+            let said = format!("{} {}", notes_of(&answer), notes_of(&late)).to_lowercase();
+            assert!(said.contains(expected), "{name}: {said}");
+        }
 
         browser
             .call(&caller(), "browser_press_key", &json!({ "key": "Escape" }))

@@ -8,6 +8,10 @@ use std::io::{self, BufRead, Write};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+/// Bumped whenever the messages change in a way an older host or app cannot follow. The installed
+/// engine records the version it speaks, and the app refuses one that speaks another.
+pub const PROTOCOL_VERSION: u32 = 2;
+
 /// Modifier bits. They have the values CEF uses for its event flags, so the host passes them on.
 pub mod modifiers {
     pub const SHIFT: u32 = 1 << 1;
@@ -25,6 +29,22 @@ pub enum MouseButton {
     Left,
     Middle,
     Right,
+}
+
+/// What the engine did on its own because nobody was there to ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NoticeKind {
+    /// A JavaScript dialog (`alert`, `confirm`, `prompt`, leaving a page) was answered.
+    Dialog,
+    /// The page asked for a permission (camera, location...) and was refused.
+    Permission,
+    /// A download was blocked.
+    Download,
+    /// The page asked for a file chooser, and none was shown.
+    FileChooser,
+    /// A new window was opened in the page itself.
+    Popup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +164,20 @@ pub enum FromHost {
         url: String,
         message: String,
     },
+    /// A DevTools event the page raised, from the few kinds the host passes on (console output,
+    /// uncaught errors, requests and where the main frame went).
+    CdpEvent {
+        method: String,
+        params: serde_json::Value,
+    },
+    /// The page's DevTools agent attached, as it does again when a navigation swaps the page's
+    /// process. The domains Lynx turned on are off until it turns them on again.
+    DevToolsAttached,
+    /// The engine handled something by itself, for the person or the agent to know.
+    Notice {
+        kind: NoticeKind,
+        text: String,
+    },
     /// The answer to a [`ToHost::Cdp`]: the call's result, or the error the page's DevTools gave.
     CdpResult {
         id: u32,
@@ -240,6 +274,15 @@ mod tests {
         round_trip(FromHost::LoadFailed {
             url: "x".into(),
             message: "y".into(),
+        });
+        round_trip(FromHost::CdpEvent {
+            method: "Runtime.consoleAPICalled".into(),
+            params: serde_json::json!({ "type": "error" }),
+        });
+        round_trip(FromHost::DevToolsAttached);
+        round_trip(FromHost::Notice {
+            kind: NoticeKind::Dialog,
+            text: "confirm \"Delete?\" was dismissed".into(),
         });
         round_trip(FromHost::CdpResult {
             id: 7,

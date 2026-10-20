@@ -19,9 +19,11 @@ pub enum Tool {
     Wait,
     Screenshot,
     SelectOption,
+    Console,
+    Network,
 }
 
-const ALL: [Tool; 10] = [
+const ALL: [Tool; 12] = [
     Tool::Snapshot,
     Tool::Navigate,
     Tool::History,
@@ -32,6 +34,8 @@ const ALL: [Tool; 10] = [
     Tool::Wait,
     Tool::Screenshot,
     Tool::SelectOption,
+    Tool::Console,
+    Tool::Network,
 ];
 
 impl Tool {
@@ -51,6 +55,8 @@ impl Tool {
             Self::Wait => "browser_wait",
             Self::Screenshot => "browser_screenshot",
             Self::SelectOption => "browser_select_option",
+            Self::Console => "browser_console",
+            Self::Network => "browser_network",
         }
     }
 
@@ -94,6 +100,12 @@ impl Tool {
             }
             Self::SelectOption => {
                 "Choose an option in a select element by its value or its visible label."
+            }
+            Self::Console => {
+                "Read what the page wrote to its console since it loaded: errors, warnings and logs, with where in the code they came from. Uncaught exceptions are included. Use it to find out why a page misbehaves."
+            }
+            Self::Network => {
+                "List the requests the page made since it loaded. By default only the ones that failed (a network error, or a status of 400 and up), with a count of the rest."
             }
         }
     }
@@ -150,6 +162,14 @@ impl Tool {
                     "text": { "type": "string", "description": "Wait until this text is on the page." },
                     "timeoutMs": { "type": "integer", "description": "Give up on the text after this long. Defaults to 10000, at most 30000." },
                 },
+            }),
+            Self::Console => json!({
+                "type": "object",
+                "properties": { "level": { "type": "string", "enum": ["error", "warning", "all"], "description": "The lowest level to show. Defaults to warning, which shows warnings and errors." } },
+            }),
+            Self::Network => json!({
+                "type": "object",
+                "properties": { "all": { "type": "boolean", "description": "List every request, not only the failed ones." } },
             }),
             Self::SelectOption => json!({
                 "type": "object",

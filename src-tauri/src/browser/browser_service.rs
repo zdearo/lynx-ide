@@ -18,6 +18,7 @@ use super::agent_pointer::{AgentPointer, Controller, CursorShape, Sweep};
 use super::browser_error::BrowserError;
 use super::browser_state::{BrowserState, BrowserStatus};
 use super::engine_location::locate;
+use super::page_log::PageLog;
 use super::web_address::normalize;
 
 /// How long a freshly started engine has to say it is ready.
@@ -83,6 +84,8 @@ pub struct BrowserService {
     pointer: Arc<AgentPointer>,
     /// A thread is waiting for the agent's control to end.
     watching: Arc<AtomicBool>,
+    /// The page's console and requests, and what the engine answered by itself.
+    log: Arc<PageLog>,
 }
 
 impl BrowserService {
@@ -109,6 +112,7 @@ impl BrowserService {
             next_cdp_id: AtomicU32::new(1),
             pointer: Arc::new(AgentPointer::default()),
             watching: Arc::new(AtomicBool::new(false)),
+            log: Arc::new(PageLog::default()),
         }
     }
 
@@ -116,6 +120,28 @@ impl BrowserService {
         self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn log(&self) -> Arc<PageLog> {
+        Arc::clone(&self.log)
+    }
+
+    /// Turns on the DevTools domains the page log reads. Calls that need no answer, so it is safe
+    /// to make from the link's own thread.
+    fn enable_diagnostics(&self) {
+        for method in [
+            "Page.enable",
+            "Runtime.enable",
+            "Log.enable",
+            "Network.enable",
+        ] {
+            let id = self.next_cdp_id.fetch_add(1, Ordering::Relaxed);
+            let _ = self.send(ToHost::Cdp {
+                id,
+                method: method.to_owned(),
+                params: Value::Null,
+            });
+        }
     }
 
     pub fn pointer(&self) -> Arc<AgentPointer> {
@@ -279,6 +305,10 @@ impl BrowserService {
             self.set_state(&mut inner, BrowserState::failed(message.clone()));
             return Err(BrowserError::EngineFailed(message));
         }
+        // The domains the page log reads: on now, and again whenever the agent re-attaches.
+        drop(inner);
+        self.enable_diagnostics();
+        let inner = self.lock();
         // What the interface already asked for before the engine was there.
         if let Some(view) = inner.view {
             let _ = link.send(&ToHost::Resize {
@@ -326,6 +356,11 @@ impl BrowserService {
                     let _ = waiting.send(answer);
                 }
             }
+            LinkEvent::Message(FromHost::CdpEvent { method, params }) => {
+                self.log.apply_event(&method, &params);
+            }
+            LinkEvent::Message(FromHost::Notice { text, .. }) => self.log.add_notice(&text),
+            LinkEvent::Message(FromHost::DevToolsAttached) => self.enable_diagnostics(),
             LinkEvent::Message(message) => {
                 let mut inner = self.lock();
                 if matches!(message, FromHost::Loading { loading: true, .. }) {

@@ -22,6 +22,7 @@ mod key_codes;
 mod key_names;
 #[cfg(target_os = "linux")]
 mod native_view;
+mod page_log;
 mod page_snapshot;
 mod web_address;
 

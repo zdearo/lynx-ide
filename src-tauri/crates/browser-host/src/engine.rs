@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use cef::*;
 use lynx_browser_protocol::frame_buffer::{FrameBuffer, MAX_HEIGHT, MAX_WIDTH, SlotPool};
-use lynx_browser_protocol::message::{FromHost, ToHost, write_message};
+use lynx_browser_protocol::message::{FromHost, NoticeKind, ToHost, write_message};
 
 use crate::input;
 
@@ -227,6 +227,209 @@ wrap_dev_tools_message_observer! {
                 result,
             });
         }
+
+        fn on_dev_tools_event(
+            &self,
+            _browser: Option<&mut Browser>,
+            method: Option<&CefString>,
+            params: Option<&[u8]>,
+        ) {
+            let Some(method) = method.map(|method| method.to_string()) else {
+                return;
+            };
+            // Network and runtime events are many; only the few Lynx reads cross the socket.
+            if !FORWARDED_EVENTS.contains(&method.as_str()) {
+                return;
+            }
+            let params = params
+                .and_then(|bytes| serde_json::from_slice(bytes).ok())
+                .unwrap_or(serde_json::Value::Null);
+            emit(FromHost::CdpEvent { method, params });
+        }
+
+        fn on_dev_tools_agent_attached(&self, _browser: Option<&mut Browser>) {
+            emit(FromHost::DevToolsAttached);
+        }
+    }
+}
+
+/// The DevTools events that are passed on to Lynx.
+const FORWARDED_EVENTS: &[&str] = &[
+    "Runtime.consoleAPICalled",
+    "Runtime.exceptionThrown",
+    "Log.entryAdded",
+    "Network.requestWillBeSent",
+    "Network.responseReceived",
+    "Network.loadingFailed",
+    "Page.frameNavigated",
+];
+
+/// Tells Lynx what the engine answered on its own, in words.
+fn notice(kind: NoticeKind, text: String) {
+    emit(FromHost::Notice { kind, text });
+}
+
+/// A quoted, shortened copy of what a page wrote, for a notice.
+fn quoted(text: Option<&CefString>) -> String {
+    let text = text.map(|text| text.to_string()).unwrap_or_default();
+    let mut short: String = text.chars().take(120).collect();
+    if text.chars().count() > 120 {
+        short.push('…');
+    }
+    format!("\"{short}\"")
+}
+
+wrap_jsdialog_handler! {
+    struct HostJsDialog {}
+
+    impl JsdialogHandler {
+        // Nobody sits at this page to answer a dialog, and a page waiting on one would hang every
+        // call after it. An alert is read and closed; a question gets the safe answer, no.
+        fn on_jsdialog(
+            &self,
+            _browser: Option<&mut Browser>,
+            _origin_url: Option<&CefString>,
+            dialog_type: JsdialogType,
+            message_text: Option<&CefString>,
+            _default_prompt_text: Option<&CefString>,
+            callback: Option<&mut JsdialogCallback>,
+            _suppress_message: Option<&mut std::os::raw::c_int>,
+        ) -> std::os::raw::c_int {
+            let message = quoted(message_text);
+            let (kind, accept) = if dialog_type == JsdialogType::ALERT {
+                ("alert", true)
+            } else if dialog_type == JsdialogType::CONFIRM {
+                ("confirm", false)
+            } else {
+                ("prompt", false)
+            };
+            if let Some(callback) = callback {
+                callback.cont(i32::from(accept), None);
+            }
+            let answer = if accept { "closed" } else { "answered no" };
+            notice(NoticeKind::Dialog, format!("The page showed a {kind} {message}; Lynx {answer}."));
+            1
+        }
+
+        // Leaving a page is the agent's choice, so a "leave this page?" prompt lets it leave.
+        fn on_before_unload_dialog(
+            &self,
+            _browser: Option<&mut Browser>,
+            message_text: Option<&CefString>,
+            _is_reload: std::os::raw::c_int,
+            callback: Option<&mut JsdialogCallback>,
+        ) -> std::os::raw::c_int {
+            if let Some(callback) = callback {
+                callback.cont(1, None);
+            }
+            notice(
+                NoticeKind::Dialog,
+                format!("The page asked to confirm leaving {}; Lynx let it leave.", quoted(message_text)),
+            );
+            1
+        }
+    }
+}
+
+wrap_permission_handler! {
+    struct HostPermissions {}
+
+    impl PermissionHandler {
+        fn on_request_media_access_permission(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            requesting_origin: Option<&CefString>,
+            _requested_permissions: u32,
+            callback: Option<&mut MediaAccessCallback>,
+        ) -> std::os::raw::c_int {
+            if let Some(callback) = callback {
+                callback.cancel();
+            }
+            notice(
+                NoticeKind::Permission,
+                format!("{} asked for the camera or microphone; Lynx refused.", quoted(requesting_origin)),
+            );
+            1
+        }
+
+        fn on_show_permission_prompt(
+            &self,
+            _browser: Option<&mut Browser>,
+            _prompt_id: u64,
+            requesting_origin: Option<&CefString>,
+            _requested_permissions: u32,
+            callback: Option<&mut PermissionPromptCallback>,
+        ) -> std::os::raw::c_int {
+            if let Some(callback) = callback {
+                callback.cont(PermissionRequestResult::DENY);
+            }
+            notice(
+                NoticeKind::Permission,
+                format!("{} asked for a permission; Lynx refused.", quoted(requesting_origin)),
+            );
+            1
+        }
+    }
+}
+
+wrap_download_handler! {
+    struct HostDownloads {}
+
+    impl DownloadHandler {
+        // Nothing is saved to the person's disk on a page's say-so.
+        fn can_download(
+            &self,
+            _browser: Option<&mut Browser>,
+            url: Option<&CefString>,
+            _request_method: Option<&CefString>,
+        ) -> std::os::raw::c_int {
+            notice(NoticeKind::Download, format!("A download from {} was blocked.", quoted(url)));
+            0
+        }
+    }
+}
+
+wrap_dialog_handler! {
+    struct HostFileChooser {}
+
+    impl DialogHandler {
+        fn on_file_dialog(
+            &self,
+            _browser: Option<&mut Browser>,
+            _mode: FileDialogMode,
+            _title: Option<&CefString>,
+            _default_file_path: Option<&CefString>,
+            _accept_filters: Option<&mut CefStringList>,
+            _accept_extensions: Option<&mut CefStringList>,
+            _accept_descriptions: Option<&mut CefStringList>,
+            callback: Option<&mut FileDialogCallback>,
+        ) -> std::os::raw::c_int {
+            if let Some(callback) = callback {
+                callback.cancel();
+            }
+            notice(NoticeKind::FileChooser, "The page asked for a file; no file chooser is offered.".to_owned());
+            1
+        }
+    }
+}
+
+wrap_context_menu_handler! {
+    struct HostContextMenu {}
+
+    impl ContextMenuHandler {
+        // The native menu has nowhere to be drawn in an off-screen page.
+        fn on_before_context_menu(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+        ) {
+            if let Some(model) = model {
+                model.clear();
+            }
+        }
     }
 }
 
@@ -300,6 +503,7 @@ wrap_life_span_handler! {
                 && let Some(frame) = browser.main_frame()
             {
                 frame.load_url(Some(url));
+                notice(NoticeKind::Popup, format!("A new window to {} opened in this page.", quoted(Some(url))));
             }
             1
         }
@@ -456,6 +660,26 @@ wrap_client! {
 
         fn load_handler(&self) -> Option<LoadHandler> {
             Some(HostLoad::new())
+        }
+
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
+            Some(HostJsDialog::new())
+        }
+
+        fn permission_handler(&self) -> Option<PermissionHandler> {
+            Some(HostPermissions::new())
+        }
+
+        fn download_handler(&self) -> Option<DownloadHandler> {
+            Some(HostDownloads::new())
+        }
+
+        fn dialog_handler(&self) -> Option<DialogHandler> {
+            Some(HostFileChooser::new())
+        }
+
+        fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
+            Some(HostContextMenu::new())
         }
     }
 }

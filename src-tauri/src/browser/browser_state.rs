@@ -77,7 +77,11 @@ impl BrowserState {
                 self.error = Some(message.clone());
             }
             // Frames go to the view, and DevTools answers to whoever asked.
-            FromHost::Frame { .. } | FromHost::CdpResult { .. } => {}
+            FromHost::Frame { .. }
+            | FromHost::CdpResult { .. }
+            | FromHost::CdpEvent { .. }
+            | FromHost::DevToolsAttached
+            | FromHost::Notice { .. } => {}
         }
         *self != before
     }

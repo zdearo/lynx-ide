@@ -2613,6 +2613,7 @@ name = "lynx-ide"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "embed-resource",
  "flate2",
  "fontdue",
  "gtk",

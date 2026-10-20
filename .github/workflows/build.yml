@@ -43,10 +43,14 @@ jobs:
       - name: Check the frontend
         run: bun run check
 
-      - name: Check and test the backend
-        run: |
-          bun run rust:check
-          bun run rust:test
+      - name: Check the backend
+        run: bun run rust:check
+
+      # A step's result on Windows is its last command's, so a failed check could hide behind
+      # a passing test run. The test step still runs after a failed check, to show both.
+      - name: Test the backend
+        if: always()
+        run: bun run rust:test
 
       - name: Build the installers
         run: bun run tauri build

@@ -26,6 +26,7 @@ impl TestRepository {
         let repository = Self { _root: root, path };
         repository.git(&["init", "--quiet"]);
         repository.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+        set_identity(&repository.path);
         repository.commit_file("README.md", "hello\n", "initial commit");
         repository
     }
@@ -50,6 +51,13 @@ impl TestRepository {
         self.git(&["remote", "set-head", "origin", "main"]);
         self
     }
+}
+
+/// Git writes reflogs, merges and rebases with an identity, not only commits. A CI runner has no
+/// global one, so each test repository carries its own.
+pub fn set_identity(dir: &Path) {
+    run(dir, &["config", "user.name", "Test"]);
+    run(dir, &["config", "user.email", "test@example.com"]);
 }
 
 pub fn commit_file_in(dir: &Path, name: &str, content: &str, message: &str) {

@@ -218,7 +218,7 @@ pub fn push(root: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::test_repository::TestRepository;
+    use crate::git::test_repository::{TestRepository, set_identity};
 
     #[test]
     fn the_header_gives_branch_upstream_and_counts() {
@@ -290,6 +290,7 @@ mod tests {
             .args(["checkout", "-q", "-b", "main", "origin/main"])
             .run()
             .expect("checkout");
+        set_identity(&other);
         other
     }
 

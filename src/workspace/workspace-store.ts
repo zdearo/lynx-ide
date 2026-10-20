@@ -8,8 +8,13 @@ import {
   type WorktreeInfo,
 } from "@/bindings";
 import { IpcRequestError, unwrap } from "@/lib/ipc-result";
+import { forEachBounded } from "@/workspace/bounded-concurrency";
+import { visibleFirst } from "@/workspace/repo-load-order";
 
 const SELECTED_WORKTREE_KEY = "lynx-ide.selectedWorktree";
+
+/** Worktree lists read at the same time; each one is a `git` process. */
+const WORKTREE_LOAD_LIMIT = 6;
 
 let nextPendingId = 0;
 
@@ -43,10 +48,19 @@ interface WorkspaceState {
   /** Reloads repos and folders together, since a move changes both. */
   refreshStructure: () => Promise<void>;
   refreshAll: () => Promise<void>;
-  createFolder: (name: string, parentId: string | null) => Promise<Folder>;
+  /** With `sourcePath` the folder mirrors that directory on disk. */
+  createFolder: (
+    name: string,
+    parentId: string | null,
+    sourcePath?: string | null,
+  ) => Promise<Folder>;
   renameFolder: (folderId: string, name: string) => Promise<Folder>;
   moveFolder: (folderId: string, parentId: string | null) => Promise<void>;
   deleteFolder: (folderId: string) => Promise<void>;
+  /** The folder and what it made stay, as ordinary folders and projects. */
+  unlinkFolder: (folderId: string) => Promise<void>;
+  /** Reads linked directories again (all, or one). True when the sidebar changed. */
+  syncLinkedFolders: (folderId?: string | null) => Promise<boolean>;
   setFolderCollapsed: (folderId: string, collapsed: boolean) => Promise<void>;
   moveRepo: (repoId: string, folderId: string | null) => Promise<void>;
   refreshWorktrees: (repoId: string) => Promise<void>;
@@ -131,8 +145,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       set({ repos, folders });
     },
 
-    async createFolder(name, parentId) {
-      const folder = await unwrap(commands.createFolder(name, parentId));
+    async createFolder(name, parentId, sourcePath = null) {
+      const folder = await unwrap(
+        commands.createFolder(name, parentId, sourcePath),
+      );
       // A folder made inside a collapsed one would be hidden, so open its parent.
       if (parentId && get().folders.find((f) => f.id === parentId)?.collapsed) {
         await get().setFolderCollapsed(parentId, false);
@@ -157,6 +173,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       await get().refreshStructure();
     },
 
+    async unlinkFolder(folderId) {
+      await unwrap(commands.unlinkFolder(folderId));
+      await get().refreshStructure();
+    },
+
+    async syncLinkedFolders(folderId = null) {
+      const changed = await unwrap(commands.syncLinkedFolders(folderId));
+      if (!changed) return false;
+      await get().refreshStructure();
+      // Only repos the sidebar has not read yet; the rest are already known.
+      const unread = get().repos.filter(
+        (repo) => !(repo.id in get().worktrees),
+      );
+      await forEachBounded(unread, WORKTREE_LOAD_LIMIT, (repo) =>
+        get().refreshWorktrees(repo.id),
+      );
+      reconcileSelection();
+      return true;
+    },
+
     /** Optimistic: the sidebar toggles at once and is re-read if the backend refuses. */
     async setFolderCollapsed(folderId, collapsed) {
       set((state) => ({
@@ -178,8 +214,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     async refreshAll() {
-      await Promise.all(
-        get().repos.map((repo) => get().refreshWorktrees(repo.id)),
+      // One `git worktree list` per repo: with many linked projects they must not all start at once.
+      const { repos, folders } = get();
+      await forEachBounded(
+        visibleFirst(repos, folders),
+        WORKTREE_LOAD_LIMIT,
+        (repo) => get().refreshWorktrees(repo.id),
       );
       reconcileSelection();
     },

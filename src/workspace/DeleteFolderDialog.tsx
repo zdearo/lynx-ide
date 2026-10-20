@@ -13,6 +13,7 @@ import {
 import { useDialogStore } from "@/dialog-store";
 import { errorMessage } from "@/lib/error-message";
 import { copy } from "@/ui-copy";
+import { isLinkedRoot } from "@/workspace/linked-folders";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 export function DeleteFolderDialog() {
@@ -34,7 +35,9 @@ export function DeleteFolderDialog() {
               {copy.folders.deleteTitle(folder.name)}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {copy.folders.deleteBody}
+              {isLinkedRoot(folder)
+                ? copy.folders.deleteLinkedBody
+                : copy.folders.deleteBody}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

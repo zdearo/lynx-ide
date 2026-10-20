@@ -14,12 +14,17 @@ const repo = (id: string, folderId: string | null = null): Repo => ({
   name: id,
   path: `/work/${id}`,
   folderId,
+  linkedRootId: null,
+  missing: false,
 });
 const folder = (id: string, parentId: string | null = null): Folder => ({
   id,
   name: id,
   parentId,
   collapsed: false,
+  sourcePath: null,
+  linkedRootId: null,
+  missing: false,
 });
 
 describe("agentsByWorktree", () => {

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 
+use crate::workspace::linked_folder_sync::LinkedPlan;
 use crate::workspace::workspace_models::{Folder, Repo, WorktreeMeta};
 
 use super::schema_migrations::{self, MigrationError};
@@ -57,7 +58,7 @@ impl AppDatabase {
     pub fn list_repos(&self) -> Result<Vec<Repo>, DatabaseError> {
         let connection = self.lock();
         let mut statement = connection
-            .prepare("SELECT id, name, path, folder_id FROM repos ORDER BY created_at, rowid")?;
+            .prepare("SELECT id, name, path, folder_id, linked_root_id, missing FROM repos ORDER BY created_at, rowid")?;
         let repos = statement
             .query_map([], repo_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -68,7 +69,7 @@ impl AppDatabase {
         Ok(self
             .lock()
             .query_row(
-                "SELECT id, name, path, folder_id FROM repos WHERE id = ?1",
+                "SELECT id, name, path, folder_id, linked_root_id, missing FROM repos WHERE id = ?1",
                 [repo_id],
                 repo_from_row,
             )
@@ -86,7 +87,7 @@ impl AppDatabase {
             params![candidate.id, candidate.name, candidate.path, now_seconds()],
         )?;
         let repo = transaction.query_row(
-            "SELECT id, name, path, folder_id FROM repos WHERE path = ?1",
+            "SELECT id, name, path, folder_id, linked_root_id, missing FROM repos WHERE path = ?1",
             [&candidate.path],
             repo_from_row,
         )?;
@@ -97,7 +98,7 @@ impl AppDatabase {
     pub fn list_folders(&self) -> Result<Vec<Folder>, DatabaseError> {
         let connection = self.lock();
         let mut statement = connection.prepare(
-            "SELECT id, name, parent_id, collapsed FROM folders ORDER BY created_at, rowid",
+            "SELECT id, name, parent_id, collapsed, source_path, linked_root_id, missing FROM folders ORDER BY created_at, rowid",
         )?;
         let folders = statement
             .query_map([], folder_from_row)?
@@ -109,7 +110,7 @@ impl AppDatabase {
         Ok(self
             .lock()
             .query_row(
-                "SELECT id, name, parent_id, collapsed FROM folders WHERE id = ?1",
+                "SELECT id, name, parent_id, collapsed, source_path, linked_root_id, missing FROM folders WHERE id = ?1",
                 [folder_id],
                 folder_from_row,
             )
@@ -118,12 +119,17 @@ impl AppDatabase {
 
     pub fn insert_folder(&self, folder: &Folder) -> Result<(), DatabaseError> {
         self.lock().execute(
-            "INSERT INTO folders (id, name, parent_id, collapsed, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO folders
+                 (id, name, parent_id, collapsed, source_path, linked_root_id, missing, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 folder.id,
                 folder.name,
                 folder.parent_id,
                 i64::from(folder.collapsed),
+                folder.source_path,
+                folder.linked_root_id,
+                i64::from(folder.missing),
                 now_seconds()
             ],
         )?;
@@ -186,9 +192,91 @@ impl AppDatabase {
             "UPDATE repos SET folder_id = ?2 WHERE folder_id = ?1",
             params![folder_id, parent],
         )?;
+        // Without its linked folder nothing would keep the rest in sync, so it becomes ordinary.
+        clear_link(&transaction, folder_id)?;
         transaction.execute("DELETE FROM folders WHERE id = ?1", [folder_id])?;
         transaction.commit()?;
         Ok(true)
+    }
+
+    /// Stops mirroring the directory: the linked folder, the folders under it and its repos stay
+    /// as ordinary ones. Returns whether the folder existed.
+    pub fn unlink_folder(&self, folder_id: &str) -> Result<bool, DatabaseError> {
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        let exists = transaction
+            .query_row("SELECT 1 FROM folders WHERE id = ?1", [folder_id], |_| {
+                Ok(())
+            })
+            .optional()?
+            .is_some();
+        if exists {
+            clear_link(&transaction, folder_id)?;
+        }
+        transaction.commit()?;
+        Ok(exists)
+    }
+
+    /// Paths the user removed from a linked folder, which its scans must skip.
+    pub fn linked_exclusions(&self, root_id: &str) -> Result<HashSet<String>, DatabaseError> {
+        let connection = self.lock();
+        let mut statement =
+            connection.prepare("SELECT path FROM linked_exclusions WHERE root_id = ?1")?;
+        let paths = statement
+            .query_map([root_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<HashSet<_>, _>>()?;
+        Ok(paths)
+    }
+
+    /// Applies a scan's result in one transaction, so a crash never leaves half a tree.
+    pub fn apply_linked_plan(&self, plan: &LinkedPlan) -> Result<(), DatabaseError> {
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        let created_at = now_seconds();
+        for folder in &plan.new_folders {
+            transaction.execute(
+                "INSERT INTO folders (id, name, parent_id, collapsed, source_path, linked_root_id, created_at)
+                 VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6)",
+                params![
+                    folder.id,
+                    folder.name,
+                    folder.parent_id,
+                    folder.source_path,
+                    plan.root_id,
+                    created_at
+                ],
+            )?;
+        }
+        for repo in &plan.new_repos {
+            // A path registered in the meantime keeps its row.
+            transaction.execute(
+                "INSERT INTO repos (id, name, path, folder_id, linked_root_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(path) DO NOTHING",
+                params![
+                    repo.id,
+                    repo.name,
+                    repo.path,
+                    repo.folder_id,
+                    plan.root_id,
+                    created_at
+                ],
+            )?;
+        }
+        for (folder_id, missing) in &plan.folder_missing {
+            transaction.execute(
+                "UPDATE folders SET missing = ?2 WHERE id = ?1",
+                params![folder_id, i64::from(*missing)],
+            )?;
+        }
+        for (repo_id, missing) in &plan.repo_missing {
+            transaction.execute(
+                "UPDATE repos SET missing = ?2 WHERE id = ?1",
+                params![repo_id, i64::from(*missing)],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Returns whether a repo was found and moved.
@@ -200,12 +288,30 @@ impl AppDatabase {
         Ok(changed > 0)
     }
 
-    /// Returns whether a repo was removed. Its worktree metadata goes with it.
+    /// Returns whether a repo was removed. Its worktree metadata goes with it. A repo that a
+    /// linked folder found is also excluded, or the next scan would add it back.
     pub fn delete_repo(&self, repo_id: &str) -> Result<bool, DatabaseError> {
-        let removed = self
-            .lock()
-            .execute("DELETE FROM repos WHERE id = ?1", [repo_id])?;
-        Ok(removed > 0)
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        let found: Option<(String, Option<String>)> = transaction
+            .query_row(
+                "SELECT path, linked_root_id FROM repos WHERE id = ?1",
+                [repo_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((path, linked_root_id)) = found else {
+            return Ok(false);
+        };
+        if let Some(root_id) = linked_root_id {
+            transaction.execute(
+                "INSERT OR IGNORE INTO linked_exclusions (root_id, path) VALUES (?1, ?2)",
+                params![root_id, path],
+            )?;
+        }
+        transaction.execute("DELETE FROM repos WHERE id = ?1", [repo_id])?;
+        transaction.commit()?;
+        Ok(true)
     }
 
     pub fn worktree_meta(
@@ -297,12 +403,32 @@ fn set_aside(path: &Path) -> Result<(), DatabaseError> {
     Ok(())
 }
 
+/// Turns everything a linked folder found into ordinary folders and repos.
+fn clear_link(transaction: &rusqlite::Transaction<'_>, root_id: &str) -> rusqlite::Result<()> {
+    transaction.execute(
+        "UPDATE folders SET source_path = NULL, linked_root_id = NULL, missing = 0
+         WHERE linked_root_id = ?1",
+        [root_id],
+    )?;
+    transaction.execute(
+        "UPDATE repos SET linked_root_id = NULL, missing = 0 WHERE linked_root_id = ?1",
+        [root_id],
+    )?;
+    transaction.execute(
+        "DELETE FROM linked_exclusions WHERE root_id = ?1",
+        [root_id],
+    )?;
+    Ok(())
+}
+
 fn repo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
     Ok(Repo {
         id: row.get(0)?,
         name: row.get(1)?,
         path: row.get(2)?,
         folder_id: row.get(3)?,
+        linked_root_id: row.get(4)?,
+        missing: row.get::<_, i64>(5)? != 0,
     })
 }
 
@@ -312,6 +438,9 @@ fn folder_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Folder> {
         name: row.get(1)?,
         parent_id: row.get(2)?,
         collapsed: row.get::<_, i64>(3)? != 0,
+        source_path: row.get(4)?,
+        linked_root_id: row.get(5)?,
+        missing: row.get::<_, i64>(6)? != 0,
     })
 }
 
@@ -339,6 +468,8 @@ mod tests {
             name: id.to_owned(),
             path: path.to_owned(),
             folder_id: None,
+            linked_root_id: None,
+            missing: false,
         }
     }
 
@@ -348,6 +479,9 @@ mod tests {
             name: id.to_owned(),
             parent_id: parent.map(str::to_owned),
             collapsed: false,
+            source_path: None,
+            linked_root_id: None,
+            missing: false,
         }
     }
 

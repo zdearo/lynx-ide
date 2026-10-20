@@ -27,6 +27,20 @@ const MIGRATIONS: &[&str] = &[
          created_at INTEGER NOT NULL
      );
      ALTER TABLE repos ADD COLUMN folder_id TEXT REFERENCES folders(id);",
+    // 3: folders linked to a directory on disk. The scan finds repos and folders under it and
+    // marks them with the linked folder's id; `linked_exclusions` remembers the repos the user
+    // removed so the next scan does not bring them back.
+    "ALTER TABLE folders ADD COLUMN source_path TEXT;
+     ALTER TABLE folders ADD COLUMN linked_root_id TEXT;
+     ALTER TABLE folders ADD COLUMN missing INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE repos ADD COLUMN linked_root_id TEXT;
+     ALTER TABLE repos ADD COLUMN missing INTEGER NOT NULL DEFAULT 0;
+     CREATE UNIQUE INDEX folders_source_path ON folders(source_path) WHERE source_path IS NOT NULL;
+     CREATE TABLE linked_exclusions (
+         root_id TEXT NOT NULL,
+         path    TEXT NOT NULL,
+         PRIMARY KEY (root_id, path)
+     );",
 ];
 
 #[derive(Debug, thiserror::Error)]

@@ -125,15 +125,28 @@ export function RepoSection({
           data-project-id={repo.id}
           aria-describedby={collapsed ? `repo-summary-${repo.id}` : undefined}
           onClick={() => toggleRepo(repo.id)}
-          className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-ui font-medium text-sidebar-foreground hover:bg-sidebar-accent/50"
+          className={cn(
+            "flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-ui font-medium text-sidebar-foreground hover:bg-sidebar-accent/50",
+          )}
         >
           <CodeBranchGlyph18
             aria-hidden
             className="size-3.5 shrink-0 text-muted-foreground"
           />
-          <span className="min-w-0 flex-1 truncate" title={repo.path}>
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate",
+              repo.missing && "text-muted-foreground",
+            )}
+            title={repo.missing ? copy.repo.missingHint(repo.path) : repo.path}
+          >
             {repo.name}
           </span>
+          {repo.missing && (
+            <span className="shrink-0 text-meta font-normal text-muted-foreground">
+              {copy.repo.missing}
+            </span>
+          )}
           {collapsed && (
             <CollapsedSummary
               id={`repo-summary-${repo.id}`}

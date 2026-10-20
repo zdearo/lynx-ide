@@ -215,15 +215,21 @@ export function RepoSection({
               selected={worktree.path === selectedPath}
               runningCount={runningByPath.get(worktree.path) ?? 0}
               agents={agentsByPath.get(worktree.path) ?? []}
-              activeAgentId={activeSessionId(
-                sessions,
-                activeByWorktree,
-                worktree.path,
-              )}
+              // Only the selected worktree has an open tab on screen; the remembered one of
+              // the others must not look selected.
+              activeAgentId={
+                worktree.path === selectedPath
+                  ? activeSessionId(sessions, activeByWorktree, worktree.path)
+                  : null
+              }
               agentsExpanded={expandedAgentGroups[worktree.path] ?? false}
               onToggleAgents={() => toggleAgentGroup(worktree.path)}
               onSelect={() => onSelectWorktree(worktree.path)}
               onOpenAgent={(id) => {
+                // The agent may belong to a worktree that is not on screen yet.
+                if (worktree.path !== selectedPath) {
+                  onSelectWorktree(worktree.path);
+                }
                 setActiveTerminal(worktree.path, id);
                 requestFocus(id);
               }}

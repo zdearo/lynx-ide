@@ -1825,6 +1825,57 @@ await session("?mock=full", 1300, 760, async (p) => {
     (await agent(/^claude, idle$/).getAttribute("aria-current")) === "true",
   );
 
+  const claudeCurrent = (value) =>
+    p
+      .waitForFunction(
+        (expected) =>
+          document
+            .querySelector("[data-agent-id]")
+            ?.getAttribute("aria-current") === expected,
+        value,
+        { timeout: 5000 },
+      )
+      .then(
+        () => true,
+        () => false,
+      );
+  await p.getByRole("button", { name: /^fix\/pty/ }).click();
+  check(
+    "an agent of a worktree that is not selected is not marked current",
+    await claudeCurrent(null),
+  );
+  await agent(/^claude, idle$/).click();
+  check(
+    "clicking it selects its worktree and brings its tab forward",
+    (await claudeCurrent("true")) &&
+      (await p.getByRole("tab", { name: /claude/, selected: true }).count()) ===
+        1,
+  );
+
+  // The card around a worktree and its agents is one click target, not just the name line.
+  await p.getByRole("button", { name: /^fix\/pty/ }).click();
+  const featCard = groupOf(featPath).locator("xpath=../..");
+  const featCardBox = await featCard.boundingBox();
+  await featCard.click({
+    position: { x: 10, y: (featCardBox?.height ?? 4) - 2 },
+  });
+  check(
+    "clicking the card outside its buttons selects the worktree",
+    await p
+      .waitForFunction(
+        () =>
+          [...document.querySelectorAll("button[aria-current]")].some((b) =>
+            /^feat\/auth/.test(b.textContent ?? ""),
+          ),
+        null,
+        { timeout: 5000 },
+      )
+      .then(
+        () => true,
+        () => false,
+      ),
+  );
+
   await p.getByRole("button", { name: /^feat\/auth/ }).focus();
   await p.keyboard.press("ArrowDown");
   await p.waitForTimeout(120);

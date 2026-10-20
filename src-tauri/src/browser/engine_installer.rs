@@ -4,8 +4,8 @@
 //! switch over, so a failed install never leaves a half engine behind.
 
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -20,7 +20,7 @@ use super::engine_files::{
     EngineState, HOST_NAME, INFO_FILE, RELEASE_PREFIX, current_dir, engine_root, read_status,
 };
 use super::engine_install_error::EngineInstallError;
-use super::engine_manifest::EngineManifest;
+use super::engine_manifest::{EngineManifest, PLATFORM};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// How often progress is reported while downloading.
@@ -72,7 +72,7 @@ pub fn install(
     force: bool,
     report: &mut dyn FnMut(EngineProgress),
 ) -> Result<(), EngineInstallError> {
-    if !cfg!(unix) {
+    if PLATFORM == "unsupported" {
         return Err(EngineInstallError::Unsupported);
     }
     let manifest = fetch_manifest(manifest_url)?;
@@ -306,33 +306,69 @@ fn unpack(
     Ok(())
 }
 
-/// Points `current` at `release`. The link is made beside it and renamed over, which replaces the
-/// old one in a single step. An engine folder from development is moved aside, not deleted.
-#[cfg(unix)]
+/// Puts `release` in place as `current`. An engine folder from development is moved aside, not
+/// deleted.
 fn switch_current(lynx_home: &Path, release: &Path) -> Result<(), EngineInstallError> {
-    let current = current_dir(lynx_home);
-    let root = engine_root(lynx_home);
-    if let Ok(metadata) = fs::symlink_metadata(&current)
+    #[cfg(unix)]
+    {
+        switch_by_link(lynx_home, release)
+    }
+    #[cfg(not(unix))]
+    {
+        switch_by_rename(lynx_home, release)
+    }
+}
+
+/// Moves a real `current` folder aside, to make room for a link.
+#[cfg(unix)]
+fn move_folder_aside(root: &Path, current: &Path) -> Result<(), EngineInstallError> {
+    if let Ok(metadata) = fs::symlink_metadata(current)
         && metadata.is_dir()
     {
         let aside = root.join("previous-current");
         let _ = fs::remove_dir_all(&aside);
-        fs::rename(&current, &aside).map_err(|error| EngineInstallError::io(&current, error))?;
+        fs::rename(current, &aside).map_err(|error| EngineInstallError::io(current, error))?;
     }
+    Ok(())
+}
+
+/// Points `current` at `release`. The link is made beside it and renamed over, which replaces the
+/// old one in a single step.
+#[cfg(unix)]
+fn switch_by_link(lynx_home: &Path, release: &Path) -> Result<(), EngineInstallError> {
+    let current = current_dir(lynx_home);
+    let root = engine_root(lynx_home);
+    move_folder_aside(&root, &current)?;
     let link = root.join("current.new");
     let _ = fs::remove_file(&link);
     let target = release
         .file_name()
-        .map(PathBuf::from)
-        .ok_or_else(|| EngineInstallError::io(release, io::Error::other("no folder name")))?;
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| EngineInstallError::io(release, std::io::Error::other("no folder name")))?;
     std::os::unix::fs::symlink(&target, &link)
         .map_err(|error| EngineInstallError::io(&link, error))?;
     fs::rename(&link, &current).map_err(|error| EngineInstallError::io(&current, error))
 }
 
-#[cfg(not(unix))]
-fn switch_current(_lynx_home: &Path, _release: &Path) -> Result<(), EngineInstallError> {
-    Err(EngineInstallError::Unsupported)
+/// Makes `release` the folder `current` itself, for a system where making a link takes
+/// privileges. The old `current` is kept as `previous-current` until the next install, and put
+/// back if the move fails. Nothing may be running from the old folder: Windows will not rename it.
+#[cfg_attr(unix, allow(dead_code))]
+fn switch_by_rename(lynx_home: &Path, release: &Path) -> Result<(), EngineInstallError> {
+    let current = current_dir(lynx_home);
+    let aside = engine_root(lynx_home).join("previous-current");
+    let had_current = fs::symlink_metadata(&current).is_ok();
+    if had_current {
+        let _ = fs::remove_dir_all(&aside);
+        fs::rename(&current, &aside).map_err(|error| EngineInstallError::io(&current, error))?;
+    }
+    if let Err(error) = fs::rename(release, &current) {
+        if had_current {
+            let _ = fs::rename(&aside, &current);
+        }
+        return Err(EngineInstallError::io(release, error));
+    }
+    Ok(())
 }
 
 /// Old releases are a few hundred megabytes each, so only the one in use stays. (A development
@@ -722,5 +758,54 @@ mod tests {
             .expect("the page answers");
         assert_eq!(answer["result"]["value"], 42);
         service.shutdown();
+    }
+
+    #[test]
+    fn where_links_are_not_available_the_release_is_renamed_into_place() {
+        let home = tempfile::tempdir().unwrap();
+        let root = engine_root(home.path());
+        let old = current_dir(home.path());
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("marker"), b"old").unwrap();
+        let release = root.join(format!("{RELEASE_PREFIX}new"));
+        fs::create_dir_all(&release).unwrap();
+        fs::write(release.join("marker"), b"new").unwrap();
+
+        switch_by_rename(home.path(), &release).expect("switched");
+
+        assert_eq!(
+            fs::read(current_dir(home.path()).join("marker")).unwrap(),
+            b"new"
+        );
+        assert_eq!(
+            fs::read(root.join("previous-current/marker")).unwrap(),
+            b"old"
+        );
+        assert!(!release.exists());
+        assert!(
+            !fs::symlink_metadata(current_dir(home.path()))
+                .unwrap()
+                .is_symlink(),
+            "current is the folder itself"
+        );
+    }
+
+    #[test]
+    fn a_rename_that_fails_puts_the_old_engine_back() {
+        let home = tempfile::tempdir().unwrap();
+        let old = current_dir(home.path());
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("marker"), b"old").unwrap();
+
+        let result = switch_by_rename(
+            home.path(),
+            &engine_root(home.path()).join("release-missing"),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(current_dir(home.path()).join("marker")).unwrap(),
+            b"old"
+        );
     }
 }

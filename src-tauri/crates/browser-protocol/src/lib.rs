@@ -6,6 +6,6 @@
 
 pub mod frame_buffer;
 pub mod message;
+pub mod transport;
 
-#[cfg(unix)]
 pub mod link;

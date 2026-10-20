@@ -39,7 +39,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         match locate(home.path()) {
             Err(BrowserError::EngineMissing(path)) => {
-                assert_eq!(path, home.path().join("engine/current/lynx-browser-host"));
+                assert_eq!(path, host_path(home.path()));
             }
             other => panic!("expected a missing engine, got {other:?}"),
         }

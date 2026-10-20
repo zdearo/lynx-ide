@@ -31,6 +31,44 @@ pub enum MouseButton {
     Right,
 }
 
+/// An editing action the page cannot get from key events alone: an engine that draws off-screen
+/// has no system key bindings behind it, so Ctrl+C and the like do nothing unless they are asked
+/// for by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EditCommand {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+impl EditCommand {
+    /// The command a shortcut stands for, if any: Ctrl (or Command) with C, X, V, A, Z, or Y, and
+    /// Shift+Z for redo. `windows_code` is the key's Windows virtual-key code, so letters are
+    /// their capital's ASCII value.
+    pub fn from_shortcut(modifiers: u32, windows_code: i32) -> Option<Self> {
+        let primary = modifiers & (modifiers::CONTROL | modifiers::COMMAND) != 0;
+        let alt = modifiers & modifiers::ALT != 0;
+        if !primary || alt {
+            return None;
+        }
+        let shift = modifiers & modifiers::SHIFT != 0;
+        match u8::try_from(windows_code).ok()? {
+            b'C' if !shift => Some(Self::Copy),
+            b'X' if !shift => Some(Self::Cut),
+            b'V' if !shift => Some(Self::Paste),
+            b'A' if !shift => Some(Self::SelectAll),
+            b'Z' if shift => Some(Self::Redo),
+            b'Z' => Some(Self::Undo),
+            b'Y' if !shift => Some(Self::Redo),
+            _ => None,
+        }
+    }
+}
+
 /// What the engine did on its own because nobody was there to ask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,6 +151,10 @@ pub enum ToHost {
         native_code: i32,
         modifiers: u32,
         character: u16,
+    },
+    /// A cut, copy, paste, undo, redo or select-all, for the focused frame.
+    Edit {
+        command: EditCommand,
     },
     /// Text the input method committed: letters, accents, composed characters.
     Text {
@@ -246,6 +288,9 @@ mod tests {
             text: "ção".into()
         });
         round_trip(ToHost::Reload { ignore_cache: true });
+        round_trip(ToHost::Edit {
+            command: EditCommand::Paste,
+        });
         round_trip(ToHost::FrameDone { slot: 1 });
         round_trip(ToHost::Cdp {
             id: 7,
@@ -289,6 +334,59 @@ mod tests {
             ok: true,
             result: serde_json::json!({ "result": { "value": 2 } }),
         });
+    }
+
+    #[test]
+    fn editing_shortcuts_are_recognised_with_either_primary_key() {
+        let ctrl = modifiers::CONTROL;
+        assert_eq!(
+            EditCommand::from_shortcut(ctrl, i32::from(b'C')),
+            Some(EditCommand::Copy)
+        );
+        assert_eq!(
+            EditCommand::from_shortcut(modifiers::COMMAND, i32::from(b'V')),
+            Some(EditCommand::Paste)
+        );
+        assert_eq!(
+            EditCommand::from_shortcut(ctrl, i32::from(b'X')),
+            Some(EditCommand::Cut)
+        );
+        assert_eq!(
+            EditCommand::from_shortcut(ctrl, i32::from(b'A')),
+            Some(EditCommand::SelectAll)
+        );
+        assert_eq!(
+            EditCommand::from_shortcut(ctrl, i32::from(b'Z')),
+            Some(EditCommand::Undo)
+        );
+        assert_eq!(
+            EditCommand::from_shortcut(ctrl | modifiers::SHIFT, i32::from(b'Z')),
+            Some(EditCommand::Redo)
+        );
+        assert_eq!(
+            EditCommand::from_shortcut(ctrl, i32::from(b'Y')),
+            Some(EditCommand::Redo)
+        );
+    }
+
+    #[test]
+    fn other_keys_and_combinations_are_not_editing_shortcuts() {
+        let ctrl = modifiers::CONTROL;
+        assert_eq!(EditCommand::from_shortcut(0, i32::from(b'C')), None);
+        assert_eq!(
+            EditCommand::from_shortcut(modifiers::SHIFT, i32::from(b'C')),
+            None
+        );
+        assert_eq!(
+            EditCommand::from_shortcut(ctrl | modifiers::ALT, i32::from(b'C')),
+            None
+        );
+        assert_eq!(
+            EditCommand::from_shortcut(ctrl | modifiers::SHIFT, i32::from(b'C')),
+            None
+        );
+        assert_eq!(EditCommand::from_shortcut(ctrl, i32::from(b'Q')), None);
+        assert_eq!(EditCommand::from_shortcut(ctrl, 300), None);
     }
 
     #[test]

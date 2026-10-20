@@ -7,26 +7,26 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use gtk::cairo::Context;
-
 /// One drawing command, with absolute coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Op {
+pub enum Op {
     Move(f64, f64),
     Line(f64, f64),
     Curve(f64, f64, f64, f64, f64, f64),
     Close,
 }
 
-struct Shape {
-    ops: Vec<Op>,
-    rgb: (f64, f64, f64),
+/// One filled outline of a mark, and its colour.
+pub struct Shape {
+    pub ops: Vec<Op>,
+    pub rgb: (f64, f64, f64),
 }
 
-struct Mark {
-    width: f64,
-    height: f64,
-    shapes: Vec<Shape>,
+/// An agent's mark: its drawing area and the outlines in it.
+pub struct Mark {
+    pub width: f64,
+    pub height: f64,
+    pub shapes: Vec<Shape>,
 }
 
 /// (view box width and height, [(path data, fill colour)])
@@ -87,12 +87,26 @@ fn marks() -> &'static HashMap<&'static str, Mark> {
 }
 
 /// Whether there is a mark for this harness name.
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
 pub fn has_mark(harness: &str) -> bool {
     marks().contains_key(harness)
 }
 
+/// The mark for this harness name, for a renderer to draw however it can.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub fn mark(harness: &str) -> Option<&'static Mark> {
+    marks().get(harness)
+}
+
 /// Draws the harness's mark centred at (`x`, `y`), fitting a square of `size` pixels, with `alpha`.
-pub fn draw(context: &Context, harness: &str, (x, y): (f64, f64), size: f64, alpha: f64) {
+#[cfg(target_os = "linux")]
+pub fn draw(
+    context: &gtk::cairo::Context,
+    harness: &str,
+    (x, y): (f64, f64),
+    size: f64,
+    alpha: f64,
+) {
     let Some(mark) = marks().get(harness) else {
         return;
     };

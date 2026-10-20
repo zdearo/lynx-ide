@@ -10,7 +10,11 @@ use lynx_browser_protocol::message::PROTOCOL_VERSION;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-pub const HOST_NAME: &str = "lynx-browser-host";
+pub const HOST_NAME: &str = if cfg!(windows) {
+    "lynx-browser-host.exe"
+} else {
+    "lynx-browser-host"
+};
 pub const INFO_FILE: &str = "engine.json";
 /// The folders the installer owns, next to `current`.
 pub const RELEASE_PREFIX: &str = "release-";
@@ -119,7 +123,9 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let status = read_status(home.path());
         assert_eq!(status.state, EngineState::Missing);
-        assert!(status.path.ends_with("engine/current/lynx-browser-host"));
+        assert!(
+            Path::new(&status.path).ends_with(Path::new("engine").join("current").join(HOST_NAME))
+        );
     }
 
     #[test]

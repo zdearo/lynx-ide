@@ -142,6 +142,10 @@ impl BrowserService {
         report: &mut dyn FnMut(EngineProgress),
     ) -> Result<EngineStatus, BrowserError> {
         let _only_one = self.installing.acquire().ok_or(EngineInstallError::Busy)?;
+        if cfg!(windows) {
+            // Windows will not replace a folder with a running program in it.
+            self.shutdown();
+        }
         install(&self.lynx_home, &manifest_url(), force, report)?;
         // An engine that failed to start, or was missing, is not a failure any more.
         let mut inner = self.lock();

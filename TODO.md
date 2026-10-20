@@ -198,7 +198,9 @@ Decidido em vez de um browser no estilo Orca: o Chromium (CEF) roda num processo
 - [ ] iframes no snapshot; hover, arrastar e enviar arquivo como ferramentas
 - [ ] MCP nos demais agentes (só Claude Code, Codex e OpenCode hoje)
 - [ ] Pré-autorizar as ferramentas `lynx` nos agentes, para não pedirem permissão a cada chamada (decisão do usuário)
-- [ ] Windows e macOS: view nativa, motor e pacote
+- [x] Windows: transporte por named pipe, view Win32, overlay do agente em software, host sem console, instalador por renomeação, pacote `windows-x64` e job no workflow (compila e passa no clippy; **nunca rodou numa máquina Windows**)
+- [ ] Testar o Windows numa máquina real: janela filha sobre o WebView2, foco, teclado e IME, DPI, destacar a página, pacote e instalação
+- [ ] macOS: o motor vira um `.app` com o framework e cinco helpers, assinatura e notarização, view `NSView` e entrada com `NSTextInputClient`
 
 ---
 

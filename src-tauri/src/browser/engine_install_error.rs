@@ -20,7 +20,7 @@ pub enum EngineInstallError {
     IncompleteArchive(String),
     #[error("an engine is being installed already")]
     Busy,
-    #[error("the browser engine is only available on Linux x64 for now")]
+    #[error("the browser engine is only available on Linux x64 and Windows x64 for now")]
     Unsupported,
     #[error("could not write {path}: {source}")]
     Io {

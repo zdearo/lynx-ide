@@ -8,14 +8,16 @@ use url::Url;
 
 use super::engine_install_error::EngineInstallError;
 
-/// Where the manifest of the latest engine is published. `LYNX_ENGINE_MANIFEST_URL` replaces it,
-/// for a mirror or a build under test.
-const DEFAULT_MANIFEST_URL: &str = "https://github.com/zdearo/lynx-ide/releases/latest/download/browser-engine-manifest-linux-x64.json";
+/// Where the manifests of the latest engine are published, one per platform.
+/// `LYNX_ENGINE_MANIFEST_URL` replaces the address, for a mirror or a build under test.
+const RELEASE_DOWNLOADS: &str = "https://github.com/zdearo/lynx-ide/releases/latest/download";
 pub const MANIFEST_URL_ENV: &str = "LYNX_ENGINE_MANIFEST_URL";
 
 /// The platform this build can run an engine on, as the manifest names it.
 pub const PLATFORM: &str = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
     "linux-x64"
+} else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+    "windows-x64"
 } else {
     "unsupported"
 };
@@ -36,7 +38,8 @@ pub struct EngineManifest {
 }
 
 pub fn manifest_url() -> String {
-    std::env::var(MANIFEST_URL_ENV).unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_owned())
+    std::env::var(MANIFEST_URL_ENV)
+        .unwrap_or_else(|_| format!("{RELEASE_DOWNLOADS}/browser-engine-manifest-{PLATFORM}.json"))
 }
 
 impl EngineManifest {

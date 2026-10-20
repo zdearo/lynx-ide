@@ -981,11 +981,19 @@ mod tests {
             console.contains("Uncaught Error: late failure"),
             "{console}"
         );
-        let network = text_of(
-            &browser
-                .call(&caller(), "browser_network", &json!({}))
-                .expect("network"),
-        );
+        // The response can land a moment after the page says it is done; ask until it has.
+        let mut network = String::new();
+        for _ in 0..30 {
+            network = text_of(
+                &browser
+                    .call(&caller(), "browser_network", &json!({}))
+                    .expect("network"),
+            );
+            if network.contains("404 GET") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         assert!(network.contains("404 GET http://127.0.0.1"), "{network}");
         assert!(network.contains("/missing.json (fetch)"), "{network}");
 

@@ -17,7 +17,7 @@ use gtk::gdk;
 use gtk::glib::Propagation;
 use gtk::glib::translate::IntoGlib;
 use gtk::prelude::*;
-use lynx_browser_protocol::message::{KeyKind, MouseButton, ToHost, modifiers};
+use lynx_browser_protocol::message::{EditCommand, KeyKind, MouseButton, ToHost, modifiers};
 use tauri::{AppHandle, Manager};
 
 use super::agent_icon;
@@ -724,6 +724,13 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
             let keysym: u32 = keyval.into_glib();
             let state = event.state();
             let hardware = event.hardware_keycode();
+            // Copy, paste and the like: an off-screen page has no system bindings behind it.
+            if let Some(command) =
+                EditCommand::from_shortcut(modifiers_of(state), windows_key_code(keysym))
+            {
+                send(ToHost::Edit { command });
+                return Propagation::Stop;
+            }
             send(ToHost::Key {
                 kind: KeyKind::Down,
                 windows_code: windows_key_code(keysym),

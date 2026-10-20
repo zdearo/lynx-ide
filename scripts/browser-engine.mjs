@@ -19,6 +19,7 @@ import {
   chmod,
   cp,
   copyFile,
+  link,
   mkdir,
   readFile,
   readdir,
@@ -39,7 +40,12 @@ const tauriDir = join(root, "src-tauri");
 const lynxHome = process.env.LYNX_HOME ?? join(homedir(), ".lynx");
 const engineRoot = join(lynxHome, "engine");
 const index = "https://cef-builds.spotifycdn.com/index.json";
-const hostName = "lynx-browser-host";
+const windows = platform() === "win32";
+const hostName = windows ? "lynx-browser-host.exe" : "lynx-browser-host";
+// The platform as the CEF index and the manifest name it.
+const enginePlatform = windows ? "windows-x64" : "linux-x64";
+// The engine's own library, which tells a CEF folder from any other.
+const libraryName = windows ? "libcef.dll" : "libcef.so";
 
 const args = process.argv.slice(2);
 const makeBundle = args.includes("--bundle");
@@ -78,8 +84,9 @@ async function protocolVersion() {
 
 function cefPlatform() {
   if (platform() === "linux" && arch() === "x64") return "linux64";
+  if (platform() === "win32" && arch() === "x64") return "windows64";
   fail(
-    `${platform()}/${arch()} is not supported yet: the host runs on Linux x64 only`,
+    `${platform()}/${arch()} is not supported yet: the host runs on Linux x64 and Windows x64 only`,
   );
 }
 
@@ -129,7 +136,7 @@ async function download(version) {
 
 async function unpack(archive, version) {
   const target = join(engineRoot, `cef-${version}`);
-  if (await exists(join(target, "Release", "libcef.so"))) return target;
+  if (await exists(join(target, "Release", libraryName))) return target;
   console.log(`unpacking into ${target}`);
   const partial = `${target}.partial`;
   await rm(partial, { recursive: true, force: true });
@@ -165,7 +172,30 @@ function buildHost(cefDir) {
   return join(tauriDir, "target", release ? "release" : "debug", hostName);
 }
 
-// The host sits beside the runtime, as Chromium expects: libcef.so, resources and locales.
+// What is left out of the engine: the sandbox helper (the sandbox is off until the engine ships
+// one), and the files only used to link or debug.
+function skipped(name) {
+  return (
+    name === "chrome-sandbox" ||
+    /\.(lib|pdb|dbg)$/.test(name) ||
+    /^bootstrapc?\.exe$/.test(name)
+  );
+}
+
+// Links need privileges on Windows, so the development layout uses hard links, and copies where
+// a hard link cannot reach (another drive).
+async function linkTree(from, to) {
+  if ((await stat(from)).isDirectory()) {
+    await mkdir(to, { recursive: true });
+    for (const name of await readdir(from)) {
+      await linkTree(join(from, name), join(to, name));
+    }
+    return;
+  }
+  await link(from, to).catch(() => copyFile(from, to));
+}
+
+// The host sits beside the runtime, as Chromium expects: the library, resources and locales.
 async function assemble(cefDir, host, version, protocol) {
   const current = join(engineRoot, "current");
   const partial = `${current}.partial`;
@@ -175,8 +205,10 @@ async function assemble(cefDir, host, version, protocol) {
   await chmod(join(partial, hostName), 0o755);
   for (const folder of ["Release", "Resources"]) {
     for (const name of await readdir(join(cefDir, folder))) {
-      if (name === "chrome-sandbox") continue; // the sandbox is off until the engine ships its helper
-      await symlink(join(cefDir, folder, name), join(partial, name));
+      if (skipped(name)) continue;
+      const from = join(cefDir, folder, name);
+      if (windows) await linkTree(from, join(partial, name));
+      else await symlink(from, join(partial, name));
     }
   }
   await writeFile(
@@ -186,7 +218,7 @@ async function assemble(cefDir, host, version, protocol) {
         version: `${version}-p${protocol}`,
         protocol,
         cef: version,
-        platform: "linux-x64",
+        platform: enginePlatform,
         host: hostName,
         builtAt: new Date().toISOString(),
       },
@@ -211,7 +243,7 @@ async function bundle(cefDir, host, version, protocol) {
   await chmod(join(stage, hostName), 0o755);
   for (const folder of ["Release", "Resources"]) {
     for (const name of await readdir(join(cefDir, folder))) {
-      if (name === "chrome-sandbox") continue;
+      if (skipped(name)) continue;
       if (name === "locales") {
         await mkdir(join(stage, "locales"), { recursive: true });
         await copyFile(
@@ -226,7 +258,7 @@ async function bundle(cefDir, host, version, protocol) {
     }
   }
   for (const name of await readdir(stage)) {
-    if (/\.so(\.\d+)*$/.test(name)) {
+    if (!windows && /\.so(\.\d+)*$/.test(name)) {
       // Debug symbols are most of libcef's size. A missing `strip` only makes the package bigger.
       spawnSync("strip", ["--strip-unneeded", join(stage, name)], {
         stdio: "ignore",
@@ -241,7 +273,7 @@ async function bundle(cefDir, host, version, protocol) {
         version: id,
         protocol,
         cef: version,
-        platform: "linux-x64",
+        platform: enginePlatform,
         host: hostName,
         builtAt: new Date().toISOString(),
       },
@@ -250,7 +282,7 @@ async function bundle(cefDir, host, version, protocol) {
     ),
   );
 
-  const archiveName = `lynx-browser-engine-linux-x64-${id}.tar.gz`;
+  const archiveName = `lynx-browser-engine-${enginePlatform}-${id}.tar.gz`;
   const archive = join(out, archiveName);
   console.log(`packing ${archiveName}`);
   const files = await readdir(stage);
@@ -263,13 +295,16 @@ async function bundle(cefDir, host, version, protocol) {
   const manifest = {
     version: id,
     protocol,
-    platform: "linux-x64",
+    platform: enginePlatform,
     cef: version,
     archive: archiveName,
     sha256: sha256.digest("hex"),
     size: (await stat(archive)).size,
   };
-  const manifestPath = join(out, "browser-engine-manifest-linux-x64.json");
+  const manifestPath = join(
+    out,
+    `browser-engine-manifest-${enginePlatform}.json`,
+  );
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   await rm(stage, { recursive: true, force: true });
   console.log(
@@ -283,7 +318,7 @@ await mkdir(engineRoot, { recursive: true });
 const cefDir = cefDirFlag
   ? resolve(cefDirFlag)
   : await unpack(await download(version), version);
-if (!(await exists(join(cefDir, "Release", "libcef.so"))))
+if (!(await exists(join(cefDir, "Release", libraryName))))
   fail(`${cefDir} is not a CEF folder`);
 const host = buildHost(cefDir);
 const current = await assemble(cefDir, host, version, protocol);

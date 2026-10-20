@@ -27,17 +27,22 @@ pub enum FrameError {
 }
 
 pub struct FrameBuffer {
-    map: MmapMut,
+    /// None once the memory has been let go of.
+    map: Option<MmapMut>,
 }
 
 impl FrameBuffer {
     /// Creates the file at `path`, sized for every slot. Untouched pages cost no memory.
     pub fn create(path: &Path) -> Result<Self, FrameError> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(path)?;
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_ATTRIBUTE_TEMPORARY: keep the pages in memory rather than writing them out.
+            options.attributes(0x100);
+        }
+        let file = options.open(path)?;
         file.set_len((SLOTS * SLOT_BYTES) as u64)?;
         Self::map(&file)
     }
@@ -52,7 +57,19 @@ impl FrameBuffer {
         // SAFETY: the file is private to the two processes that cooperate through the protocol:
         // the host writes only slots Lynx has released, and Lynx reads only slots it was told of.
         let map = unsafe { MmapMut::map_mut(file)? };
-        Ok(Self { map })
+        Ok(Self { map: Some(map) })
+    }
+
+    /// Lets go of the memory, so the file can be deleted: Windows will not delete a file that is
+    /// still mapped. Reading and writing fail afterwards.
+    pub fn unmap(&mut self) {
+        self.map = None;
+    }
+
+    fn mapped(&self) -> Result<&MmapMut, FrameError> {
+        self.map
+            .as_ref()
+            .ok_or_else(|| FrameError::Io(io::Error::other("the frame memory is released")))
     }
 
     fn range(slot: usize, length: usize) -> Result<std::ops::Range<usize>, FrameError> {
@@ -68,13 +85,17 @@ impl FrameBuffer {
 
     pub fn write(&mut self, slot: usize, pixels: &[u8]) -> Result<(), FrameError> {
         let range = Self::range(slot, pixels.len())?;
-        self.map[range].copy_from_slice(pixels);
+        let map = self
+            .map
+            .as_mut()
+            .ok_or_else(|| FrameError::Io(io::Error::other("the frame memory is released")))?;
+        map[range].copy_from_slice(pixels);
         Ok(())
     }
 
     pub fn read(&self, slot: usize, length: usize) -> Result<&[u8], FrameError> {
         let range = Self::range(slot, length)?;
-        Ok(&self.map[range])
+        Ok(&self.mapped()?[range])
     }
 }
 

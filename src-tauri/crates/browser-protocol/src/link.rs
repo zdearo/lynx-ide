@@ -2,8 +2,6 @@
 //! protocol. Everything about one running host lives in a [`HostLink`]; dropping it stops the host.
 
 use std::io::{self, BufReader};
-use std::os::unix::fs::DirBuilderExt;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -13,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::frame_buffer::{FrameBuffer, FrameError};
 use crate::message::{FromHost, ToHost, read_message, write_message};
+use crate::transport::{Connection, Listener};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
@@ -42,18 +41,19 @@ pub enum LinkError {
 }
 
 pub struct HostLink {
-    writer: Mutex<UnixStream>,
-    frames: FrameBuffer,
+    writer: Mutex<Connection>,
+    frames: Mutex<FrameBuffer>,
     child: Mutex<Child>,
     dir: PathBuf,
     closed: Arc<AtomicBool>,
 }
 
 /// Frames are rewritten many times a second, so they live in RAM where there is a RAM-backed
-/// folder, not in a file the system would write to disk.
+/// folder, not in a file the system would write to disk. (Elsewhere the temp folder is as close
+/// as it gets; the frame file asks not to be written out.)
 fn runtime_root() -> PathBuf {
     let shared = Path::new("/dev/shm");
-    if shared.is_dir() {
+    if cfg!(target_os = "linux") && shared.is_dir() {
         shared.to_path_buf()
     } else {
         std::env::temp_dir()
@@ -68,7 +68,14 @@ fn new_session_dir() -> io::Result<PathBuf> {
         COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     // Private to this user: the socket in it can drive the browser.
-    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+    #[cfg_attr(windows, allow(unused_mut))]
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&dir)?;
     Ok(dir)
 }
 
@@ -95,15 +102,20 @@ impl HostLink {
         dir: &Path,
         on_event: impl Fn(LinkEvent) + Send + 'static,
     ) -> Result<Self, LinkError> {
-        let socket = dir.join("link.sock");
         let frames_path = dir.join("frames");
         let frames = FrameBuffer::create(&frames_path)?;
-        let listener = UnixListener::bind(&socket)?;
-        listener.set_nonblocking(true)?;
+        let listener = Listener::bind(dir)?;
 
-        let mut child = Command::new(host)
+        let mut command = Command::new(host);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW: the host has no console to show.
+            command.creation_flags(0x0800_0000);
+        }
+        let mut child = command
             .arg("--socket")
-            .arg(&socket)
+            .arg(listener.address())
             .arg("--frames")
             .arg(&frames_path)
             .arg("--cache")
@@ -120,10 +132,9 @@ impl HostLink {
                 return Err(error);
             }
         };
-        stream.set_nonblocking(false)?;
 
         let closed = Arc::new(AtomicBool::new(false));
-        let reader = BufReader::new(stream.try_clone()?);
+        let reader = BufReader::new(stream.clone());
         let reader_closed = Arc::clone(&closed);
         thread::Builder::new()
             .name("browser-link".into())
@@ -138,20 +149,18 @@ impl HostLink {
 
         Ok(Self {
             writer: Mutex::new(stream),
-            frames,
+            frames: Mutex::new(frames),
             child: Mutex::new(child),
             dir: dir.to_path_buf(),
             closed,
         })
     }
 
-    fn accept(listener: &UnixListener, child: &mut Child) -> Result<UnixStream, LinkError> {
+    fn accept(listener: &Listener, child: &mut Child) -> Result<Connection, LinkError> {
         let started = Instant::now();
         loop {
-            match listener.accept() {
-                Ok((stream, _)) => return Ok(stream),
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) => return Err(error.into()),
+            if let Some(connection) = listener.try_accept()? {
+                return Ok(connection);
             }
             if let Some(status) = child.try_wait()? {
                 return Err(LinkError::ExitedEarly(status.to_string()));
@@ -184,7 +193,11 @@ impl HostLink {
         out: &mut Vec<u8>,
     ) -> Result<(), LinkError> {
         let length = width as usize * height as usize * 4;
-        let pixels = self.frames.read(usize::from(slot), length)?;
+        let frames = self
+            .frames
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let pixels = frames.read(usize::from(slot), length)?;
         out.clear();
         out.extend_from_slice(pixels);
         Ok(())
@@ -231,14 +244,21 @@ impl HostLink {
 impl Drop for HostLink {
     fn drop(&mut self) {
         self.shutdown();
+        // The frame file must be let go of first, or Windows will not delete it.
+        self.frames
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unmap();
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::*;
 
+    #[cfg(unix)]
     // One test for both failures: they count the session folders of this process, so they must
     // not run side by side.
     #[test]
@@ -263,6 +283,7 @@ mod tests {
         assert_eq!(count_session_dirs(), before);
     }
 
+    #[cfg(unix)]
     fn count_session_dirs() -> usize {
         let prefix = format!("lynx-browser-{}-", std::process::id());
         std::fs::read_dir(runtime_root())

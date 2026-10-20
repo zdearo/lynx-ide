@@ -33,6 +33,14 @@ const BUTTONS: &str = r#"<!doctype html><title>buttons</title><body style="margi
 <script>document.getElementById('s').addEventListener('change', e => { document.title = 'picked:' + e.target.value; });</script>
 </body>"#;
 
+const FIELDS: &str = r#"<!doctype html><body style="margin:0;background:#fff">
+<input id="a" style="position:absolute;left:20px;top:20px;width:300px;height:40px;font-size:20px">
+<input id="b" style="position:absolute;left:20px;top:100px;width:300px;height:40px;font-size:20px">
+<script>document.title = 'waiting';
+const a = document.getElementById('a'), b = document.getElementById('b');
+const tell = () => { document.title = 'a=' + a.value + ';b=' + b.value; };
+a.addEventListener('input', tell); b.addEventListener('input', tell);</script></body>"#;
+
 const INPUT: &str = r#"<!doctype html><body style="margin:0;background:#fff">
 <input id="i" style="position:absolute;left:20px;top:20px;width:300px;height:40px;font-size:20px">
 <script>document.title = 'waiting';
@@ -150,6 +158,46 @@ impl Probe {
             });
         }
     }
+}
+
+/// Copy and paste, which need to be asked for by name: type, select all, copy, paste elsewhere.
+fn probe_editing(probe: &mut Probe) {
+    use lynx_browser_protocol::message::EditCommand;
+    probe.send(ToHost::Navigate {
+        url: data_url(FIELDS),
+    });
+    probe.wait(Duration::from_secs(5), |probe| probe.title == "waiting");
+    probe.send(ToHost::Focus { focused: true });
+    probe.click(60, 40);
+    probe.wait(Duration::from_millis(300), |_| false);
+    probe.send(ToHost::Text {
+        text: "copiar ção".into(),
+    });
+    probe.wait(Duration::from_secs(3), |probe| {
+        probe.title == "a=copiar ção;b="
+    });
+    probe.send(ToHost::Edit {
+        command: EditCommand::SelectAll,
+    });
+    probe.send(ToHost::Edit {
+        command: EditCommand::Copy,
+    });
+    probe.wait(Duration::from_millis(300), |_| false);
+    probe.click(60, 120);
+    probe.wait(Duration::from_millis(300), |_| false);
+    probe.send(ToHost::Edit {
+        command: EditCommand::Paste,
+    });
+    let pasted = probe.wait(Duration::from_secs(3), |probe| {
+        probe.title == "a=copiar ção;b=copiar ção"
+    });
+    probe.check(
+        pasted,
+        &format!(
+            "select all, copy and paste move text between fields (title is {:?})",
+            probe.title
+        ),
+    );
 }
 
 /// What the agent tools rely on: the accessibility tree, a node's box, a trusted click on it.
@@ -404,6 +452,7 @@ fn main() {
     probe.check(enter, "the Enter key reaches the page");
 
     probe_devtools(&mut probe);
+    probe_editing(&mut probe);
 
     probe.send(ToHost::Navigate {
         url: data_url(ANIMATION),

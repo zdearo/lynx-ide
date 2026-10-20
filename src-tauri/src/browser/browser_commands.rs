@@ -18,7 +18,7 @@ pub async fn browser_open(
     service: State<'_, Arc<BrowserService>>,
     url: Option<String>,
 ) -> Result<BrowserState, IpcError> {
-    if cfg!(not(target_os = "linux")) {
+    if cfg!(not(any(target_os = "linux", windows))) {
         return Err(AppError::from(BrowserError::Unsupported).into());
     }
     let service = Arc::clone(&service);
@@ -97,20 +97,20 @@ pub async fn browser_place(
     width: f64,
     height: f64,
 ) -> Result<(), IpcError> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     {
         let service = Arc::clone(&service);
         let handle = app.clone();
         let label = window.label().to_owned();
         app.run_on_main_thread(move || {
             let rect = (x, y, width, height);
-            if let Err(error) = super::native_view::place(&handle, &service, &label, rect) {
+            if let Err(error) = super::platform_view::place(&handle, &service, &label, rect) {
                 eprintln!("browser: {error}");
             }
         })
         .map_err(|error| IpcError::from(AppError::TaskFailed(error.to_string())))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = (app, window, service, x, y, width, height);
         Err(AppError::from(BrowserError::Unsupported).into())
@@ -126,14 +126,14 @@ pub async fn browser_hide(
     window: WebviewWindow,
     service: State<'_, Arc<BrowserService>>,
 ) -> Result<(), IpcError> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     {
         let service = Arc::clone(&service);
         let label = window.label().to_owned();
-        app.run_on_main_thread(move || super::native_view::hide(&service, &label))
+        app.run_on_main_thread(move || super::platform_view::hide(&service, &label))
             .map_err(|error| IpcError::from(AppError::TaskFailed(error.to_string())))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = (app, window, service);
         Ok(())

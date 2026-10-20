@@ -3,7 +3,6 @@
 //! thread, which is CEF's UI thread, so the state is thread-local.
 
 use std::cell::RefCell;
-use std::os::unix::net::UnixStream;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -11,7 +10,8 @@ use std::time::Duration;
 
 use cef::*;
 use lynx_browser_protocol::frame_buffer::{FrameBuffer, MAX_HEIGHT, MAX_WIDTH, SlotPool};
-use lynx_browser_protocol::message::{FromHost, NoticeKind, ToHost, write_message};
+use lynx_browser_protocol::message::{EditCommand, FromHost, NoticeKind, ToHost, write_message};
+use lynx_browser_protocol::transport::Connection;
 
 use crate::input;
 
@@ -44,7 +44,7 @@ struct State {
     scale: f32,
     pool: SlotPool,
     frames: Option<FrameBuffer>,
-    link: Option<UnixStream>,
+    link: Option<Connection>,
     /// Keeps the DevTools observer attached; dropping it would stop the answers.
     devtools: Option<Registration>,
 }
@@ -74,7 +74,7 @@ fn with_state<T>(read: impl FnOnce(&mut State) -> T) -> T {
 }
 
 /// Gives the engine the way back to Lynx. Call once, before creating the page.
-pub fn connect(frames: FrameBuffer, link: UnixStream) {
+pub fn connect(frames: FrameBuffer, link: Connection) {
     with_state(|state| {
         state.frames = Some(frames);
         state.link = Some(link);
@@ -101,7 +101,7 @@ fn host() -> Option<BrowserHost> {
 
 /// Creates the one page, blank. Call once CEF's context is ready; `Ready` goes out when it exists.
 pub fn create_page() {
-    let window = WindowInfo::default().set_as_windowless(0);
+    let window = WindowInfo::default().set_as_windowless(Default::default());
     let settings = BrowserSettings {
         windowless_frame_rate: 60,
         ..Default::default()
@@ -179,8 +179,25 @@ pub fn handle(command: ToHost) {
             }
         }
         ToHost::Cdp { id, method, params } => send_cdp(&host, id, &method, params),
+        ToHost::Edit { command } => edit(command),
         ToHost::Shutdown => {}
         input_command => input::apply(&host, input_command),
+    }
+}
+
+/// Runs an editing action on the frame that has the focus, falling back to the main frame.
+fn edit(command: EditCommand) {
+    let Some(browser) = browser() else { return };
+    let Some(frame) = browser.focused_frame().or_else(|| browser.main_frame()) else {
+        return;
+    };
+    match command {
+        EditCommand::Undo => frame.undo(),
+        EditCommand::Redo => frame.redo(),
+        EditCommand::Cut => frame.cut(),
+        EditCommand::Copy => frame.copy(),
+        EditCommand::Paste => frame.paste(),
+        EditCommand::SelectAll => frame.select_all(),
     }
 }
 

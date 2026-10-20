@@ -3,11 +3,14 @@
 //! one page off-screen into the shared frame memory, and obeys the commands it receives. When
 //! the connection closes, it quits.
 
+// On Windows the host is a program of its own with no console: a console would flash on screen
+// for it and for each of the engine's helper processes, which are this same program.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod engine;
 mod input;
 
 use std::io::BufReader;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -17,6 +20,7 @@ use std::time::{Duration, Instant};
 use cef::*;
 use lynx_browser_protocol::frame_buffer::FrameBuffer;
 use lynx_browser_protocol::message::{ToHost, read_message};
+use lynx_browser_protocol::transport::Connection;
 
 use engine::{Event, HostApp};
 
@@ -82,7 +86,7 @@ fn main() -> ExitCode {
 
 fn run(args: &cef::args::Args, app: &mut App) -> Result<(), String> {
     let arguments = Arguments::parse(std::env::args().skip(1))?;
-    let link = UnixStream::connect(&arguments.socket).map_err(|error| {
+    let link = Connection::connect(&arguments.socket.to_string_lossy()).map_err(|error| {
         format!(
             "cannot reach Lynx at {}: {error}",
             arguments.socket.display()
@@ -97,7 +101,7 @@ fn run(args: &cef::args::Args, app: &mut App) -> Result<(), String> {
 
     // Commands arrive on a thread of their own and are handed to the main thread, which is the
     // engine's UI thread.
-    let reader_link = link.try_clone().map_err(|error| error.to_string())?;
+    let reader_link = link.clone();
     thread::spawn(move || {
         let mut reader = BufReader::new(reader_link);
         while let Ok(Some(command)) = read_message::<ToHost>(&mut reader) {

@@ -24,7 +24,7 @@ pub enum BrowserError {
     PageTimeout,
     #[error("the page refused the call: {0}")]
     Page(String),
-    #[error("the browser is only available on Linux for now")]
+    #[error("the browser is only available on Linux and Windows for now")]
     Unsupported,
     #[error(transparent)]
     Link(#[from] LinkError),

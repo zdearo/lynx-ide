@@ -4,7 +4,6 @@
 
 mod agent_browser;
 mod agent_browser_bridge;
-#[cfg(target_os = "linux")]
 mod agent_icon;
 mod agent_permissions;
 mod agent_pointer;
@@ -13,7 +12,7 @@ pub mod browser_commands;
 mod browser_error;
 mod browser_service;
 mod browser_state;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 mod click_counter;
 mod detached_window;
 pub mod engine_commands;
@@ -27,6 +26,16 @@ mod key_codes;
 mod key_names;
 #[cfg(target_os = "linux")]
 mod native_view;
+#[cfg(windows)]
+mod windows_view;
+
+/// The platform's native view of the page, which draws the engine's frames and takes the input.
+#[cfg(target_os = "linux")]
+use native_view as platform_view;
+#[cfg(windows)]
+use windows_view as platform_view;
+#[cfg(any(windows, test))]
+mod overlay_renderer;
 mod page_log;
 mod page_snapshot;
 mod web_address;
@@ -56,10 +65,10 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     } else if detached_window::is_browser_window(window.label()) {
         let service = Arc::clone(&*app.state::<Arc<BrowserService>>());
         service.set_detached(false);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         {
             let _ = app.run_on_main_thread(move || {
-                native_view::forget(&service, detached_window::LABEL);
+                platform_view::forget(&service, detached_window::LABEL);
             });
         }
         detached_window::show_main(app);
@@ -91,13 +100,13 @@ impl BrowserEvents for TauriBrowserEvents {
     }
 }
 
-/// Where this platform shows frames: the native GTK view on Linux, nowhere else yet.
+/// Where this platform shows frames: its native view, or nowhere on a platform without one yet.
 pub fn frame_sink(app: AppHandle) -> Arc<dyn FrameSink> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     {
-        Arc::new(native_view::NativeView::new(app))
+        Arc::new(platform_view::NativeView::new(app))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         struct Nowhere;
         impl FrameSink for Nowhere {

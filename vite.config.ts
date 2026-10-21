@@ -25,6 +25,7 @@ export default defineConfig(() => ({
       "@codemirror/lang-javascript",
       "@codemirror/lang-json",
       "@codemirror/lang-markdown",
+      "@codemirror/lang-php",
       "@codemirror/lang-python",
       "@codemirror/lang-rust",
       "@codemirror/language",

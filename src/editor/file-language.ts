@@ -9,6 +9,7 @@ export type LanguageName =
   | "css"
   | "html"
   | "markdown"
+  | "php"
   | "python"
   | "rust";
 
@@ -27,6 +28,7 @@ const BY_EXTENSION: Record<string, LanguageName> = {
   htm: "html",
   md: "markdown",
   markdown: "markdown",
+  php: "php",
   py: "python",
   rs: "rust",
 };
@@ -60,6 +62,8 @@ export async function loadLanguage(name: LanguageName): Promise<Extension> {
       return (await import("@codemirror/lang-html")).html();
     case "markdown":
       return (await import("@codemirror/lang-markdown")).markdown();
+    case "php":
+      return (await import("@codemirror/lang-php")).php();
     case "python":
       return (await import("@codemirror/lang-python")).python();
     case "rust":

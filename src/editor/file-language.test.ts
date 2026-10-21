@@ -8,6 +8,9 @@ describe("languageNameFor", () => {
     expect(languageNameFor("lib/util.MJS")).toBe("javascript");
     expect(languageNameFor("README.md")).toBe("markdown");
     expect(languageNameFor("src-tauri/src/lib.rs")).toBe("rust");
+    expect(languageNameFor("app/Http/Controllers/UserController.PHP")).toBe(
+      "php",
+    );
   });
 
   it("is plain text for an unknown extension, no extension, or a dotfile", () => {

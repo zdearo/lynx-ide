@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
 use crate::agents::hook_hub::HookHub;
+use crate::browser::SessionOwners;
 
 use super::terminal_events::TerminalEventSink;
 use super::terminal_manager::TerminalManager;
@@ -29,6 +30,7 @@ fn setup() -> (TerminalManager, Arc<RecordingSink>, tempfile::TempDir) {
         shell,
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         HookHub::disabled(),
+        SessionOwners::default(),
     );
     (manager, sink, tempfile::tempdir().expect("temp dir"))
 }

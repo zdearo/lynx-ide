@@ -337,6 +337,7 @@ export const copy = {
       close: (title: string) => `Close ${title}`,
       working: (agent: string) => `${agent} is working`,
       inWindow: "In its own window",
+      agentTab: "Agent's tab",
     },
     agentNames: {
       claude: "Claude Code",
@@ -383,10 +384,10 @@ export const copy = {
     stopped: "The browser engine stopped.",
     detach: "Open in a separate window",
     attach: "Return to the main window",
-    detachedTitle: "The browser is in its own window",
-    detachedBody:
-      "Close that window, or bring the browser back here, to see it in this one.",
-    bringBack: "Bring it back",
+    detachedTitle: "This tab is in its own window",
+    detachedBody: "Close that window and the tab comes back here.",
+    assignAgent: "Let the agent use this tab",
+    agentAssigned: "The agent uses this tab",
     inControl: (agent: string) => `${agent} is in control`,
   },
 

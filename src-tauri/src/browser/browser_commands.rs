@@ -189,6 +189,18 @@ pub async fn browser_page_attach(
     Ok(())
 }
 
+/// Makes a tab the one the agents of its worktree use. The tab they used before stays open.
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_assign_agent(
+    service: State<'_, Arc<BrowserService>>,
+    page: u32,
+) -> Result<(), IpcError> {
+    service
+        .assign_agent_page(page)
+        .map_err(|error| IpcError::from(AppError::from(error)))
+}
+
 /// Shows the page in the window this is called from, over the rectangle the interface reserved
 /// for it: logical pixels, relative to the top-left corner of the window's content.
 #[tauri::command]

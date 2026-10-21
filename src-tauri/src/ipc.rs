@@ -45,6 +45,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             browser::browser_page_state,
             browser::browser_page_detach,
             browser::browser_page_attach,
+            browser::browser_page_assign_agent,
             browser::browser_close,
             engine::browser_engine_status,
             engine::browser_engine_install,

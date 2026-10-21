@@ -5,10 +5,12 @@ import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
 import { MinimizeWindowGlyph18 } from "@/components/icons/MinimizeWindowGlyph18";
 import { OpenInNewWindowGlyph18 } from "@/components/icons/OpenInNewWindowGlyph18";
 import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
+import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
 import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { EngineProgressBar } from "@/browser/EngineProgressBar";
 import { useBrowserStore } from "@/browser/browser-store";
 import { isBrowserWindow } from "@/browser/browser-window";
@@ -27,8 +29,10 @@ export function BrowserView() {
   const failure = useBrowserStore((s) => s.failure);
   const slot = useRef<HTMLDivElement>(null);
   const running = state.status === "running";
+  // A tab in its own window is drawn there, never here: this view says so instead.
+  const detachedHere = !isBrowserWindow() && state.detached;
   // The engine runs but no tab is shown: the page area offers to open one instead.
-  const showing = running && state.page !== null;
+  const showing = running && state.page !== null && !detachedHere;
   const page = state.page;
 
   // Where the page goes follows this box. Polling every frame is deliberate: a resized window or
@@ -74,7 +78,8 @@ export function BrowserView() {
         {!running && (
           <Notice starting={starting || state.status === "starting"} />
         )}
-        {running && !showing && <NoTab />}
+        {running && detachedHere && state.page !== null && <DetachedNotice />}
+        {running && state.page === null && <NoTab />}
         {running && failure && (
           <p
             role="alert"
@@ -92,14 +97,21 @@ function Toolbar() {
   const state = useBrowserStore((s) => s.state);
   const navigate = useBrowserStore((s) => s.navigate);
   const running = state.status === "running";
-  // Back, forward, reload and the address act on the shown page; the engine alone is not enough.
-  const hasPage = running && state.page !== null;
+  const inOwnWindow = isBrowserWindow();
+  const detachedHere = !inOwnWindow && state.detached;
+  // Back, forward, reload and the address act on the shown page; the engine alone is not enough,
+  // and a tab that is in its own window is driven from there.
+  const hasPage = running && state.page !== null && !detachedHere;
   const [typed, setTyped] = useState<string | null>(null);
 
   const detachPage = useBrowserStore((s) => s.detachPage);
   const attachPage = useBrowserStore((s) => s.attachPage);
+  const assignAgentPage = useBrowserStore((s) => s.assignAgentPage);
+  const isAgentPage = useBrowserStore(
+    (s) =>
+      s.pages.find((entry) => entry.id === s.state.page)?.agentPage === true,
+  );
   const agentAction = useBrowserStore((s) => s.agentAction);
-  const inOwnWindow = isBrowserWindow();
   const reload = () => void commands.browserReload(false);
   const stop = () => void commands.browserStop();
 
@@ -151,7 +163,20 @@ function Toolbar() {
           spellCheck={false}
         />
       </form>
-      {agentAction && (
+      <TooltipIconButton
+        label={
+          isAgentPage ? copy.browser.agentAssigned : copy.browser.assignAgent
+        }
+        aria-pressed={isAgentPage}
+        disabled={!hasPage}
+        className={cn(isAgentPage && "text-agent")}
+        onClick={() => {
+          if (state.page !== null) void assignAgentPage(state.page);
+        }}
+      >
+        <SparkleGlyph18 />
+      </TooltipIconButton>
+      {agentAction && !detachedHere && (
         <span
           role="status"
           className="flex max-w-72 shrink-0 items-center gap-1.5 rounded-md bg-agent/15 px-2 py-0.5 text-meta text-foreground"
@@ -217,6 +242,18 @@ function Notice({ starting }: { starting: boolean }) {
           {copy.browser.retry}
         </Button>
       </div>
+    </Centered>
+  );
+}
+
+/** The selected tab is in a window of its own. It comes back here when that window closes. */
+function DetachedNotice() {
+  return (
+    <Centered>
+      <h2 className="text-sm font-medium">{copy.browser.detachedTitle}</h2>
+      <p className="mt-1 text-ui text-muted-foreground">
+        {copy.browser.detachedBody}
+      </p>
     </Centered>
   );
 }

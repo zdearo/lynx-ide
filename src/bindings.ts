@@ -47,6 +47,8 @@ export const commands = {
 	browserPageDetach: (page: number) => typedError<null, IpcError>(__TAURI_INVOKE("browser_page_detach", { page })),
 	/**  Brings a page back from its own window into the main view, and closes that window. */
 	browserPageAttach: (page: number) => typedError<null, IpcError>(__TAURI_INVOKE("browser_page_attach", { page })),
+	/**  Makes a tab the one the agents of its worktree use. The tab they used before stays open. */
+	browserPageAssignAgent: (page: number) => typedError<null, IpcError>(__TAURI_INVOKE("browser_page_assign_agent", { page })),
 	/**  Stops the engine. The next open starts a new one, and every tab window closes with it. */
 	browserClose: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_close")),
 	browserEngineStatus: () => typedError<EngineStatus, IpcError>(__TAURI_INVOKE("browser_engine_status")),
@@ -364,6 +366,8 @@ export type BrowserPageInfo = {
 	agent: string | null,
 	/**  The tab is in its own window. */
 	detached: boolean,
+	/**  The owner's agents use this tab. */
+	agentPage: boolean,
 };
 
 /**  Sent when the list of pages changes, for every owner. */

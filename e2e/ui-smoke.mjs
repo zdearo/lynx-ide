@@ -3010,6 +3010,80 @@ await session("?mock=full", 1400, 760, async (p) => {
   );
 });
 
+// A tab of the person can be the one agents use, and a tab in its own window is not drawn in the main view.
+await session("?mock=full", 1400, 760, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  // The engine runs, as it does once an agent has used the browser.
+  await p.evaluate(() =>
+    window.__lynxMock.agentUsesBrowser("Reading the page"),
+  );
+  await p.keyboard.press("Control+Shift+E");
+  await p.getByRole("tab", { name: "Browser", exact: true }).click();
+  await p.getByRole("button", { name: /^Dashboard · Vite/ }).click();
+  const toolbar = p.getByRole("toolbar", { name: "Browser" });
+  const assign = toolbar.getByRole("button", {
+    name: "Let the agent use this tab",
+  });
+  await assign.waitFor();
+  check(
+    "a tab that is not the agent's offers to become it, to the right of the address",
+    (await assign.getAttribute("aria-pressed")) === "false" &&
+      (await p.getByText("Agent's tab").count()) === 1 &&
+      (await assign.evaluate(
+        (button) =>
+          button.getBoundingClientRect().left >=
+          document
+            .querySelector('input[aria-label="Web address"]')
+            .getBoundingClientRect().right,
+      )),
+  );
+
+  await assign.click();
+  await toolbar
+    .getByRole("button", { name: "The agent uses this tab" })
+    .waitFor();
+  const dashboard = p.getByRole("button", { name: /^Dashboard · Vite/ });
+  check(
+    "making it the agent's moves the mark off the old agent tab",
+    (await toolbar
+      .getByRole("button", { name: "The agent uses this tab" })
+      .getAttribute("aria-pressed")) === "true" &&
+      (await p.getByText("Agent's tab").count()) === 1 &&
+      (await dashboard.getByText("Agent's tab").count()) === 1,
+  );
+
+  await toolbar
+    .getByRole("button", { name: "Open in a separate window" })
+    .click();
+  await p
+    .getByRole("heading", { name: "This tab is in its own window" })
+    .waitFor();
+  check(
+    "a tab in its own window shows a notice here, and the toolbar leaves it alone",
+    (await p.getByRole("textbox", { name: "Web address" }).isDisabled()) &&
+      (await toolbar
+        .getByRole("button", { name: "Open in a separate window" })
+        .isDisabled()),
+  );
+
+  await p.getByRole("button", { name: /^Pull request #4/ }).click();
+  await p.waitForTimeout(300);
+  check(
+    "another tab takes the notice away",
+    (await p.getByText("This tab is in its own window").count()) === 0,
+  );
+  await dashboard.click();
+  await p
+    .getByRole("heading", { name: "This tab is in its own window" })
+    .waitFor();
+  check(
+    "choosing the tab in its window brings the notice back",
+    (await p
+      .getByText("Close that window and the tab comes back here.")
+      .count()) === 1,
+  );
+});
+
 // Without its engine the browser offers to download it, shows how it goes, and then opens.
 await session("?mock=full&engine=missing", 1400, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();

@@ -724,7 +724,7 @@ mod tests {
             fn state_changed(&self, _state: &BrowserState) {}
         }
         impl FrameSink for Nowhere {
-            fn frame(&self, _frame: Frame) {}
+            fn frame(&self, _page: lynx_browser_protocol::message::PageId, _frame: Frame) {}
         }
 
         let url = std::env::var(super::super::engine_manifest::MANIFEST_URL_ENV)
@@ -745,12 +745,15 @@ mod tests {
             Arc::new(Nowhere),
             Arc::new(Nowhere),
         ));
-        service.resize(640, 480, 1.0);
-        service
-            .ensure_running()
-            .expect("the installed engine starts");
+        service.set_default_size(640, 480, 1.0);
+        let page = service
+            .page_for(&super::super::page_owner::PageOwner::Workspace {
+                worktree_path: "test".into(),
+            })
+            .expect("the installed engine makes a page");
         let answer = service
             .cdp(
+                page,
                 "Runtime.evaluate",
                 serde_json::json!({ "expression": "6 * 7", "returnByValue": true }),
                 Duration::from_secs(10),

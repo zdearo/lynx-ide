@@ -1,11 +1,11 @@
 //! Mouse, keyboard and text: protocol commands turned into engine input events.
 
 use cef::*;
-use lynx_browser_protocol::message::{KeyKind, MouseButton, ToHost};
+use lynx_browser_protocol::message::{KeyKind, MouseButton, PageCommand};
 
-pub fn apply(host: &BrowserHost, command: ToHost) {
+pub fn apply(host: &BrowserHost, command: PageCommand) {
     match command {
-        ToHost::MouseMove {
+        PageCommand::MouseMove {
             x,
             y,
             modifiers,
@@ -13,7 +13,7 @@ pub fn apply(host: &BrowserHost, command: ToHost) {
         } => {
             host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers }), i32::from(leave));
         }
-        ToHost::MouseClick {
+        PageCommand::MouseClick {
             x,
             y,
             button,
@@ -33,7 +33,7 @@ pub fn apply(host: &BrowserHost, command: ToHost) {
                 i32::from(clicks.max(1)),
             );
         }
-        ToHost::MouseWheel {
+        PageCommand::MouseWheel {
             x,
             y,
             delta_x,
@@ -42,7 +42,7 @@ pub fn apply(host: &BrowserHost, command: ToHost) {
         } => {
             host.send_mouse_wheel_event(Some(&MouseEvent { x, y, modifiers }), delta_x, delta_y);
         }
-        ToHost::Key {
+        PageCommand::Key {
             kind,
             windows_code,
             native_code,
@@ -68,7 +68,7 @@ pub fn apply(host: &BrowserHost, command: ToHost) {
                 KeyKind::Up => host.send_key_event(Some(&event(KeyEventType::KEYUP))),
             }
         }
-        ToHost::Text { text } => type_text(host, &text),
+        PageCommand::Text { text } => type_text(host, &text),
         // Everything else is handled by the engine module, which never forwards it here.
         _ => {}
     }

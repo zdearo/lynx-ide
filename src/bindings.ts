@@ -7,8 +7,8 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 export const commands = {
 	appInfo: () => __TAURI_INVOKE<AppInfo>("app_info"),
 	/**
-	 *  Starts the browser engine if needed and optionally opens an address. The engine's start-up
-	 *  blocks for a moment, so this runs off the async runtime.
+	 *  Starts the browser engine if needed and optionally opens an address in the shown page. The
+	 *  engine's start-up blocks for a moment, so this runs off the async runtime.
 	 */
 	browserOpen: (url: string | null) => typedError<BrowserState, IpcError>(__TAURI_INVOKE("browser_open", { url })),
 	browserNavigate: (url: string) => typedError<null, IpcError>(__TAURI_INVOKE("browser_navigate", { url })),
@@ -17,22 +17,37 @@ export const commands = {
 	browserReload: (ignoreCache: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("browser_reload", { ignoreCache })),
 	browserStop: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_stop")),
 	browserState: () => typedError<BrowserState, IpcError>(__TAURI_INVOKE("browser_state")),
+	browserPages: () => typedError<BrowserPageInfo[], IpcError>(__TAURI_INVOKE("browser_pages")),
+	browserThumbnails: () => typedError<BrowserThumbnail[], IpcError>(__TAURI_INVOKE("browser_thumbnails")),
+	/**
+	 *  Opens a page for a project's worktree and shows it. The engine makes the page and may block
+	 *  for a moment, so this runs off the async runtime.
+	 */
+	browserPageNew: (worktreePath: string, url: string | null) => typedError<BrowserPageInfo, IpcError>(__TAURI_INVOKE("browser_page_new", { worktreePath, url })),
+	/**
+	 *  Shows a page to the person. A page in its own window is not taken from it: that window is
+	 *  brought forward instead.
+	 */
+	browserPageShow: (page: number) => typedError<BrowserState, IpcError>(__TAURI_INVOKE("browser_page_show", { page })),
+	/**  Closes a page, and its window if it has one. A page that is already gone counts as closed. */
+	browserPageClose: (page: number) => typedError<null, IpcError>(__TAURI_INVOKE("browser_page_close", { page })),
 	/**
 	 *  Shows the page in the window this is called from, over the rectangle the interface reserved
-	 *  for it: logical pixels, relative to the top-left corner of the window's content. A page is
-	 *  shown in one window at a time, so any other window loses it.
+	 *  for it: logical pixels, relative to the top-left corner of the window's content.
 	 */
-	browserPlace: (x: number | null, y: number | null, width: number | null, height: number | null) => typedError<null, IpcError>(__TAURI_INVOKE("browser_place", { x, y, width, height })),
+	browserPlace: (page: number, x: number | null, y: number | null, width: number | null, height: number | null) => typedError<null, IpcError>(__TAURI_INVOKE("browser_place", { page, x, y, width, height })),
 	/**
 	 *  Takes the page off the window this is called from, when its view is not shown or something
 	 *  must be drawn over it.
 	 */
 	browserHide: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_hide")),
-	/**  Moves the page to a window of its own. The page keeps running: only where it is shown changes. */
-	browserDetach: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_detach")),
-	/**  Brings the page back to the main window and closes the browser window. */
-	browserAttach: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_attach")),
-	/**  Stops the engine. The next open starts a new one. */
+	/**  The state of one page, for the window that shows it. */
+	browserPageState: (page: number) => typedError<BrowserState, IpcError>(__TAURI_INVOKE("browser_page_state", { page })),
+	/**  Moves a page into its own window. The main view stops showing it; the page keeps running. */
+	browserPageDetach: (page: number) => typedError<null, IpcError>(__TAURI_INVOKE("browser_page_detach", { page })),
+	/**  Brings a page back from its own window into the main view, and closes that window. */
+	browserPageAttach: (page: number) => typedError<null, IpcError>(__TAURI_INVOKE("browser_page_attach", { page })),
+	/**  Stops the engine. The next open starts a new one, and every tab window closes with it. */
 	browserClose: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_close")),
 	browserEngineStatus: () => typedError<EngineStatus, IpcError>(__TAURI_INVOKE("browser_engine_status")),
 	/**
@@ -223,7 +238,9 @@ export const events = {
 	browserAgentActivity: makeEvent<BrowserAgentActivity>("browser-agent-activity"),
 	browserAgentReleased: makeEvent<BrowserAgentReleased>("browser-agent-released"),
 	browserEngineProgress: makeEvent<BrowserEngineProgress>("browser-engine-progress"),
+	browserPagesChanged: makeEvent<BrowserPagesChanged>("browser-pages-changed"),
 	browserStateChanged: makeEvent<BrowserStateChanged>("browser-state-changed"),
+	browserThumbnailChanged: makeEvent<BrowserThumbnailChanged>("browser-thumbnail-changed"),
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
 	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
@@ -317,6 +334,8 @@ export type BrowserAgentActivity = {
 	summary: string,
 	/**  Who is acting, as the person knows it: "Claude Code", "Codex"... */
 	agent: string,
+	/**  The page the agent acts on, so the interface shows the action only for the page it shows. */
+	page: number,
 };
 
 /**  Sent when no agent is in control of the page any more. */
@@ -334,6 +353,24 @@ export type BrowserEngineProgress = {
 	progress: EngineProgress,
 };
 
+/**  One page of the engine, as the interface lists it. */
+export type BrowserPageInfo = {
+	id: number,
+	owner: PageOwner,
+	url: string,
+	title: string,
+	loading: boolean,
+	/**  The harness of the agent working on this page right now ("claude", "codex"...), or None. */
+	agent: string | null,
+	/**  The tab is in its own window. */
+	detached: boolean,
+};
+
+/**  Sent when the list of pages changes, for every owner. */
+export type BrowserPagesChanged = {
+	pages: BrowserPageInfo[],
+};
+
 /**  What the interface shows about the browser: its status and the page it is on. */
 export type BrowserState = {
 	status: BrowserStatus,
@@ -345,6 +382,11 @@ export type BrowserState = {
 	error: string | null,
 	/**  The page is shown in its own window, not in the main one. */
 	detached: boolean,
+	/**
+	 *  The page this state describes: the one shown to the person, or the one in its own window.
+	 *  None when no page is shown.
+	 */
+	page: number | null,
 };
 
 /**  Sent whenever the browser's state changes. */
@@ -357,6 +399,19 @@ export type BrowserStatus =
 "stopped" | "starting" | "running" | 
 /**  The engine could not start or went away; `error` says why. */
 "failed";
+
+/**  The last picture of a page, as a PNG at most 240 pixels wide. */
+export type BrowserThumbnail = {
+	page: number,
+	/**  Base64 of the PNG, without a data URL prefix. */
+	png: string,
+};
+
+/**  Sent when a page has a new picture for the list. */
+export type BrowserThumbnailChanged = {
+	page: number,
+	png: string,
+};
 
 export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "typeChanged" | "untracked" | "conflicted";
 
@@ -654,6 +709,12 @@ export type NotificationsConfig = {
 	/**  A new version of Lynx is out. */
 	onUpdate: boolean,
 };
+
+export type PageOwner = 
+/**  A project's worktree: the pages its own terminals and agents open. */
+{ kind: "workspace"; worktreePath: string } | 
+/**  A bot, which lives outside any project. */
+{ kind: "bot"; id: string };
 
 export type PlanUsage = {
 	harness: HarnessId,

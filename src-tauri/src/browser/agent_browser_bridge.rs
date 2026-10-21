@@ -9,6 +9,8 @@ use specta::Type;
 use tauri::AppHandle;
 use tauri_specta::Event;
 
+use lynx_browser_protocol::message::PageId;
+
 use crate::agents::hook_hub::ToolHandler;
 use crate::config::ConfigStore;
 
@@ -17,6 +19,7 @@ use super::agent_browser::{
 };
 use super::agent_permissions::AgentBrowserAccess;
 use super::browser_service::BrowserService;
+use super::page_owner::SessionOwners;
 
 /// Sent when an agent uses the browser, so the interface can show the page it is working on.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
@@ -27,6 +30,8 @@ pub struct BrowserAgentActivity {
     pub summary: String,
     /// Who is acting, as the person knows it: "Claude Code", "Codex"...
     pub agent: String,
+    /// The page the agent acts on, so the interface shows the action only for the page it shows.
+    pub page: u32,
 }
 
 /// Sent when no agent is in control of the page any more.
@@ -54,9 +59,10 @@ struct TauriActivity {
 }
 
 impl AgentBrowserActivity for TauriActivity {
-    fn used(&self, agent: &str, tool: &str, summary: &str) {
+    fn used(&self, agent: &str, page: PageId, tool: &str, summary: &str) {
         // A failed emit means the window is closing; there is nobody left to show it to.
         let _ = BrowserAgentActivity {
+            page,
             tool: tool.to_owned(),
             summary: summary.to_owned(),
             agent: agent.to_owned(),
@@ -68,28 +74,42 @@ impl AgentBrowserActivity for TauriActivity {
 /// What the hook hub calls for a tool an agent asked for.
 pub struct AgentToolBridge {
     browser: AgentBrowser,
+    owners: SessionOwners,
 }
 
 impl AgentToolBridge {
-    pub fn new(app: AppHandle, service: Arc<BrowserService>, config: Arc<ConfigStore>) -> Self {
+    pub fn new(
+        app: AppHandle,
+        service: Arc<BrowserService>,
+        config: Arc<ConfigStore>,
+        owners: SessionOwners,
+    ) -> Self {
         Self {
             browser: AgentBrowser::new(
                 service,
                 Arc::new(ConfigPolicy { config }),
                 Arc::new(TauriActivity { app }),
             ),
+            owners,
         }
     }
 }
 
 impl ToolHandler for AgentToolBridge {
     fn call(&self, session_id: &str, agent: &str, tool: &str, arguments: Value) -> Value {
+        // A session without an owner was not started from a Lynx terminal, so it has no pages.
+        let Some(owner) = self.owners.get(session_id) else {
+            return ToolOutput::text(
+                "this agent's session has no browser owner; start the agent from a Lynx terminal",
+            )
+            .to_mcp(true);
+        };
         let caller = Caller {
             session: session_id.to_owned(),
             harness: agent.to_owned(),
             name: agent_name(agent),
         };
-        match self.browser.call(&caller, tool, &arguments) {
+        match self.browser.call(&caller, &owner, tool, &arguments) {
             Ok(output) => output.to_mcp(false),
             Err(failure) => ToolOutput::text(failure.to_string()).to_mcp(true),
         }

@@ -1,6 +1,6 @@
 [package]
 name = "lynx-ide"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agentic Development Environment: parallel coding agents in isolated git worktrees"
 edition = "2024"
 
@@ -50,6 +50,8 @@ tar = "0.4"
 tiny-skia = "0.11"
 fontdue = "0.9"
 tauri-plugin-updater = "2.14.0"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Line tables keep backtraces readable. Full debug info makes linking the test binary slow on Windows.
 [profile.test]

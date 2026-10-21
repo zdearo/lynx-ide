@@ -55,6 +55,8 @@ pub struct BrowserPageInfo {
     pub agent: Option<String>,
     /// The tab is in its own window.
     pub detached: bool,
+    /// The owner's agents use this tab.
+    pub agent_page: bool,
 }
 
 /// The last picture of a page, as a PNG at most 240 pixels wide.

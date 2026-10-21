@@ -12,6 +12,7 @@ const page = (id: number, owner: PageOwner): BrowserPageInfo => ({
   loading: false,
   agent: null,
   detached: false,
+  agentPage: false,
 });
 
 const mine: PageOwner = { kind: "workspace", worktreePath: "/work/a" };

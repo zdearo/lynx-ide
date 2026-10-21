@@ -45,6 +45,7 @@ use windows::core::{PCWSTR, w};
 use super::agent_pointer::AgentPointer;
 use super::browser_service::{BrowserService, Frame, FrameSink};
 use super::click_counter::ClickCounter;
+use super::detached_window;
 use super::overlay_renderer::{self, OverlayFont};
 
 /// One notch of the wheel, in the units Windows reports.
@@ -290,7 +291,7 @@ pub fn place(
         arm_timer(hwnd);
     }
     // The main view shows the page the person chose; a page in its own window is always painted.
-    if !service.is_detached(page) {
+    if detached_window::is_main_window(label) && !service.is_detached(page) {
         service.set_visible(true);
     }
     Ok(())
@@ -326,7 +327,8 @@ fn release(service: &Arc<BrowserService>, label: &str) {
     let Some(binding) = BINDINGS.with(|bindings| bindings.borrow_mut().remove(label)) else {
         return;
     };
-    if !service.is_detached(binding.page) {
+    // Only the main view says whether the person is looking; a tab's window never does.
+    if detached_window::is_main_window(label) && !service.is_detached(binding.page) {
         service.set_visible(false);
     }
 }

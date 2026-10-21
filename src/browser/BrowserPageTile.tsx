@@ -88,6 +88,11 @@ export function BrowserPageTile({
               {copy.browser.panel.inWindow}
             </span>
           )}
+          {page.agentPage && (
+            <span className="block truncate text-meta text-muted-foreground">
+              {copy.browser.panel.agentTab}
+            </span>
+          )}
         </span>
       </button>
       <TooltipIconButton

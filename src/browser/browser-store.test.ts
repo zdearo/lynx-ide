@@ -9,6 +9,7 @@ vi.mock("@/bindings", () => ({
     browserOpen: vi.fn(),
     browserNavigate: vi.fn(),
     browserPageDetach: vi.fn(),
+    browserPageAssignAgent: vi.fn(),
     browserPageAttach: vi.fn(),
     browserEngineStatus: vi.fn(),
     browserEngineInstall: vi.fn(),
@@ -172,6 +173,21 @@ describe("a window of its own", () => {
 
     await useBrowserStore.getState().detachPage(1);
 
+    expect(useBrowserStore.getState().failure?.message).toBe(
+      "the browser is not running",
+    );
+  });
+
+  it("asks the backend to make a tab the agent's, and shows why it could not", async () => {
+    api.browserPageAssignAgent.mockResolvedValue(ok(null));
+    await useBrowserStore.getState().assignAgentPage(2);
+    expect(api.browserPageAssignAgent).toHaveBeenCalledWith(2);
+    expect(useBrowserStore.getState().failure).toBeNull();
+
+    api.browserPageAssignAgent.mockResolvedValue(
+      failure("browser", "the browser is not running"),
+    );
+    await useBrowserStore.getState().assignAgentPage(2);
     expect(useBrowserStore.getState().failure?.message).toBe(
       "the browser is not running",
     );

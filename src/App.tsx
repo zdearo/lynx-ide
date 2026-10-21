@@ -111,8 +111,10 @@ function App() {
 
     // The config file is meant to be edited by hand, so changes can arrive at any time.
     const unlistenBrowser = events.browserStateChanged.listen(({ payload }) => {
-      // A tab in its own window reports to that window; the main one shows the rest.
-      if (!payload.state.detached)
+      // A tab in its own window reports to that window. The main view only hears about the one it
+      // has selected, to keep saying that it is in a window.
+      const { state } = useBrowserStore.getState();
+      if (!payload.state.detached || payload.state.page === state.page)
         useBrowserStore.getState().apply(payload.state);
     });
 

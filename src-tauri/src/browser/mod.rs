@@ -37,21 +37,27 @@ use windows_view as platform_view;
 #[cfg(any(windows, test))]
 mod overlay_renderer;
 mod page_log;
+mod page_owner;
 mod page_snapshot;
+mod page_thumbnail;
 mod web_address;
 
 use std::sync::Arc;
 
+use lynx_browser_protocol::message::PageId;
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
 pub use agent_browser_bridge::{AgentToolBridge, BrowserAgentActivity, BrowserAgentReleased};
 pub use agent_permissions::AgentBrowserAccess;
-pub use agent_pointer::AgentPointer;
 pub use browser_error::BrowserError;
 pub use browser_service::{BrowserEvents, BrowserService, FrameSink};
-pub use browser_state::{BrowserState, BrowserStateChanged};
+pub use browser_state::{
+    BrowserPageInfo, BrowserPagesChanged, BrowserState, BrowserStateChanged,
+    BrowserThumbnailChanged,
+};
 pub use engine_commands::BrowserEngineProgress;
+pub use page_owner::{PageOwner, SessionOwners};
 
 /// Keeps the page and its windows in step: closing the browser window moves the page back to the
 /// main window, and closing the main window closes the browser window too.
@@ -91,6 +97,21 @@ impl BrowserEvents for TauriBrowserEvents {
         // A failed emit means the window is closing; there is no one left to tell.
         let _ = BrowserStateChanged {
             state: state.clone(),
+        }
+        .emit(&self.app);
+    }
+
+    fn pages_changed(&self, pages: &[BrowserPageInfo]) {
+        let _ = BrowserPagesChanged {
+            pages: pages.to_vec(),
+        }
+        .emit(&self.app);
+    }
+
+    fn thumbnail_changed(&self, page: PageId, png: &str) {
+        let _ = BrowserThumbnailChanged {
+            page,
+            png: png.to_owned(),
         }
         .emit(&self.app);
     }

@@ -9,8 +9,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the messages change in a way an older host or app cannot follow. The installed
-/// engine records the version it speaks, and the app refuses one that speaks another.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// engine records the version it speaks, and the app refuses one that speaks another. Version 3
+/// addressed every page command and event to a [`PageId`].
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Modifier bits. They have the values CEF uses for its event flags, so the host passes them on.
 pub mod modifiers {
@@ -92,7 +93,10 @@ pub enum KeyKind {
     Up,
 }
 
-/// From Lynx to the host. Coordinates are in view pixels (logical), not device pixels.
+/// An engine page, named by Lynx. Lynx allocates it and the host never reuses one.
+pub type PageId = u32;
+
+/// From Lynx to the host.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -100,6 +104,35 @@ pub enum KeyKind {
     rename_all_fields = "camelCase"
 )]
 pub enum ToHost {
+    /// A new blank page. The host answers `PageCreated`, or `PageClosed` if the engine refused.
+    CreatePage {
+        page: PageId,
+    },
+    /// Closes a page. The host answers `PageClosed`.
+    ClosePage {
+        page: PageId,
+    },
+    /// A command for one page. A page that does not exist, or is already closed, ignores it.
+    Page {
+        page: PageId,
+        command: PageCommand,
+    },
+    /// Lynx finished copying a frame, so the host may reuse that slot. The pool is shared by all
+    /// pages, so the slot alone identifies it.
+    FrameDone {
+        slot: u8,
+    },
+    Shutdown,
+}
+
+/// What Lynx asks of one page. Coordinates are in view pixels (logical), not device pixels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PageCommand {
     Navigate {
         url: String,
     },
@@ -116,6 +149,7 @@ pub enum ToHost {
         height: u32,
         scale: f32,
     },
+    /// Hidden pages are told `visible: false`; they keep running but paint nothing.
     Visible {
         visible: bool,
     },
@@ -144,7 +178,7 @@ pub enum ToHost {
         modifiers: u32,
     },
     /// A key that is not text. `character` is set for the few that also produce a control
-    /// character (Enter, Tab, Backspace); typed text goes through [`ToHost::Text`] instead.
+    /// character (Enter, Tab, Backspace); typed text goes through [`PageCommand::Text`] instead.
     Key {
         kind: KeyKind,
         windows_code: i32,
@@ -160,11 +194,7 @@ pub enum ToHost {
     Text {
         text: String,
     },
-    /// Lynx finished copying a frame, so the host may reuse that slot.
-    FrameDone {
-        slot: u8,
-    },
-    /// A DevTools protocol call on the page. The engine answers with [`FromHost::CdpResult`] and
+    /// A DevTools protocol call on the page. The engine answers with [`PageEvent::CdpResult`] and
     /// the same `id`; the DevTools port is never opened, so only Lynx can reach it.
     Cdp {
         id: u32,
@@ -172,7 +202,6 @@ pub enum ToHost {
         #[serde(default)]
         params: serde_json::Value,
     },
-    Shutdown,
 }
 
 /// From the host to Lynx.
@@ -183,8 +212,29 @@ pub enum ToHost {
     rename_all_fields = "camelCase"
 )]
 pub enum FromHost {
-    /// The engine is up and a page is ready to take commands.
+    /// The engine is up. No page exists yet; Lynx sends `CreatePage`.
     Ready,
+    PageCreated {
+        page: PageId,
+    },
+    PageClosed {
+        page: PageId,
+    },
+    /// Something happened in one page.
+    Page {
+        page: PageId,
+        event: PageEvent,
+    },
+}
+
+/// What one page reports to Lynx.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PageEvent {
     /// A new frame is in `slot` of the shared memory, `width` by `height` device pixels, BGRA.
     Frame {
         slot: u8,
@@ -220,7 +270,7 @@ pub enum FromHost {
         kind: NoticeKind,
         text: String,
     },
-    /// The answer to a [`ToHost::Cdp`]: the call's result, or the error the page's DevTools gave.
+    /// The answer to a [`PageCommand::Cdp`]: the call's result, or the error the page's DevTools gave.
     CdpResult {
         id: u32,
         ok: bool,
@@ -259,81 +309,199 @@ mod tests {
         assert_eq!(back, message);
     }
 
+    fn on_page(page: PageId, command: PageCommand) -> ToHost {
+        ToHost::Page { page, command }
+    }
+
+    fn from_page(page: PageId, event: PageEvent) -> FromHost {
+        FromHost::Page { page, event }
+    }
+
     #[test]
     fn every_command_survives_the_wire() {
-        round_trip(ToHost::Navigate {
-            url: "https://example.com/?q=ç ã\n".into(),
-        });
-        round_trip(ToHost::Resize {
-            width: 480,
-            height: 320,
-            scale: 1.5,
-        });
-        round_trip(ToHost::MouseClick {
-            x: 10,
-            y: -2,
-            button: MouseButton::Right,
-            pressed: true,
-            clicks: 2,
-            modifiers: modifiers::SHIFT | modifiers::LEFT_BUTTON,
-        });
-        round_trip(ToHost::Key {
-            kind: KeyKind::Down,
-            windows_code: 13,
-            native_code: 36,
-            modifiers: 0,
-            character: 13,
-        });
-        round_trip(ToHost::Text {
-            text: "ção".into()
-        });
-        round_trip(ToHost::Reload { ignore_cache: true });
-        round_trip(ToHost::Edit {
-            command: EditCommand::Paste,
-        });
+        round_trip(ToHost::CreatePage { page: 1 });
+        round_trip(ToHost::ClosePage { page: 1 });
+        round_trip(on_page(
+            2,
+            PageCommand::Navigate {
+                url: "https://example.com/?q=ç ã\n".into(),
+            },
+        ));
+        round_trip(on_page(
+            2,
+            PageCommand::Resize {
+                width: 480,
+                height: 320,
+                scale: 1.5,
+            },
+        ));
+        round_trip(on_page(
+            3,
+            PageCommand::MouseClick {
+                x: 10,
+                y: -2,
+                button: MouseButton::Right,
+                pressed: true,
+                clicks: 2,
+                modifiers: modifiers::SHIFT | modifiers::LEFT_BUTTON,
+            },
+        ));
+        round_trip(on_page(
+            3,
+            PageCommand::Key {
+                kind: KeyKind::Down,
+                windows_code: 13,
+                native_code: 36,
+                modifiers: 0,
+                character: 13,
+            },
+        ));
+        round_trip(on_page(
+            3,
+            PageCommand::Text {
+                text: "ção".into()
+            },
+        ));
+        round_trip(on_page(4, PageCommand::Reload { ignore_cache: true }));
+        round_trip(on_page(
+            4,
+            PageCommand::Edit {
+                command: EditCommand::Paste,
+            },
+        ));
+        round_trip(on_page(4, PageCommand::Visible { visible: false }));
+        round_trip(on_page(4, PageCommand::Focus { focused: true }));
+        round_trip(on_page(4, PageCommand::Back));
+        round_trip(on_page(4, PageCommand::Forward));
+        round_trip(on_page(4, PageCommand::Stop));
+        round_trip(on_page(
+            4,
+            PageCommand::MouseMove {
+                x: 1,
+                y: 2,
+                modifiers: 0,
+                leave: true,
+            },
+        ));
+        round_trip(on_page(
+            4,
+            PageCommand::MouseWheel {
+                x: 1,
+                y: 2,
+                delta_x: 0,
+                delta_y: -120,
+                modifiers: modifiers::CONTROL,
+            },
+        ));
+        round_trip(on_page(
+            5,
+            PageCommand::Cdp {
+                id: 7,
+                method: "Runtime.evaluate".into(),
+                params: serde_json::json!({ "expression": "1 + 1" }),
+            },
+        ));
         round_trip(ToHost::FrameDone { slot: 1 });
-        round_trip(ToHost::Cdp {
-            id: 7,
-            method: "Runtime.evaluate".into(),
-            params: serde_json::json!({ "expression": "1 + 1" }),
-        });
         round_trip(ToHost::Shutdown);
     }
 
     #[test]
     fn every_event_survives_the_wire() {
         round_trip(FromHost::Ready);
-        round_trip(FromHost::Frame {
-            slot: 1,
-            width: 960,
-            height: 640,
-        });
-        round_trip(FromHost::Title {
-            title: "Olá".into(),
-        });
-        round_trip(FromHost::Loading {
-            loading: true,
-            can_go_back: false,
-            can_go_forward: true,
-        });
-        round_trip(FromHost::LoadFailed {
-            url: "x".into(),
-            message: "y".into(),
-        });
-        round_trip(FromHost::CdpEvent {
-            method: "Runtime.consoleAPICalled".into(),
-            params: serde_json::json!({ "type": "error" }),
-        });
-        round_trip(FromHost::DevToolsAttached);
-        round_trip(FromHost::Notice {
-            kind: NoticeKind::Dialog,
-            text: "confirm \"Delete?\" was dismissed".into(),
-        });
-        round_trip(FromHost::CdpResult {
-            id: 7,
-            ok: true,
-            result: serde_json::json!({ "result": { "value": 2 } }),
-        });
+        round_trip(FromHost::PageCreated { page: 1 });
+        round_trip(FromHost::PageClosed { page: 1 });
+        round_trip(from_page(
+            1,
+            PageEvent::Frame {
+                slot: 1,
+                width: 960,
+                height: 640,
+            },
+        ));
+        round_trip(from_page(
+            1,
+            PageEvent::Title {
+                title: "Olá".into(),
+            },
+        ));
+        round_trip(from_page(
+            1,
+            PageEvent::Address {
+                url: "https://example.com".into(),
+            },
+        ));
+        round_trip(from_page(
+            1,
+            PageEvent::Loading {
+                loading: true,
+                can_go_back: false,
+                can_go_forward: true,
+            },
+        ));
+        round_trip(from_page(
+            1,
+            PageEvent::LoadFailed {
+                url: "x".into(),
+                message: "y".into(),
+            },
+        ));
+        round_trip(from_page(
+            2,
+            PageEvent::CdpEvent {
+                method: "Runtime.consoleAPICalled".into(),
+                params: serde_json::json!({ "type": "error" }),
+            },
+        ));
+        round_trip(from_page(2, PageEvent::DevToolsAttached));
+        round_trip(from_page(
+            2,
+            PageEvent::Notice {
+                kind: NoticeKind::Dialog,
+                text: "confirm \"Delete?\" was dismissed".into(),
+            },
+        ));
+        round_trip(from_page(
+            2,
+            PageEvent::CdpResult {
+                id: 7,
+                ok: true,
+                result: serde_json::json!({ "result": { "value": 2 } }),
+            },
+        ));
+    }
+
+    #[test]
+    fn the_spec_examples_are_the_exact_wire_format() {
+        assert_eq!(
+            wire(&ToHost::CreatePage { page: 1 }),
+            "{\"type\":\"createPage\",\"page\":1}\n"
+        );
+        assert_eq!(
+            wire(&on_page(
+                1,
+                PageCommand::Navigate {
+                    url: "https://example.com".into(),
+                },
+            )),
+            "{\"type\":\"page\",\"page\":1,\"command\":{\"type\":\"navigate\",\"url\":\"https://example.com\"}}\n"
+        );
+        assert_eq!(
+            wire(&from_page(
+                1,
+                PageEvent::Frame {
+                    slot: 0,
+                    width: 800,
+                    height: 600,
+                },
+            )),
+            "{\"type\":\"page\",\"page\":1,\"event\":{\"type\":\"frame\",\"slot\":0,\"width\":800,\"height\":600}}\n"
+        );
+    }
+
+    fn wire<T: Serialize>(message: &T) -> String {
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, message).unwrap();
+        String::from_utf8(bytes).unwrap()
     }
 
     #[test]
@@ -391,9 +559,11 @@ mod tests {
 
     #[test]
     fn the_wire_format_is_stable_and_readable() {
-        let mut wire = Vec::new();
-        write_message(&mut wire, &ToHost::Reload { ignore_cache: true }).unwrap();
-        assert_eq!(wire, b"{\"type\":\"reload\",\"ignoreCache\":true}\n");
+        let line = wire(&on_page(1, PageCommand::Reload { ignore_cache: true }));
+        assert_eq!(
+            line,
+            "{\"type\":\"page\",\"page\":1,\"command\":{\"type\":\"reload\",\"ignoreCache\":true}}\n"
+        );
     }
 
     #[test]

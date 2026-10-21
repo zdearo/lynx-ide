@@ -746,11 +746,14 @@ mod tests {
             Arc::new(Nowhere),
         ));
         service.resize(640, 480, 1.0);
-        service
-            .ensure_running()
-            .expect("the installed engine starts");
+        let page = service
+            .page_for(&super::super::page_owner::PageOwner::Workspace {
+                worktree_path: "test".into(),
+            })
+            .expect("the installed engine makes a page");
         let answer = service
             .cdp(
+                page,
                 "Runtime.evaluate",
                 serde_json::json!({ "expression": "6 * 7", "returnByValue": true }),
                 Duration::from_secs(10),

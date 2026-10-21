@@ -17,7 +17,7 @@ use gtk::gdk;
 use gtk::glib::Propagation;
 use gtk::glib::translate::IntoGlib;
 use gtk::prelude::*;
-use lynx_browser_protocol::message::{EditCommand, KeyKind, MouseButton, ToHost, modifiers};
+use lynx_browser_protocol::message::{EditCommand, KeyKind, MouseButton, PageCommand, modifiers};
 use tauri::{AppHandle, Manager};
 
 use super::agent_icon;
@@ -165,6 +165,7 @@ pub fn place(
         area.set_size_request(width, height);
         area.set_visible(true);
         area.queue_draw();
+        POINTER.with(|pointer| *pointer.borrow_mut() = service.active_pointer());
         service.resize(width as u32, height as u32, area.scale_factor() as f32);
         service.set_visible(true);
         Ok::<(), String>(())
@@ -265,7 +266,6 @@ fn ensure_installed(
     area.set_valign(gtk::Align::Start);
     // Hidden until the first placement.
     area.set_no_show_all(true);
-    POINTER.with(|pointer| *pointer.borrow_mut() = Some(service.pointer()));
     connect_drawing(&area);
     connect_input(&area, service);
     overlay.add_overlay(&area);
@@ -556,8 +556,8 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
     // The engine may not be running (or not yet); input then goes nowhere, which is right.
     let send = {
         let service = Arc::clone(service);
-        move |command: ToHost| {
-            let _ = service.send(command);
+        move |command: PageCommand| {
+            let _ = service.send_shown(command);
         }
     };
 
@@ -565,7 +565,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
         let send = send.clone();
         move |_, event| {
             let (x, y) = event.position();
-            send(ToHost::MouseMove {
+            send(PageCommand::MouseMove {
                 x: x as i32,
                 y: y as i32,
                 modifiers: modifiers_of(event.state()),
@@ -578,7 +578,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
         let send = send.clone();
         move |_, event| {
             let (x, y) = event.position();
-            send(ToHost::MouseMove {
+            send(PageCommand::MouseMove {
                 x: x as i32,
                 y: y as i32,
                 modifiers: modifiers_of(event.state()),
@@ -609,7 +609,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
                 y,
                 event.button(),
             );
-            send(ToHost::MouseClick {
+            send(PageCommand::MouseClick {
                 x,
                 y,
                 button,
@@ -625,7 +625,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
         move |_, event| {
             if let Some(button) = mouse_button(event.button()) {
                 let (x, y) = event.position();
-                send(ToHost::MouseClick {
+                send(PageCommand::MouseClick {
                     x: x as i32,
                     y: y as i32,
                     button,
@@ -654,7 +654,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
                 _ => (0.0, 0.0),
             };
             if dx != 0.0 || dy != 0.0 {
-                send(ToHost::MouseWheel {
+                send(PageCommand::MouseWheel {
                     x: x as i32,
                     y: y as i32,
                     delta_x: (dx * WHEEL_STEP) as i32,
@@ -680,12 +680,12 @@ fn mouse_button(button: u32) -> Option<MouseButton> {
 
 /// Keys go through the input method first, which composes accents and dead keys into text; what
 /// it leaves alone goes to the engine as key events, plus the character for printable keys.
-fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'static) {
+fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(PageCommand) + Clone + 'static) {
     let input_method = gtk::IMMulticontext::new();
     input_method.connect_commit({
         let send = send.clone();
         move |_, text| {
-            send(ToHost::Text {
+            send(PageCommand::Text {
                 text: text.to_owned(),
             })
         }
@@ -698,7 +698,7 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
         let (send, input_method) = (send.clone(), input_method.clone());
         move |_, _| {
             input_method.focus_in();
-            send(ToHost::Focus { focused: true });
+            send(PageCommand::Focus { focused: true });
             Propagation::Proceed
         }
     });
@@ -706,7 +706,7 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
         let (send, input_method) = (send.clone(), input_method.clone());
         move |_, _| {
             input_method.focus_out();
-            send(ToHost::Focus { focused: false });
+            send(PageCommand::Focus { focused: false });
             Propagation::Proceed
         }
     });
@@ -728,10 +728,10 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
             if let Some(command) =
                 EditCommand::from_shortcut(modifiers_of(state), windows_key_code(keysym))
             {
-                send(ToHost::Edit { command });
+                send(PageCommand::Edit { command });
                 return Propagation::Stop;
             }
-            send(ToHost::Key {
+            send(PageCommand::Key {
                 kind: KeyKind::Down,
                 windows_code: windows_key_code(keysym),
                 native_code: i32::from(hardware),
@@ -746,7 +746,7 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
                 .to_unicode()
                 .filter(|character| !character.is_control() && !shortcut);
             if let Some(character) = character {
-                send(ToHost::Text {
+                send(PageCommand::Text {
                     text: character.to_string(),
                 });
             }
@@ -761,7 +761,7 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
             }
             let hardware = event.hardware_keycode();
             if pressed.borrow_mut().remove(&hardware) {
-                send(ToHost::Key {
+                send(PageCommand::Key {
                     kind: KeyKind::Up,
                     windows_code: windows_key_code(event.keyval().into_glib()),
                     native_code: i32::from(hardware),

@@ -2612,11 +2612,13 @@ dependencies = [
 name = "lynx-ide"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "flate2",
  "fontdue",
  "gtk",
  "ignore",
+ "image",
  "lynx-browser-protocol",
  "nix 0.31.3",
  "notify",

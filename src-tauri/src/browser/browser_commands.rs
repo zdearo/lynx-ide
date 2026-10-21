@@ -7,8 +7,9 @@ use crate::error::{AppError, IpcError};
 
 use super::browser_error::BrowserError;
 use super::browser_service::BrowserService;
-use super::browser_state::{BrowserState, BrowserStatus};
+use super::browser_state::{BrowserPageInfo, BrowserState, BrowserStatus, BrowserThumbnail};
 use super::detached_window;
+use super::page_owner::PageOwner;
 
 /// Starts the browser engine if needed and optionally opens an address. The engine's start-up
 /// blocks for a moment, so this runs off the async runtime.
@@ -39,13 +40,16 @@ pub async fn browser_navigate(
 #[tauri::command]
 #[specta::specta]
 pub async fn browser_back(service: State<'_, Arc<BrowserService>>) -> Result<(), IpcError> {
-    send(&service, lynx_browser_protocol::message::ToHost::Back)
+    send(&service, lynx_browser_protocol::message::PageCommand::Back)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn browser_forward(service: State<'_, Arc<BrowserService>>) -> Result<(), IpcError> {
-    send(&service, lynx_browser_protocol::message::ToHost::Forward)
+    send(
+        &service,
+        lynx_browser_protocol::message::PageCommand::Forward,
+    )
 }
 
 #[tauri::command]
@@ -56,22 +60,22 @@ pub async fn browser_reload(
 ) -> Result<(), IpcError> {
     send(
         &service,
-        lynx_browser_protocol::message::ToHost::Reload { ignore_cache },
+        lynx_browser_protocol::message::PageCommand::Reload { ignore_cache },
     )
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn browser_stop(service: State<'_, Arc<BrowserService>>) -> Result<(), IpcError> {
-    send(&service, lynx_browser_protocol::message::ToHost::Stop)
+    send(&service, lynx_browser_protocol::message::PageCommand::Stop)
 }
 
 fn send(
     service: &Arc<BrowserService>,
-    command: lynx_browser_protocol::message::ToHost,
+    command: lynx_browser_protocol::message::PageCommand,
 ) -> Result<(), IpcError> {
     service
-        .send(command)
+        .send_shown(command)
         .map_err(|error| AppError::from(error).into())
 }
 
@@ -81,6 +85,64 @@ pub async fn browser_state(
     service: State<'_, Arc<BrowserService>>,
 ) -> Result<BrowserState, IpcError> {
     Ok(service.state())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_pages(
+    service: State<'_, Arc<BrowserService>>,
+) -> Result<Vec<BrowserPageInfo>, IpcError> {
+    Ok(service.pages())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_thumbnails(
+    service: State<'_, Arc<BrowserService>>,
+) -> Result<Vec<BrowserThumbnail>, IpcError> {
+    Ok(service.thumbnails())
+}
+
+/// Opens a page for a project's worktree and shows it. The engine makes the page and may block
+/// for a moment, so this runs off the async runtime.
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_new(
+    service: State<'_, Arc<BrowserService>>,
+    worktree_path: String,
+    url: Option<String>,
+) -> Result<BrowserPageInfo, IpcError> {
+    if cfg!(not(any(target_os = "linux", windows))) {
+        return Err(AppError::from(BrowserError::Unsupported).into());
+    }
+    let service = Arc::clone(&service);
+    run_blocking(move || {
+        Ok(service.new_page(PageOwner::Workspace { worktree_path }, url.as_deref())?)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_show(
+    service: State<'_, Arc<BrowserService>>,
+    page: u32,
+) -> Result<BrowserState, IpcError> {
+    service
+        .show_page(page)
+        .map_err(|error| AppError::from(error).into())
+}
+
+/// Closes a page. A page that is already gone counts as closed.
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_close(
+    service: State<'_, Arc<BrowserService>>,
+    page: u32,
+) -> Result<(), IpcError> {
+    service
+        .close_page(page)
+        .map_err(|error| AppError::from(error).into())
 }
 
 /// Shows the page in the window this is called from, over the rectangle the interface reserved

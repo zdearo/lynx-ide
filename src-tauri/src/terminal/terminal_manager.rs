@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use crate::agents::agent_monitor;
 use crate::agents::harness::harness_for_command;
 use crate::agents::hook_hub::HookHub;
+use crate::browser::{PageOwner, SessionOwners};
 
 use super::shell_resolution::Shell;
 use super::terminal_error::TerminalError;
@@ -25,16 +26,23 @@ struct Inner {
     shell: ShellProvider,
     sink: Arc<dyn TerminalEventSink>,
     hooks: HookHub,
+    owners: SessionOwners,
     sessions: Mutex<BTreeMap<String, Arc<TerminalSession>>>,
 }
 
 impl TerminalManager {
-    pub fn new(shell: ShellProvider, sink: Arc<dyn TerminalEventSink>, hooks: HookHub) -> Self {
+    pub fn new(
+        shell: ShellProvider,
+        sink: Arc<dyn TerminalEventSink>,
+        hooks: HookHub,
+        owners: SessionOwners,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 shell,
                 sink,
                 hooks,
+                owners,
                 sessions: Mutex::new(BTreeMap::new()),
             }),
         }
@@ -50,12 +58,25 @@ impl TerminalManager {
         let shell = (self.inner.shell)();
         let command = command.map(str::trim).filter(|command| !command.is_empty());
         let id = uuid::Uuid::new_v4().to_string();
+        // Set before anything below can fail, so each error path must remove it again.
+        self.inner.owners.set(
+            &id,
+            PageOwner::Workspace {
+                worktree_path: worktree_path.to_owned(),
+            },
+        );
         // Every session is followed, so an agent started by hand in a shell is recognised too.
-        let monitor = agent_monitor::start(
+        let monitor = match agent_monitor::start(
             &id,
             command.and_then(harness_for_command),
             Arc::clone(&self.inner.sink),
-        )?;
+        ) {
+            Ok(monitor) => monitor,
+            Err(error) => {
+                self.inner.owners.remove(&id);
+                return Err(error);
+            }
+        };
         self.inner.hooks.register(&id, monitor.input.clone());
         let env = self.inner.hooks.session_env(&id);
 
@@ -76,6 +97,7 @@ impl TerminalManager {
             Ok(session) => session,
             Err(error) => {
                 self.inner.hooks.unregister(&id);
+                self.inner.owners.remove(&id);
                 return Err(error);
             }
         };
@@ -117,6 +139,7 @@ impl TerminalManager {
             .remove(id)
             .ok_or_else(|| TerminalError::NotFound(id.to_owned()))?;
         self.inner.hooks.unregister(id);
+        self.inner.owners.remove(id);
         session.terminate();
         Ok(())
     }
@@ -125,6 +148,7 @@ impl TerminalManager {
         let sessions = std::mem::take(&mut *self.sessions());
         for (id, session) in &sessions {
             self.inner.hooks.unregister(id);
+            self.inner.owners.remove(id);
             session.terminate();
         }
     }

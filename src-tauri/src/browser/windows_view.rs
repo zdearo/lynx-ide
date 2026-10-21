@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use lynx_browser_protocol::message::{EditCommand, KeyKind, MouseButton, ToHost, modifiers};
+use lynx_browser_protocol::message::{EditCommand, KeyKind, MouseButton, PageCommand, modifiers};
 use tauri::{AppHandle, Manager};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -231,6 +231,7 @@ pub fn place(
         .map_err(|error| error.to_string())?;
         let _ = InvalidateRect(Some(hwnd), None, false);
     }
+    POINTER.with(|pointer| *pointer.borrow_mut() = service.active_pointer());
     service.resize(width as u32, height as u32, scale as f32);
     service.set_visible(true);
     ACTIVE.with(|active| *active.borrow_mut() = Some(label.to_owned()));
@@ -302,7 +303,6 @@ fn ensure_installed(
     }
     let parent = window.hwnd().map_err(|error| error.to_string())?;
     register_class()?;
-    POINTER.with(|pointer| *pointer.borrow_mut() = Some(service.pointer()));
 
     let data = Box::new(ViewData {
         service: Arc::clone(service),
@@ -461,9 +461,9 @@ fn handle_message(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> Option<LRESULT> {
-    let send = |command: ToHost| {
+    let send = |command: PageCommand| {
         // The engine may not be running (or not yet); input then goes nowhere, which is right.
-        let _ = data.service.send(command);
+        let _ = data.service.send_shown(command);
     };
     match message {
         WM_ERASEBKGND => Some(LRESULT(1)),
@@ -496,11 +496,11 @@ fn handle_message(
             Some(LRESULT(0))
         }
         WM_SETFOCUS => {
-            send(ToHost::Focus { focused: true });
+            send(PageCommand::Focus { focused: true });
             Some(LRESULT(0))
         }
         WM_KILLFOCUS => {
-            send(ToHost::Focus { focused: false });
+            send(PageCommand::Focus { focused: false });
             Some(LRESULT(0))
         }
         WM_MOUSEMOVE => {
@@ -519,7 +519,7 @@ fn handle_message(
                     let _ = TrackMouseEvent(&mut track);
                 }
             }
-            send(ToHost::MouseMove {
+            send(PageCommand::MouseMove {
                 x,
                 y,
                 modifiers: current_modifiers(wparam.0),
@@ -530,7 +530,7 @@ fn handle_message(
         WM_MOUSELEAVE => {
             data.tracking_mouse = false;
             let (x, y) = data.last_position;
-            send(ToHost::MouseMove {
+            send(PageCommand::MouseMove {
                 x,
                 y,
                 modifiers: current_modifiers(0),
@@ -553,7 +553,7 @@ fn handle_message(
             // SAFETY: reads the time of the message being handled.
             let at = Duration::from_millis(u64::from(unsafe { GetMessageTime() } as u32));
             let clicks = data.clicks.press(at, x, y, code);
-            send(ToHost::MouseClick {
+            send(PageCommand::MouseClick {
                 x,
                 y,
                 button,
@@ -574,7 +574,7 @@ fn handle_message(
                 let _ = ReleaseCapture();
             }
             let (x, y) = logical(data, low(lparam.0), high(lparam.0));
-            send(ToHost::MouseClick {
+            send(PageCommand::MouseClick {
                 x,
                 y,
                 button,
@@ -603,7 +603,7 @@ fn handle_message(
             } else {
                 (-amount, 0)
             };
-            send(ToHost::MouseWheel {
+            send(PageCommand::MouseWheel {
                 x,
                 y,
                 delta_x,
@@ -617,10 +617,10 @@ fn handle_message(
             let bits = current_modifiers(0);
             // Copy, paste and the like: an off-screen page has no system bindings behind it.
             if let Some(command) = EditCommand::from_shortcut(bits, virtual_key) {
-                send(ToHost::Edit { command });
+                send(PageCommand::Edit { command });
                 return Some(LRESULT(0));
             }
-            send(ToHost::Key {
+            send(PageCommand::Key {
                 kind: KeyKind::Down,
                 windows_code: virtual_key,
                 native_code: lparam.0 as i32,
@@ -631,7 +631,7 @@ fn handle_message(
             Some(LRESULT(0))
         }
         WM_KEYUP => {
-            send(ToHost::Key {
+            send(PageCommand::Key {
                 kind: KeyKind::Up,
                 windows_code: wparam.0 as i32,
                 native_code: lparam.0 as i32,
@@ -655,7 +655,7 @@ fn handle_message(
                 (Some(high), 0xdc00..=0xdfff) => String::from_utf16_lossy(&[high, unit]),
                 _ => String::from_utf16_lossy(&[unit]),
             };
-            send(ToHost::Text { text });
+            send(PageCommand::Text { text });
             Some(LRESULT(0))
         }
         WM_IME_STARTCOMPOSITION => {

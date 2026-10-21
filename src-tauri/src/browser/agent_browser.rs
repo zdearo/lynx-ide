@@ -3,10 +3,11 @@
 //! accessibility tree gives it the page as text. Nothing here opens a DevTools port or hands the
 //! agent raw DevTools access.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use lynx_browser_protocol::message::{KeyKind, MouseButton, ToHost, modifiers};
+use lynx_browser_protocol::message::{KeyKind, MouseButton, PageCommand, PageId, modifiers};
 use serde_json::{Value, json};
 
 use super::agent_permissions::{AgentBrowserAccess, Refusal, site_allowed};
@@ -16,6 +17,7 @@ use super::browser_error::BrowserError;
 use super::browser_service::BrowserService;
 use super::key_names;
 use super::page_log::Level;
+use super::page_owner::PageOwner;
 use super::page_snapshot::{RefTable, render};
 use super::web_address::normalize;
 
@@ -35,7 +37,7 @@ pub trait AgentBrowserPolicy: Send + Sync + 'static {
 
 /// Where the interface hears that an agent is using the browser, so it can show the page.
 pub trait AgentBrowserActivity: Send + Sync + 'static {
-    fn used(&self, agent: &str, tool: &str, summary: &str);
+    fn used(&self, agent: &str, page: PageId, tool: &str, summary: &str);
 }
 
 /// Who is calling: the terminal session, which agent it runs, and the name the person sees.
@@ -105,9 +107,8 @@ pub struct AgentBrowser {
     service: Arc<BrowserService>,
     policy: Arc<dyn AgentBrowserPolicy>,
     activity: Arc<dyn AgentBrowserActivity>,
-    refs: Mutex<RefTable>,
-    /// One tool call at a time: two agents sharing the page must not interleave their clicks.
-    turn: Mutex<()>,
+    /// The element refs each page's last snapshot handed out.
+    pages: Mutex<HashMap<PageId, Arc<Mutex<RefTable>>>>,
 }
 
 impl AgentBrowser {
@@ -120,16 +121,16 @@ impl AgentBrowser {
             service,
             policy,
             activity,
-            refs: Mutex::new(RefTable::default()),
-            turn: Mutex::new(()),
+            pages: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Runs one tool for the agent that is calling. Blocks while the page works, so call it off
-    /// the async runtime.
+    /// Runs one tool for the agent that is calling, on the page its owner uses. Blocks while the
+    /// page works, so call it off the async runtime.
     pub fn call(
         &self,
         caller: &Caller,
+        owner: &PageOwner,
         name: &str,
         arguments: &Value,
     ) -> Result<ToolOutput, ToolFailure> {
@@ -142,13 +143,50 @@ impl AgentBrowser {
             }
             _ => {}
         }
-        let _turn = self
-            .turn
+        let page = self.service.page_for(owner)?;
+        // One tool at a time on a page: two agents sharing it must not interleave their clicks.
+        let turn = self.service.turn_of(page).ok_or(BrowserError::NotRunning)?;
+        let _turn = turn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let call = PageCall {
+            service: Arc::clone(&self.service),
+            policy: Arc::clone(&self.policy),
+            activity: Arc::clone(&self.activity),
+            page,
+            refs: self.refs_of(page),
+        };
+        call.serve(caller, tool, name, arguments)
+    }
+
+    fn refs_of(&self, page: PageId) -> Arc<Mutex<RefTable>> {
+        let mut pages = self
+            .pages
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.service.ensure_running()?;
+        Arc::clone(pages.entry(page).or_default())
+    }
+}
+
+/// One tool call, bound to the page it acts on.
+struct PageCall {
+    service: Arc<BrowserService>,
+    policy: Arc<dyn AgentBrowserPolicy>,
+    activity: Arc<dyn AgentBrowserActivity>,
+    page: PageId,
+    refs: Arc<Mutex<RefTable>>,
+}
+
+impl PageCall {
+    fn serve(
+        &self,
+        caller: &Caller,
+        tool: Tool,
+        name: &str,
+        arguments: &Value,
+    ) -> Result<ToolOutput, ToolFailure> {
         let label = self.describe(tool, arguments);
+        self.service.set_page_working(self.page, true);
         self.service.agent_begins(
+            self.page,
             &Controller {
                 session: caller.session.clone(),
                 harness: caller.harness.clone(),
@@ -156,11 +194,15 @@ impl AgentBrowser {
             // Moving to an element, typing, scrolling and choosing show themselves in the pointer.
             if shows_itself(tool) { "" } else { &label },
         );
-        self.activity.used(&caller.name, name, &label);
+        // The interface shows what an agent does on the page the person sees; an agent's own page
+        // is not shown, so saying what it does there would be wrong.
+        if self.service.is_shown(self.page) {
+            self.activity.used(&caller.name, self.page, name, &label);
+        }
 
         let mut output = self.run(tool, arguments);
         // What the engine answered by itself (a dialog, a refused permission) while this ran.
-        let notices = self.service.log().take_notices();
+        let notices = self.service.log_of(self.page).take_notices();
         if let (Ok(output), false) = (&mut output, notices.is_empty()) {
             let list = notices
                 .iter()
@@ -172,7 +214,8 @@ impl AgentBrowser {
             )));
         }
         // Whatever happened, the dots stop and the label stays as the last thing it did.
-        self.service.agent_ends();
+        self.service.agent_ends(self.page);
+        self.service.set_page_working(self.page, false);
         output
     }
 
@@ -249,12 +292,12 @@ impl AgentBrowser {
     }
 
     fn cdp(&self, method: &str, params: Value) -> Result<Value, ToolFailure> {
-        Ok(self.service.cdp(method, params, CALL_TIMEOUT)?)
+        Ok(self.service.cdp(self.page, method, params, CALL_TIMEOUT)?)
     }
 
     /// The page the agent is on must be one it may use; a click can land on another site.
     fn require_allowed_page(&self) -> Result<(), ToolFailure> {
-        let state = self.service.state();
+        let state = self.service.state_of(self.page);
         if site_allowed(&self.policy.allowed_sites(), &state.url) {
             return Ok(());
         }
@@ -264,19 +307,22 @@ impl AgentBrowser {
     /// After something that may have moved the page: if it landed on a site the agent may not
     /// use, the page is blanked and the agent told.
     fn leave_forbidden_site(&self) -> Result<(), ToolFailure> {
-        let state = self.service.state();
+        let state = self.service.state_of(self.page);
         if site_allowed(&self.policy.allowed_sites(), &state.url) {
             return Ok(());
         }
-        let _ = self.service.send(ToHost::Navigate {
-            url: "about:blank".to_owned(),
-        });
+        let _ = self.service.send(
+            self.page,
+            PageCommand::Navigate {
+                url: "about:blank".to_owned(),
+            },
+        );
         Err(Refusal::SiteNotAllowed(host_of(&state.url)).into())
     }
 
     fn snapshot(&self) -> Result<String, ToolFailure> {
         let tree = self.cdp("Accessibility.getFullAXTree", json!({}))?;
-        let state = self.service.state();
+        let state = self.service.state_of(self.page);
         let body = render(&tree, &mut self.refs());
         let mut text = format!("Page: {}\nURL: {}\n", state.title, state.url);
         if state.loading {
@@ -299,9 +345,11 @@ impl AgentBrowser {
         if !site_allowed(&self.policy.allowed_sites(), &address) {
             return Err(Refusal::SiteNotAllowed(host_of(&address)).into());
         }
-        let loads = self.service.loads_started();
-        self.service.send(ToHost::Navigate { url: address })?;
-        self.service.wait_until_loaded(loads, LOAD_TIMEOUT);
+        let loads = self.service.loads_started(self.page);
+        self.service
+            .send(self.page, PageCommand::Navigate { url: address })?;
+        self.service
+            .wait_until_loaded(self.page, loads, LOAD_TIMEOUT);
         self.leave_forbidden_site()?;
         Ok(ToolOutput::text(self.snapshot()?))
     }
@@ -309,9 +357,9 @@ impl AgentBrowser {
     fn history(&self, arguments: &Value) -> Result<ToolOutput, ToolFailure> {
         self.require_allowed_page()?;
         let command = match text_argument(arguments, "direction")?.as_str() {
-            "back" => ToHost::Back,
-            "forward" => ToHost::Forward,
-            "reload" => ToHost::Reload {
+            "back" => PageCommand::Back,
+            "forward" => PageCommand::Forward,
+            "reload" => PageCommand::Reload {
                 ignore_cache: false,
             },
             other => {
@@ -320,9 +368,10 @@ impl AgentBrowser {
                 )));
             }
         };
-        let loads = self.service.loads_started();
-        self.service.send(command)?;
-        self.service.wait_until_loaded(loads, LOAD_TIMEOUT);
+        let loads = self.service.loads_started(self.page);
+        self.service.send(self.page, command)?;
+        self.service
+            .wait_until_loaded(self.page, loads, LOAD_TIMEOUT);
         self.leave_forbidden_site()?;
         Ok(ToolOutput::text(self.snapshot()?))
     }
@@ -332,21 +381,23 @@ impl AgentBrowser {
         let reference = text_argument(arguments, "ref")?;
         let node = self.node_of(&reference)?;
         let (x, y) = self.centre_of(node)?;
-        let before = self.service.state();
-        let loads = self.service.loads_started();
+        let before = self.service.state_of(self.page);
+        let loads = self.service.loads_started(self.page);
 
-        self.service.send(ToHost::Focus { focused: true })?;
+        self.service
+            .send(self.page, PageCommand::Focus { focused: true })?;
         self.glide_to(x, y);
-        self.service.agent_cursor(CursorShape::Arrow);
-        self.service.agent_clicks();
+        self.service.agent_cursor(self.page, CursorShape::Arrow);
+        self.service.agent_clicks(self.page);
         self.pointer_click(x, y, 1)?;
         if arguments.get("double").and_then(Value::as_bool) == Some(true) {
             self.pointer_click(x, y, 2)?;
         }
-        self.service.wait_until_loaded(loads, LOAD_TIMEOUT);
+        self.service
+            .wait_until_loaded(self.page, loads, LOAD_TIMEOUT);
         self.leave_forbidden_site()?;
 
-        let after = self.service.state();
+        let after = self.service.state_of(self.page);
         let mut text = format!("Clicked {reference}.");
         if after.url != before.url || after.title != before.title {
             text.push_str(" The page changed:\n\n");
@@ -357,27 +408,34 @@ impl AgentBrowser {
 
     /// Moves the agent's visible pointer to a point of the page and waits for it to arrive.
     fn glide_to(&self, x: i32, y: i32) {
-        self.service.agent_moves_to((f64::from(x), f64::from(y)));
+        self.service
+            .agent_moves_to(self.page, (f64::from(x), f64::from(y)));
     }
 
     /// A pointer arrives before it presses, as a real one does; the page ignores a bare press.
     fn pointer_click(&self, x: i32, y: i32, clicks: u8) -> Result<(), ToolFailure> {
-        self.service.send(ToHost::MouseMove {
-            x,
-            y,
-            modifiers: 0,
-            leave: false,
-        })?;
-        std::thread::sleep(Duration::from_millis(40));
-        for pressed in [true, false] {
-            self.service.send(ToHost::MouseClick {
+        self.service.send(
+            self.page,
+            PageCommand::MouseMove {
                 x,
                 y,
-                button: MouseButton::Left,
-                pressed,
-                clicks,
                 modifiers: 0,
-            })?;
+                leave: false,
+            },
+        )?;
+        std::thread::sleep(Duration::from_millis(40));
+        for pressed in [true, false] {
+            self.service.send(
+                self.page,
+                PageCommand::MouseClick {
+                    x,
+                    y,
+                    button: MouseButton::Left,
+                    pressed,
+                    clicks,
+                    modifiers: 0,
+                },
+            )?;
         }
         std::thread::sleep(Duration::from_millis(60));
         Ok(())
@@ -387,14 +445,15 @@ impl AgentBrowser {
         self.require_allowed_page()?;
         let text = text_argument(arguments, "text")?;
         let reference = arguments.get("ref").and_then(Value::as_str);
-        self.service.send(ToHost::Focus { focused: true })?;
+        self.service
+            .send(self.page, PageCommand::Focus { focused: true })?;
         if let Some(reference) = reference {
             let node = self.node_of(reference)?;
             // Show the pointer going to the field before anything is typed in it.
             if let Ok((x, y)) = self.centre_of(node) {
                 self.glide_to(x, y);
                 // Over a field the pointer is the text cursor.
-                self.service.agent_cursor(CursorShape::IBeam);
+                self.service.agent_cursor(self.page, CursorShape::IBeam);
             }
             self.cdp("DOM.focus", json!({ "backendNodeId": node }))
                 .map_err(|_| ToolFailure::ElementGone)?;
@@ -403,7 +462,7 @@ impl AgentBrowser {
                 self.call_on_node(node, SELECT_CONTENTS, &[])?;
             }
         }
-        self.service.send(ToHost::Text { text })?;
+        self.service.send(self.page, PageCommand::Text { text })?;
         if arguments.get("submit").and_then(Value::as_bool) == Some(true) {
             self.press(key_names::parse("Enter").ok_or_else(unknown_key)?)?;
         }
@@ -419,10 +478,12 @@ impl AgentBrowser {
                 "{spec} is not a key Lynx knows; try Enter, Tab, Escape, an arrow, Home, End, PageUp, PageDown, F1-F12, a letter, or Shift/Control/Alt plus one of those"
             ))
         })?;
-        self.service.send(ToHost::Focus { focused: true })?;
-        let loads = self.service.loads_started();
+        self.service
+            .send(self.page, PageCommand::Focus { focused: true })?;
+        let loads = self.service.loads_started(self.page);
         self.press(key)?;
-        self.service.wait_until_loaded(loads, LOAD_TIMEOUT);
+        self.service
+            .wait_until_loaded(self.page, loads, LOAD_TIMEOUT);
         self.leave_forbidden_site()?;
         Ok(ToolOutput::text(format!("Pressed {spec}.")))
     }
@@ -431,20 +492,26 @@ impl AgentBrowser {
         // A shortcut types nothing, so a held Control or Command drops the character.
         let shortcut = key.modifiers & (modifiers::CONTROL | modifiers::COMMAND) != 0;
         let character = if shortcut { 0 } else { key.character };
-        self.service.send(ToHost::Key {
-            kind: KeyKind::Down,
-            windows_code: key.windows_code,
-            native_code: key.windows_code,
-            modifiers: key.modifiers,
-            character,
-        })?;
-        self.service.send(ToHost::Key {
-            kind: KeyKind::Up,
-            windows_code: key.windows_code,
-            native_code: key.windows_code,
-            modifiers: key.modifiers,
-            character: 0,
-        })?;
+        self.service.send(
+            self.page,
+            PageCommand::Key {
+                kind: KeyKind::Down,
+                windows_code: key.windows_code,
+                native_code: key.windows_code,
+                modifiers: key.modifiers,
+                character,
+            },
+        )?;
+        self.service.send(
+            self.page,
+            PageCommand::Key {
+                kind: KeyKind::Up,
+                windows_code: key.windows_code,
+                native_code: key.windows_code,
+                modifiers: key.modifiers,
+                character: 0,
+            },
+        )?;
         std::thread::sleep(Duration::from_millis(60));
         Ok(())
     }
@@ -479,8 +546,9 @@ impl AgentBrowser {
                     )));
                 }
             };
-            self.service.agent_cursor(CursorShape::Arrow);
-            self.service.agent_sweeps(Sweep::scrolling(dy >= 0));
+            self.service.agent_cursor(self.page, CursorShape::Arrow);
+            self.service
+                .agent_sweeps(self.page, Sweep::scrolling(dy >= 0));
             self.cdp(
                 "Runtime.evaluate",
                 json!({ "expression": format!("window.scrollBy({dx}, {dy})") }),
@@ -538,7 +606,7 @@ impl AgentBrowser {
             return Ok(ToolOutput::text("Waited."));
         }
         // Nothing to wait for in particular: let a load that is under way finish.
-        self.service.wait_until_idle(LOAD_TIMEOUT);
+        self.service.wait_until_idle(self.page, LOAD_TIMEOUT);
         Ok(ToolOutput::text("The page is idle."))
     }
 
@@ -549,7 +617,7 @@ impl AgentBrowser {
             .as_str()
             .ok_or_else(|| ToolFailure::Failed("the page returned no picture".to_owned()))?
             .to_owned();
-        let state = self.service.state();
+        let state = self.service.state_of(self.page);
         Ok(ToolOutput {
             content: vec![
                 Content::Text(format!("{} ({})", state.title, state.url)),
@@ -574,14 +642,16 @@ impl AgentBrowser {
             }
         };
         Ok(ToolOutput::text(
-            self.service.log().console_text(minimum, 100),
+            self.service.log_of(self.page).console_text(minimum, 100),
         ))
     }
 
     fn network(&self, arguments: &Value) -> Result<ToolOutput, ToolFailure> {
         self.require_allowed_page()?;
         let all = arguments.get("all").and_then(Value::as_bool) == Some(true);
-        Ok(ToolOutput::text(self.service.log().network_text(all, 100)))
+        Ok(ToolOutput::text(
+            self.service.log_of(self.page).network_text(all, 100),
+        ))
     }
 
     fn select_option(&self, arguments: &Value) -> Result<ToolOutput, ToolFailure> {
@@ -590,8 +660,8 @@ impl AgentBrowser {
         let wanted = text_argument(arguments, "value")?;
         if let Ok((x, y)) = self.centre_of(node) {
             self.glide_to(x, y);
-            self.service.agent_cursor(CursorShape::Arrow);
-            self.service.agent_clicks();
+            self.service.agent_cursor(self.page, CursorShape::Arrow);
+            self.service.agent_clicks(self.page);
         }
         let chosen = self.call_on_node(node, CHOOSE_OPTION, &[json!({ "value": wanted })])?;
         match chosen.as_str() {
@@ -725,7 +795,7 @@ mod tests {
     struct Silent;
 
     impl AgentBrowserActivity for Silent {
-        fn used(&self, _agent: &str, _tool: &str, _summary: &str) {}
+        fn used(&self, _agent: &str, _page: PageId, _tool: &str, _summary: &str) {}
     }
 
     struct Nowhere;
@@ -736,6 +806,15 @@ mod tests {
 
     impl FrameSink for Nowhere {
         fn frame(&self, _frame: Frame) {}
+    }
+
+    fn owner() -> PageOwner {
+        PageOwner::Bot { id: "test".into() }
+    }
+
+    /// The state of the page the agent works on, which is not the person's page.
+    fn state_of_owner(service: &Arc<BrowserService>) -> BrowserState {
+        service.state_of(service.page_for(&owner()).expect("the agent's page"))
     }
 
     fn caller() -> Caller {
@@ -763,7 +842,7 @@ mod tests {
     #[test]
     fn a_browser_that_is_off_refuses_every_tool() {
         let error = tools(AgentBrowserAccess::Off)
-            .call(&caller(), "browser_snapshot", &json!({}))
+            .call(&caller(), &owner(), "browser_snapshot", &json!({}))
             .unwrap_err();
         assert!(matches!(error, ToolFailure::Refused(Refusal::Off)));
     }
@@ -777,7 +856,9 @@ mod tests {
             "browser_press_key",
             "browser_select_option",
         ] {
-            let error = browser.call(&caller(), tool, &json!({})).unwrap_err();
+            let error = browser
+                .call(&caller(), &owner(), tool, &json!({}))
+                .unwrap_err();
             assert!(
                 matches!(error, ToolFailure::Refused(Refusal::ReadOnly)),
                 "{tool}"
@@ -788,7 +869,7 @@ mod tests {
     #[test]
     fn an_unknown_tool_is_named_in_the_error() {
         let error = tools(AgentBrowserAccess::Full)
-            .call(&caller(), "browser_evaluate", &json!({}))
+            .call(&caller(), &owner(), "browser_evaluate", &json!({}))
             .unwrap_err();
         assert_eq!(error.to_string(), "unknown tool browser_evaluate");
     }
@@ -913,7 +994,7 @@ mod tests {
         ) -> String {
             text_of(
                 &browser
-                    .call(caller, "browser_snapshot", &json!({}))
+                    .call(caller, &owner(), "browser_snapshot", &json!({}))
                     .expect("snapshot"),
             )
         }
@@ -921,6 +1002,7 @@ mod tests {
         let opened = browser
             .call(
                 &caller(),
+                &owner(),
                 "browser_navigate",
                 &json!({ "url": format!("127.0.0.1:{port}") }),
             )
@@ -937,6 +1019,7 @@ mod tests {
         browser
             .call(
                 &caller(),
+                &owner(),
                 "browser_type",
                 &json!({ "ref": name, "text": "Ana ção" }),
             )
@@ -944,36 +1027,53 @@ mod tests {
         let chosen = browser
             .call(
                 &caller(),
+                &owner(),
                 "browser_select_option",
                 &json!({ "ref": plan, "value": "Pro plan" }),
             )
             .expect("select");
         assert_eq!(text_of(&chosen), "Chose Pro plan.");
         browser
-            .call(&caller(), "browser_click", &json!({ "ref": send }))
+            .call(
+                &caller(),
+                &owner(),
+                "browser_click",
+                &json!({ "ref": send }),
+            )
             .expect("click");
-        assert_eq!(service.state().title, "sent:Ana ção:pro");
+        assert_eq!(state_of_owner(&service).title, "sent:Ana ção:pro");
 
         // Typing again replaces the text instead of appending.
         browser
             .call(
                 &caller(),
+                &owner(),
                 "browser_type",
                 &json!({ "ref": name, "text": "Bia" }),
             )
             .expect("retype");
         browser
-            .call(&caller(), "browser_click", &json!({ "ref": send }))
+            .call(
+                &caller(),
+                &owner(),
+                "browser_click",
+                &json!({ "ref": send }),
+            )
             .expect("click again");
-        assert_eq!(service.state().title, "sent:Bia:pro");
+        assert_eq!(state_of_owner(&service).title, "sent:Bia:pro");
 
         // The console and the network show why a page misbehaves. The page has to finish first.
         browser
-            .call(&caller(), "browser_wait", &json!({ "text": "Loaded late" }))
+            .call(
+                &caller(),
+                &owner(),
+                "browser_wait",
+                &json!({ "text": "Loaded late" }),
+            )
             .expect("the page finishes");
         let console = text_of(
             &browser
-                .call(&caller(), "browser_console", &json!({}))
+                .call(&caller(), &owner(), "browser_console", &json!({}))
                 .expect("console"),
         );
         assert!(console.contains("[error] boom 42"), "{console}");
@@ -986,7 +1086,7 @@ mod tests {
         for _ in 0..30 {
             network = text_of(
                 &browser
-                    .call(&caller(), "browser_network", &json!({}))
+                    .call(&caller(), &owner(), "browser_network", &json!({}))
                     .expect("network"),
             );
             if network.contains("404 GET") {
@@ -1004,9 +1104,14 @@ mod tests {
             "Delete",
         );
         let deleted = browser
-            .call(&caller(), "browser_click", &json!({ "ref": delete }))
+            .call(
+                &caller(),
+                &owner(),
+                "browser_click",
+                &json!({ "ref": delete }),
+            )
             .expect("click delete");
-        assert_eq!(service.state().title, "kept");
+        assert_eq!(state_of_owner(&service).title, "kept");
         let notes: String = deleted
             .content
             .iter()
@@ -1031,7 +1136,7 @@ mod tests {
         };
         let page = text_of(
             &browser
-                .call(&caller(), "browser_snapshot", &json!({}))
+                .call(&caller(), &owner(), "browser_snapshot", &json!({}))
                 .expect("snapshot"),
         );
         for (name, expected) in [
@@ -1046,26 +1151,37 @@ mod tests {
             };
             let target = find_ref(&page, role, name);
             let answer = browser
-                .call(&caller(), "browser_click", &json!({ "ref": target }))
+                .call(
+                    &caller(),
+                    &owner(),
+                    "browser_click",
+                    &json!({ "ref": target }),
+                )
                 .expect("click");
             // The refusal can land just after the click returns; the next result carries it.
             std::thread::sleep(std::time::Duration::from_millis(300));
             let late = browser
-                .call(&caller(), "browser_wait", &json!({ "ms": 50 }))
+                .call(&caller(), &owner(), "browser_wait", &json!({ "ms": 50 }))
                 .expect("wait");
             let said = format!("{} {}", notes_of(&answer), notes_of(&late)).to_lowercase();
             assert!(said.contains(expected), "{name}: {said}");
         }
 
         browser
-            .call(&caller(), "browser_press_key", &json!({ "key": "Escape" }))
+            .call(
+                &caller(),
+                &owner(),
+                "browser_press_key",
+                &json!({ "key": "Escape" }),
+            )
             .expect("press");
-        assert_eq!(service.state().title, "escaped");
+        assert_eq!(state_of_owner(&service).title, "escaped");
 
         let scrolled = text_of(
             &browser
                 .call(
                     &caller(),
+                    &owner(),
                     "browser_scroll",
                     &json!({ "direction": "down", "amount": 800 }),
                 )
@@ -1074,12 +1190,18 @@ mod tests {
         assert!(scrolled.contains("at 800 of"), "{scrolled}");
 
         browser
-            .call(&caller(), "browser_wait", &json!({ "text": "Loaded late" }))
+            .call(
+                &caller(),
+                &owner(),
+                "browser_wait",
+                &json!({ "text": "Loaded late" }),
+            )
             .expect("wait for text");
         assert!(
             browser
                 .call(
                     &caller(),
+                    &owner(),
                     "browser_wait",
                     &json!({ "text": "never there", "timeoutMs": 500 })
                 )
@@ -1089,20 +1211,25 @@ mod tests {
         // The page may not be on screen when an agent first uses it; the tools still answer.
         service.set_visible(false);
         let shot = browser
-            .call(&caller(), "browser_screenshot", &json!({}))
+            .call(&caller(), &owner(), "browser_screenshot", &json!({}))
             .expect("screenshot");
         service.set_visible(true);
         assert!(matches!(&shot.content[1], Content::Image { base64, .. } if base64.len() > 500));
 
         let again = text_of(
             &browser
-                .call(&caller(), "browser_snapshot", &json!({}))
+                .call(&caller(), &owner(), "browser_snapshot", &json!({}))
                 .expect("snapshot"),
         );
         let link = find_ref(&again, "link", "Next page");
         let followed = text_of(
             &browser
-                .call(&caller(), "browser_click", &json!({ "ref": link }))
+                .call(
+                    &caller(),
+                    &owner(),
+                    "browser_click",
+                    &json!({ "ref": link }),
+                )
                 .expect("follow the link"),
         );
         assert!(followed.contains("Page: Second"), "{followed}");
@@ -1110,6 +1237,7 @@ mod tests {
             &browser
                 .call(
                     &caller(),
+                    &owner(),
                     "browser_history",
                     &json!({ "direction": "back" }),
                 )
@@ -1118,7 +1246,12 @@ mod tests {
         assert!(back.contains("heading \"Sign up\""), "{back}");
 
         let stale = browser
-            .call(&caller(), "browser_click", &json!({ "ref": "e999" }))
+            .call(
+                &caller(),
+                &owner(),
+                "browser_click",
+                &json!({ "ref": "e999" }),
+            )
             .unwrap_err();
         assert!(matches!(stale, ToolFailure::UnknownRef(_)));
 
@@ -1134,6 +1267,7 @@ mod tests {
         let refused = walled
             .call(
                 &caller(),
+                &owner(),
                 "browser_navigate",
                 &json!({ "url": format!("127.0.0.1:{port}") }),
             )
@@ -1143,7 +1277,7 @@ mod tests {
             ToolFailure::Refused(Refusal::SiteNotAllowed(_))
         ));
         let refused = walled
-            .call(&caller(), "browser_snapshot", &json!({}))
+            .call(&caller(), &owner(), "browser_snapshot", &json!({}))
             .unwrap_err();
         assert!(matches!(
             refused,

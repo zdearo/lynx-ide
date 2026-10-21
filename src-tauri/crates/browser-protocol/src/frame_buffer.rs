@@ -8,8 +8,9 @@ use std::path::Path;
 
 use memmap2::MmapMut;
 
-/// Two slots: the host paints into one while Lynx still copies out of the other.
-pub const SLOTS: usize = 2;
+/// Four slots, shared by every page: the host paints into a free one while Lynx copies the others
+/// out. A frame names its page on the socket, but the memory is one pool for all of them.
+pub const SLOTS: usize = 4;
 /// The largest view in device pixels. Bigger frames are dropped rather than grow the file.
 pub const MAX_WIDTH: u32 = 4096;
 pub const MAX_HEIGHT: u32 = 2560;
@@ -173,9 +174,13 @@ mod tests {
     #[test]
     fn the_pool_hands_out_each_slot_once() {
         let mut pool = SlotPool::default();
-        let first = pool.acquire().unwrap();
-        let second = pool.acquire().unwrap();
-        assert_ne!(first, second);
+        let mut handed = Vec::new();
+        for _ in 0..SLOTS {
+            handed.push(pool.acquire().unwrap());
+        }
+        handed.sort_unstable();
+        handed.dedup();
+        assert_eq!(handed.len(), SLOTS);
         assert_eq!(pool.acquire(), None);
     }
 
@@ -183,7 +188,9 @@ mod tests {
     fn releasing_after_a_dropped_frame_asks_for_a_repaint() {
         let mut pool = SlotPool::default();
         let first = pool.acquire().unwrap();
-        let _second = pool.acquire().unwrap();
+        for _ in 1..SLOTS {
+            pool.acquire().unwrap();
+        }
         assert_eq!(pool.acquire(), None); // dropped
         assert!(
             pool.release(first),

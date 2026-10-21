@@ -98,8 +98,11 @@ pub fn run() {
                 Arc::new(browser::TauriBrowserEvents::new(app.handle().clone())),
                 browser::frame_sink(app.handle().clone()),
             ));
-            let browser_pointer = browser_service.pointer();
+            let browser_for_events = Arc::clone(&browser_service);
             app.manage(Arc::clone(&browser_service));
+
+            // The manager records each session's owner; the browser tools read it.
+            let owners = browser::SessionOwners::default();
 
             // Agents reach the browser through the same loopback listener their hooks use.
             let hook_hub = HookHub::start();
@@ -107,6 +110,7 @@ pub fn run() {
                 app.handle().clone(),
                 browser_service,
                 Arc::clone(&config),
+                owners.clone(),
             )));
 
             let shell_config = Arc::clone(&config);
@@ -116,9 +120,10 @@ pub fn run() {
                 }),
                 Arc::new(TauriEventSink::new(
                     app.handle().clone(),
-                    Some(browser_pointer),
+                    Some(browser_for_events),
                 )),
                 hook_hub,
+                owners,
             ));
             Ok(())
         })

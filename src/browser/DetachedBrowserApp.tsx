@@ -15,7 +15,7 @@ export function DetachedBrowserApp() {
     const unlistenAgent = events.browserAgentActivity.listen(({ payload }) => {
       useBrowserStore
         .getState()
-        .noteAgentAction(payload.agent, payload.summary);
+        .noteAgentAction(payload.page, payload.agent, payload.summary);
     });
     const unlistenReleased = events.browserAgentReleased.listen(() => {
       useBrowserStore.getState().releaseAgent();

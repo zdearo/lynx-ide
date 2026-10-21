@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::agents::activity::AgentStatus;
 use crate::agents::harness::HarnessId;
 use crate::agents::hook_hub::HookHub;
+use crate::browser::SessionOwners;
 
 use super::Shell;
 use super::terminal_events::TerminalEventSink;
@@ -39,6 +40,7 @@ fn an_agent_typed_into_cmd_is_followed_until_it_is_interrupted() {
         shell,
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         HookHub::disabled(),
+        SessionOwners::default(),
     );
     let dir = tempfile::tempdir().expect("temp dir");
     let cli = fake_cli(dir.path());

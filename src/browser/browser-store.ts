@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import {
   commands,
+  type BrowserPageInfo,
   type BrowserState,
   type EngineProgress,
   type EngineStatus,
@@ -25,9 +26,10 @@ export const STOPPED: BrowserState = {
   canGoForward: false,
   error: null,
   detached: false,
+  page: null,
 };
 
-/** An agent in control of the page: who it is and what it is doing. */
+/** An agent in control of the shown page: who it is and what it is doing. */
 export interface AgentAction {
   agent: string;
   summary: string;
@@ -55,6 +57,10 @@ interface BrowserStoreState {
   engineError: string | null;
   /** What an agent is doing in the browser right now, or null a few seconds after it stops. */
   agentAction: AgentAction | null;
+  /** Every page, for every owner, as the backend last reported them. */
+  pages: BrowserPageInfo[];
+  /** The last picture of each page, as base64 PNG without a data URL prefix. */
+  thumbnails: Record<number, string>;
 
   setOpen: (open: boolean) => void;
   toggle: () => void;
@@ -72,10 +78,20 @@ interface BrowserStoreState {
   installEngine: (force?: boolean) => Promise<void>;
   removeEngine: () => Promise<void>;
   applyEngineProgress: (progress: EngineProgress) => void;
-  /** An agent used the browser: remember who and what, for whoever has the browser open. */
-  noteAgentAction: (agent: string, summary: string) => void;
+  /** An agent used a page: remembered only when that page is the one shown. */
+  noteAgentAction: (page: number, agent: string, summary: string) => void;
   /** No agent is in control any more. */
   releaseAgent: () => void;
+  /** Reads the list of pages and their pictures. */
+  loadPages: () => Promise<void>;
+  applyPages: (pages: BrowserPageInfo[]) => void;
+  applyThumbnail: (page: number, png: string) => void;
+  /** Opens a new tab for a worktree, shows it, and goes to `url` when given. */
+  newPage: (worktreePath: string, url?: string | null) => Promise<void>;
+  /** Shows a tab to the person. */
+  showPage: (page: number) => Promise<void>;
+  /** Closes a tab. Nothing is shown if it was the shown one. */
+  closePage: (page: number) => Promise<void>;
 }
 
 function failureOf(error: unknown): BrowserFailure {
@@ -95,6 +111,8 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
   engineBusy: false,
   engineError: null,
   agentAction: null,
+  pages: [],
+  thumbnails: {},
 
   setOpen: (open) => {
     set({ open });
@@ -184,9 +202,9 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
 
   applyEngineProgress: (engineProgress) => set({ engineProgress }),
 
-  noteAgentAction: (agent, summary) => {
-    // The browser is not opened for the person: an agent works the page in the background, and
-    // whoever wants to watch opens it.
+  noteAgentAction: (page, agent, summary) => {
+    // An agent works its own tab. Only the tab the person sees gets the mark in the toolbar.
+    if (page !== get().state.page) return;
     set({ agentAction: { agent, summary } });
     clearTimeout(agentMarkTimer);
     agentMarkTimer = setTimeout(
@@ -198,5 +216,56 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
   releaseAgent: () => {
     clearTimeout(agentMarkTimer);
     set({ agentAction: null });
+  },
+
+  loadPages: async () => {
+    try {
+      const [pages, thumbnails] = await Promise.all([
+        unwrap(commands.browserPages()),
+        unwrap(commands.browserThumbnails()),
+      ]);
+      set({
+        pages,
+        thumbnails: Object.fromEntries(
+          thumbnails.map((thumbnail) => [thumbnail.page, thumbnail.png]),
+        ),
+      });
+    } catch (error) {
+      set({ failure: failureOf(error) });
+    }
+  },
+
+  applyPages: (pages) => set({ pages }),
+
+  applyThumbnail: (page, png) =>
+    set((state) => ({ thumbnails: { ...state.thumbnails, [page]: png } })),
+
+  newPage: async (worktreePath, url = null) => {
+    set({ open: true });
+    try {
+      await unwrap(commands.browserPageNew(worktreePath, url));
+      set({ failure: null });
+    } catch (error) {
+      set({ failure: failureOf(error) });
+    }
+  },
+
+  showPage: async (page) => {
+    set({ open: true });
+    try {
+      const state = await unwrap(commands.browserPageShow(page));
+      set({ state, failure: null });
+    } catch (error) {
+      set({ failure: failureOf(error) });
+    }
+  },
+
+  closePage: async (page) => {
+    try {
+      await unwrap(commands.browserPageClose(page));
+      set({ failure: null });
+    } catch (error) {
+      set({ failure: failureOf(error) });
+    }
   },
 }));

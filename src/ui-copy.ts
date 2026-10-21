@@ -175,7 +175,7 @@ export const copy = {
       },
       access: {
         label: "What agents can do in the browser",
-        hint: "Agents you have turned on get the browser tools. You watch the same page they use. Read only lets them open and read pages but not click, type or choose.",
+        hint: "Agents you have turned on get the browser tools. Each agent works in its own tab, listed in the Browser panel. Read only lets them open and read pages but not click, type or choose.",
         off: "Nothing",
         readOnly: "Read only",
         full: "Full control",
@@ -282,6 +282,32 @@ export const copy = {
 
   browser: {
     toggle: "Browser",
+    tab: "Browser",
+    panel: {
+      title: "Browser",
+      newTab: "New tab",
+      count: (count: number) => (count === 1 ? "1 tab" : `${count} tabs`),
+      empty: {
+        title: "No browser tabs in this worktree",
+        body: "Tabs you open here, and the ones agents open for it, appear in this list.",
+      },
+      loading: "Loading",
+      loaded: "Loaded",
+      untitled: "New tab",
+      close: (title: string) => `Close ${title}`,
+      working: (agent: string) => `${agent} is working`,
+    },
+    agentNames: {
+      claude: "Claude Code",
+      codex: "Codex",
+      opencode: "OpenCode",
+      unknown: "Agent",
+    },
+    noTab: {
+      title: "No tab is open",
+      body: "Open a tab from the Browser panel, or start a new one here.",
+      address: "Search or enter an address",
+    },
     label: "Browser",
     address: "Web address",
     addressPlaceholder: "Search or enter an address",

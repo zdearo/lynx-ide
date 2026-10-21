@@ -1,7 +1,7 @@
 //! `lynx-browser-host`: runs the browser engine for Lynx. Lynx starts it with
 //! `--socket <path> --frames <path> --cache <folder>`; the host connects to the socket, renders
-//! one page off-screen into the shared frame memory, and obeys the commands it receives. When
-//! the connection closes, it quits.
+//! the pages Lynx asks for off-screen into the shared frame memory, and obeys the commands it
+//! receives. When the connection closes, it quits.
 
 // On Windows the host is a program of its own with no console: a console would flash on screen
 // for it and for each of the engine's helper processes, which are this same program.
@@ -148,12 +148,12 @@ fn run(args: &cef::args::Args, app: &mut App) -> Result<(), String> {
     }
 
     engine::connect(frames, link);
-    engine::create_page();
+    engine::announce_ready();
     serve(&inbox);
 
-    engine::close_page();
+    engine::close_all_pages();
     let closing = Instant::now();
-    while !engine::browser_closed() && closing.elapsed() < Duration::from_secs(3) {
+    while !engine::pages_closed() && closing.elapsed() < Duration::from_secs(3) {
         do_message_loop_work();
         thread::sleep(Duration::from_millis(5));
     }

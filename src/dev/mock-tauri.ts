@@ -9,6 +9,8 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import type {
   AgentStatus,
   AppConfig,
+  BrowserPageInfo,
+  BrowserState,
   ConfigSnapshot,
   Folder,
   HarnessId,
@@ -448,6 +450,10 @@ function configIssue(config: AppConfig): string | null {
   return null;
 }
 
+/** A 1x1 PNG: the picture each mock tab gets, so the list has something to show. */
+const MOCK_PICTURE =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 export function installMockTauri(scenario: string): void {
   const seeded =
     scenario === "empty" ? { repos: [], worktrees: {} } : seedRepos();
@@ -597,16 +603,81 @@ export function installMockTauri(scenario: string): void {
     return engineStatus();
   }
   let agentReleaseTimer: ReturnType<typeof setTimeout> | undefined;
-  let browserState = {
+  let browserState: BrowserState = {
     status: "stopped",
     url: "",
     title: "",
     loading: false,
     canGoBack: false,
     canGoForward: false,
-    error: null as string | null,
+    error: null,
     detached: false,
+    page: null,
   };
+  // Every tab of the browser, whatever its owner. The full mock opens with the first one shown.
+  const BROWSER_WORKTREE = "/home/dev/lynx-ide-worktrees/feat-auth";
+  const mockPages: BrowserPageInfo[] =
+    scenario === "full"
+      ? [
+          {
+            id: 1,
+            owner: { kind: "workspace", worktreePath: BROWSER_WORKTREE },
+            url: "http://localhost:5173/",
+            title: "Dashboard · Vite",
+            loading: false,
+            agent: null,
+          },
+          {
+            id: 2,
+            owner: { kind: "workspace", worktreePath: BROWSER_WORKTREE },
+            url: "https://github.com/zdearo/lynx-ide/pull/4",
+            title: "Pull request #4 · lynx-ide",
+            loading: true,
+            agent: null,
+          },
+          {
+            id: 3,
+            owner: { kind: "workspace", worktreePath: BROWSER_WORKTREE },
+            url: "https://docs.example.com/api/tokens",
+            title: "API tokens · Docs",
+            loading: false,
+            agent: "claude",
+          },
+        ]
+      : [];
+  const mockThumbnails = new Map<number, string>();
+  for (const page of mockPages) mockThumbnails.set(page.id, MOCK_PICTURE);
+  let nextPageId = mockPages.length + 1;
+  let shownPage: number | null = null;
+
+  /** Shows a tab (or none), and puts its address and title in the browser state, as the engine does. */
+  const setShown = (id: number | null) => {
+    shownPage = id;
+    const page = mockPages.find((item) => item.id === id);
+    browserState = {
+      ...browserState,
+      page: id,
+      url: page?.url ?? "",
+      title: page?.title ?? "",
+      loading: page?.loading ?? false,
+    };
+  };
+  // With no tab shown there is nothing to go to, as in the backend.
+  const navigateShown = (input: string) => {
+    const page = mockPages.find((item) => item.id === shownPage);
+    if (!page) return;
+    page.url = input;
+    page.title = input;
+    browserState = { ...browserState, url: input, title: input };
+  };
+  /** Tells the interface the tabs or the shown tab changed, as the backend does. */
+  const pagesChanged = () => {
+    void emit("browser-pages-changed", { pages: structuredClone(mockPages) });
+    void emit("browser-state-changed", {
+      state: structuredClone(browserState),
+    });
+  };
+  setShown(scenario === "full" ? 1 : null);
   const hookFiles: Record<string, { path: string; events: string[] }> = {
     claude: {
       path: "/home/dev/.claude/settings.json",
@@ -1509,17 +1580,58 @@ export function installMockTauri(scenario: string): void {
               message: "the browser engine is not installed",
             };
           }
-          browserState = {
-            ...browserState,
-            status: "running",
-            url: (args.url as string | null) ?? browserState.url,
-          };
+          browserState = { ...browserState, status: "running" };
+          // An address given at start goes to the tab shown, if there is one.
+          if (args.url) navigateShown(String(args.url));
           return browserState;
         case "browser_state":
           return browserState;
         case "browser_navigate":
-          browserState = { ...browserState, url: String(args.input) };
+          navigateShown(String(args.input));
           return null;
+        case "browser_pages":
+          return structuredClone(mockPages);
+        case "browser_thumbnails":
+          return Array.from(mockThumbnails, ([page, png]) => ({ page, png }));
+        case "browser_page_new": {
+          const url = (args.url as string | null) ?? null;
+          const page: BrowserPageInfo = {
+            id: nextPageId++,
+            owner: {
+              kind: "workspace",
+              worktreePath: String(args.worktreePath),
+            },
+            url: "about:blank",
+            title: "",
+            loading: false,
+            agent: null,
+          };
+          mockPages.push(page);
+          setShown(page.id);
+          if (url !== null) navigateShown(url);
+          pagesChanged();
+          return structuredClone(page);
+        }
+        case "browser_page_show": {
+          const id = Number(args.page);
+          if (!mockPages.some((page) => page.id === id)) {
+            throw { kind: "browser", message: `page not found: ${id}` };
+          }
+          setShown(id);
+          pagesChanged();
+          return structuredClone(browserState);
+        }
+        case "browser_page_close": {
+          const id = Number(args.page);
+          const index = mockPages.findIndex((page) => page.id === id);
+          // Closing a tab that is gone is not an error.
+          if (index === -1) return null;
+          mockPages.splice(index, 1);
+          mockThumbnails.delete(id);
+          if (shownPage === id) setShown(null);
+          pagesChanged();
+          return null;
+        }
         case "write_agent_prompt":
           lastAgentPrompt = String(args.prompt);
           return "/tmp/lynx-prompts/prompt-mock.md";
@@ -1643,10 +1755,17 @@ export function installMockTauri(scenario: string): void {
       browserToolsOn: (harness: string) => browserToolsOn.has(harness),
       /** Says an agent used the browser, as the backend does on each tool call. */
       agentUsesBrowser(summary: string, agent = "Claude Code") {
+        // An agent that uses the browser starts the engine, and the interface learns it first.
+        browserState = { ...browserState, status: "running" };
+        void emit("browser-state-changed", {
+          state: structuredClone(browserState),
+        });
         void emit("browser-agent-activity", {
           tool: "browser_navigate",
           summary,
           agent,
+          // The mark shows only when this is the tab shown; 0 is no tab, so nothing shows.
+          page: shownPage ?? 0,
         });
         // The backend lets go six seconds after the agent's last action.
         clearTimeout(agentReleaseTimer);

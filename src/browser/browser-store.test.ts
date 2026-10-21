@@ -188,11 +188,11 @@ describe("a window of its own", () => {
 
 describe("an agent using the browser", () => {
   it("says who is in control and what they do, without opening the browser", () => {
-    useBrowserStore.setState({ state: running });
+    useBrowserStore.setState({ state: { ...running, page: 1 } });
 
     useBrowserStore
       .getState()
-      .noteAgentAction("Claude Code", "Opening example.com");
+      .noteAgentAction(1, "Claude Code", "Opening example.com");
 
     expect(useBrowserStore.getState().open).toBe(false);
     expect(useBrowserStore.getState().agentAction).toEqual({
@@ -202,8 +202,8 @@ describe("an agent using the browser", () => {
   });
 
   it("stops saying it when the backend lets go", () => {
-    useBrowserStore.setState({ state: running });
-    useBrowserStore.getState().noteAgentAction("Codex", "Typing");
+    useBrowserStore.setState({ state: { ...running, page: 1 } });
+    useBrowserStore.getState().noteAgentAction(1, "Codex", "Typing");
 
     useBrowserStore.getState().releaseAgent();
 
@@ -212,9 +212,9 @@ describe("an agent using the browser", () => {
 
   it("clears the mark by itself if the release never comes", () => {
     vi.useFakeTimers();
-    useBrowserStore.setState({ state: running });
+    useBrowserStore.setState({ state: { ...running, page: 1 } });
 
-    useBrowserStore.getState().noteAgentAction("Codex", "Typing");
+    useBrowserStore.getState().noteAgentAction(1, "Codex", "Typing");
     vi.advanceTimersByTime(41_000);
 
     expect(useBrowserStore.getState().agentAction).toBeNull();

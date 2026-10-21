@@ -10,7 +10,7 @@ edition = "2024"
 # and the message contract, but only the app is a default member: a plain `cargo build` never
 # needs the CEF runtime (see scripts/browser-engine.mjs).
 [workspace]
-members = [".", "crates/browser-protocol", "crates/browser-host"]
+members = [".", "crates/browser-protocol", "crates/browser-host", "crates/pty-daemon"]
 default-members = ["."]
 
 [lib]
@@ -84,4 +84,7 @@ windows = { version = "0.62", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2.5.4"
 

@@ -16,6 +16,7 @@ pub mod hook_install;
 pub mod hook_layouts;
 pub mod hook_relay;
 pub mod hook_targets;
+pub mod hub_address;
 pub mod json_hook_file;
 pub mod kiro_hooks;
 pub mod mcp_install;

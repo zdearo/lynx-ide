@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 use super::harness::harness_named;
 use super::hook_decision;
 use super::hook_events::EVENT_KEY;
-use super::hook_hub::{HOOK_PATH, PORT_ENV, SESSION_ENV, TOKEN_ENV, TOKEN_HEADER};
+use super::hook_hub::{HOOK_PATH, SESSION_ENV, TOKEN_HEADER};
+use super::hub_address::{self, HubAddress};
 
 const FLAG: &str = "--agent-hook";
 const TIMEOUT: Duration = Duration::from_secs(1);
@@ -66,8 +67,7 @@ fn relay_payload(raw: &str, event: Option<&str>) -> Option<Value> {
 /// Where the relay posts: the session it runs in and the listener the app opened for it.
 struct Target {
     session: String,
-    port: u16,
-    token: String,
+    address: HubAddress,
 }
 
 impl Target {
@@ -75,8 +75,7 @@ impl Target {
     fn from_env() -> Option<Self> {
         Some(Self {
             session: env::var(SESSION_ENV).ok()?,
-            port: env::var(PORT_ENV).ok()?.parse().ok()?,
-            token: env::var(TOKEN_ENV).ok()?,
+            address: hub_address::current()?,
         })
     }
 }
@@ -90,14 +89,14 @@ fn forward(target: &Target, harness: &str, payload: Value) {
         "payload": payload,
     })
     .to_string();
-    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, target.port));
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, target.address.port));
     let Ok(mut stream) = TcpStream::connect_timeout(&address, TIMEOUT) else {
         return;
     };
     let _ = stream.set_write_timeout(Some(TIMEOUT));
     let request = format!(
         "POST {HOOK_PATH} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n{TOKEN_HEADER}: {token}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{body}",
-        token = target.token,
+        token = target.address.token,
         length = body.len(),
     );
     let _ = stream.write_all(request.as_bytes());
@@ -110,7 +109,7 @@ mod tests {
     use super::*;
     use crate::agents::agent_monitor::AgentInput;
     use crate::agents::harness::HarnessId;
-    use crate::agents::hook_hub::HookHub;
+    use crate::agents::hook_hub::{HookHub, PORT_ENV, TOKEN_ENV};
 
     /// The relay's request must be the one the listener reads: same path, token and envelope.
     #[test]
@@ -127,8 +126,10 @@ mod tests {
         };
         let target = Target {
             session: "s1".to_owned(),
-            port: value(PORT_ENV).parse().expect("port"),
-            token: value(TOKEN_ENV),
+            address: HubAddress {
+                port: value(PORT_ENV).parse().expect("port"),
+                token: value(TOKEN_ENV),
+            },
         };
 
         forward(
@@ -146,13 +147,38 @@ mod tests {
         }
     }
 
+    /// The app restarted under a running agent: the session still has the old port and token, and
+    /// the file names the new hub.
+    #[test]
+    fn an_event_reaches_the_restarted_app_through_the_published_address() {
+        let hub = HookHub::start();
+        let (input, inbox) = mpsc::channel();
+        hub.register("s1", input);
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("hub.json");
+        hub.publish_address(&file).expect("publish");
+        let target = Target {
+            session: "s1".to_owned(),
+            address: hub_address::read(&file).expect("address"),
+        };
+
+        forward(&target, "claude", json!({ "hook_event_name": "Stop" }));
+
+        assert!(matches!(
+            inbox.recv_timeout(Duration::from_secs(2)),
+            Ok(AgentInput::Hook { .. })
+        ));
+    }
+
     #[test]
     fn a_failed_relay_is_silent() {
         // Nothing listens on port 1, so the connection is refused and the event is dropped.
         let target = Target {
             session: "s1".to_owned(),
-            port: 1,
-            token: "t".to_owned(),
+            address: HubAddress {
+                port: 1,
+                token: "t".to_owned(),
+            },
         };
         forward(&target, "claude", json!({ "hook_event_name": "Stop" }));
     }

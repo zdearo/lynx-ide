@@ -54,7 +54,20 @@ pub fn run() {
 
     let builder = ipc::builder();
 
-    tauri::Builder::default()
+    let application = tauri::Builder::default();
+    // One Lynx at a time: a second one would take the hub's address file from the first. The
+    // plugin goes first, as it must. A debug build is left out so `tauri dev` runs beside the
+    // installed app.
+    #[cfg(all(desktop, not(debug_assertions)))]
+    let application = application.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        use tauri::Manager;
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+    application
         .on_window_event(browser::on_window_event)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -118,6 +131,13 @@ pub fn run() {
 
             // Agents reach the browser through the same loopback listener their hooks use.
             let hook_hub = HookHub::start();
+            // A debug build keeps to its own variables unless it has a home of its own, so a
+            // `tauri dev` next to the installed app does not take the file over from it.
+            if !cfg!(debug_assertions) || std::env::var_os("LYNX_HOME").is_some() {
+                // Without the file, agents fall back to the variables they started with.
+                let _ =
+                    hook_hub.publish_address(&lynx_home(app.path().home_dir()?).join("hub.json"));
+            }
             hook_hub.set_tool_handler(Arc::new(browser::AgentToolBridge::new(
                 app.handle().clone(),
                 browser_service,

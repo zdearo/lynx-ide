@@ -14,8 +14,8 @@
     "format:check": "prettier --check . --cache",
     "test": "vitest run",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test",
-    "rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all --check && cargo clippy --manifest-path src-tauri/Cargo.toml -p lynx-ide -p lynx-browser-protocol --all-targets -- -D warnings",
-    "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml -p lynx-ide -p lynx-browser-protocol",
+    "rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all --check && cargo clippy --manifest-path src-tauri/Cargo.toml -p lynx-ide -p lynx-browser-protocol -p lynx-pty-daemon --all-targets -- -D warnings",
+    "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml -p lynx-ide -p lynx-browser-protocol -p lynx-pty-daemon",
     "browser:engine": "bun scripts/browser-engine.mjs",
     "bindings": "cargo test --manifest-path src-tauri/Cargo.toml write_bindings -- --ignored",
     "e2e": "node e2e/ui-smoke.mjs"

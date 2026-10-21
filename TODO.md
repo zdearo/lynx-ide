@@ -206,7 +206,13 @@ Decidido em vez de um browser no estilo Orca: o Chromium (CEF) roda num processo
 
 ## Fase 4 — Avançado
 
-- [ ] Daemon de PTY separado, para as sessões sobreviverem a fechar a janela
+- [ ] Daemon de PTY separado, para as sessões sobreviverem a fechar a janela (Linux e Windows; macOS fica fora até haver máquina). Referência: o daemon do Orca (`src/main/daemon`), lido por amostragem
+  - Pré-requisito feito: `hub.json` (porta e token estáveis para hooks e MCP) e instância única do app. Testes de PTY no `windows-latest` (`windows_terminal_tests.rs`) já passam
+  - [ ] **D1, o núcleo, sem tocar no app.** Binário pequeno e separado (`crates/pty-daemon`, como o `browser-host`), copiado para `LYNX_HOME/daemon/<versão>/` e executado de lá (serve ao AppImage e à atualização no Windows). Versão do protocolo no nome do endpoint. Vivacidade por trava de arquivo (`File::try_lock`; `first_pipe_instance` no Windows), sem PID nem socket obsoleto. Token em arquivo privado e `hello`. Saída em quadros binários com `seq`, lote de 2 a 4 ms, marcas d'água e pausa do leitor do PTY; a sessão visível tem prioridade e o app marca as que estão em segundo plano para o daemon descartar o miolo. Rastreador de fronteira de escape (máquina de estados, sem emulador), para o buffer nunca começar no meio de uma sequência. Espera o prompt pronto antes de digitar o comando do agente. Confere os descendentes ao encerrar. Testes com shell real em Linux e no CI do Windows, incluindo reanexar depois de desconectar. Verificar o escape de cgroup no Linux (`uwsm`/scope do systemd) com `.deb` e AppImage
+  - [ ] **D2, o app vira cliente.** `TerminalManager` fala com o daemon; a interface e os comandos IPC não mudam. O provedor no próprio processo continua para sempre como fallback, com limitador de reinício (5 por minuto). Status no rodapé (conectado com N sessões, subindo, degradado, versão incompatível) e popover com versão, sessões, "Encerrar todas", "Reiniciar daemon" e o log
+  - [ ] **Retomada** (independente do daemon): guardar o `session_id` do harness por sessão de agente no SQLite (vem do hook de `SessionStart`; confirmar numa captura) e o botão "Retomar" (`claude --resume`, `codex resume`, `opencode -s`). Cobre reboot e daemon morto
+  - [ ] **D3, ciclo de vida e histórico.** Diálogo ao fechar com agentes rodando (manter em segundo plano por padrão, "Encerrar todos"); o daemon sai sozinho sem sessões. **Histórico em disco num banco próprio do daemon** (`terminal-history.db`, `rusqlite`, só o daemon escreve; o app lê pelo protocolo; migrações próprias; metadados no `app.db`). Gravação suja-só em lote, limite por sessão e total, `0600`, apaga ao fechar a sessão de propósito, opção em Settings para desligar. Restaura como leitura, com o "Retomar" ao lado. O banco abre caminho para busca no histórico (FTS5 a verificar)
+  - [ ] Depois: "Dormir" manual por agente ou worktree; depois hibernação automática, opt-in e só após medir a memória com 8 a 10 agentes. Anexar a daemons de versões antigas. Breaker de crescimento de processos
 - [ ] Orquestração multi-agente: runs, tarefas com dependências e mensagens
 - [ ] CLI própria para o agente controlar o app
 - [ ] Automações agendadas
@@ -219,7 +225,7 @@ Decidido em vez de um browser no estilo Orca: o Chromium (CEF) roda num processo
 
 ## Decisões em aberto
 
-- **Daemon de PTY:** entra só na Fase 4. Proposta: na Fase 1 as sessões encerram ao fechar o app.
+- **Daemon de PTY:** decidido; a sequência D1, D2, retomada e D3 está na Fase 4. Até lá as sessões encerram ao fechar o app.
 - **Local dos worktrees:** `<pasta-do-repo>/../<repo>-worktrees/<nome>` ou outro caminho gerenciado pelo app.
 - **Projeto vazio sem commit:** o worktree precisa de uma base, e um repositório recém-criado não tem nenhuma. Opções: commit inicial vazio (exige identidade git configurada), aceitar o HEAD sem commit, ou desabilitar a criação de worktree nesse caso.
 - **Tema claro da interface:** adiado, fora da Fase 1 (hoje só escuro, por decisão do shape).

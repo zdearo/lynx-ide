@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -20,6 +21,8 @@ pub const TOKEN_HEADER: &str = "X-Lynx-Token";
 pub const SESSION_ENV: &str = "LYNX_SESSION_ID";
 pub const PORT_ENV: &str = "LYNX_HOOK_PORT";
 pub const TOKEN_ENV: &str = "LYNX_HOOK_TOKEN";
+/// Where the app writes the hub's current port and token; see `hub_address`.
+pub const FILE_ENV: &str = "LYNX_HUB_FILE";
 
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_HEAD_BYTES: usize = 16 * 1024;
@@ -44,6 +47,8 @@ struct Routes {
     token: String,
     sessions: Mutex<HashMap<String, Sender<AgentInput>>>,
     tools: Mutex<Option<Arc<dyn ToolHandler>>>,
+    /// Set once the address is published, so sessions can be told where to read it.
+    address_file: Mutex<Option<PathBuf>>,
 }
 
 /// An answer to a request: the status line, and a JSON body when there is one.
@@ -85,6 +90,7 @@ impl HookHub {
             token: uuid::Uuid::new_v4().to_string(),
             sessions: Mutex::new(HashMap::new()),
             tools: Mutex::new(None),
+            address_file: Mutex::new(None),
         });
         let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .ok()
@@ -108,6 +114,7 @@ impl HookHub {
                 token: String::new(),
                 sessions: Mutex::new(HashMap::new()),
                 tools: Mutex::new(None),
+                address_file: Mutex::new(None),
             }),
         }
     }
@@ -117,11 +124,43 @@ impl HookHub {
         let Some(port) = self.port else {
             return Vec::new();
         };
-        vec![
+        let mut env = vec![
             (SESSION_ENV.to_owned(), session_id.to_owned()),
             (PORT_ENV.to_owned(), port.to_string()),
             (TOKEN_ENV.to_owned(), self.routes.token.clone()),
-        ]
+        ];
+        if let Some(file) = self
+            .routes
+            .address_file
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            env.push((FILE_ENV.to_owned(), file.to_string_lossy().into_owned()));
+        }
+        env
+    }
+
+    /// Writes the hub's port and token to `file` and tells later sessions where it is. Without
+    /// it, an agent that outlives this run keeps a port nobody listens on. A failure leaves
+    /// sessions on their variables, which work for as long as this run does.
+    pub fn publish_address(&self, file: &Path) -> std::io::Result<()> {
+        let Some(port) = self.port else {
+            return Ok(());
+        };
+        super::hub_address::publish(
+            file,
+            &super::hub_address::HubAddress {
+                port,
+                token: self.routes.token.clone(),
+            },
+        )?;
+        *self
+            .routes
+            .address_file
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(file.to_path_buf());
+        Ok(())
     }
 
     /// Sets who answers an agent's tool calls. Until then they get "service unavailable".
@@ -435,6 +474,37 @@ mod tests {
 
         assert_eq!(status, "HTTP/1.1 400 Bad Request");
         assert!(inbox.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn a_published_address_matches_the_hub_and_sessions_are_told_where_it_is() {
+        let hub = HookHub::start();
+        assert!(
+            !hub.session_env("s1")
+                .iter()
+                .any(|(name, _)| name == FILE_ENV),
+            "nothing is published yet"
+        );
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("hub.json");
+
+        hub.publish_address(&file).expect("publish");
+
+        let env = hub.session_env("s1");
+        let address = super::super::hub_address::read(&file).expect("address");
+        assert_eq!(env_value(&env, FILE_ENV), file.to_string_lossy());
+        assert_eq!(env_value(&env, PORT_ENV), address.port.to_string());
+        assert_eq!(env_value(&env, TOKEN_ENV), address.token);
+    }
+
+    #[test]
+    fn a_disabled_hub_publishes_nothing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("hub.json");
+
+        HookHub::disabled().publish_address(&file).expect("publish");
+
+        assert!(!file.exists());
     }
 
     #[test]

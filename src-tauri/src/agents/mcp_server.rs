@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 
 use crate::browser::agent_tool_definitions::{INSTRUCTIONS, list};
 
-use super::hook_hub::{PORT_ENV, SESSION_ENV, TOKEN_ENV, TOKEN_HEADER, TOOL_PATH};
+use super::hook_hub::{SESSION_ENV, TOKEN_HEADER, TOOL_PATH};
+use super::hub_address;
 
 pub const FLAG: &str = "--mcp";
 const SERVER_NAME: &str = "lynx";
@@ -124,26 +125,18 @@ fn failure(id: Value, code: i32, message: &str) -> Value {
 
 /// The terminal this process runs in, as the app knows it.
 struct LoopbackTransport {
-    target: Option<Target>,
+    /// None outside a Lynx terminal. The hub's address is not kept: this process lives as long as
+    /// its agent, and the app can restart under it, so each call looks the address up.
+    session: Option<String>,
     agent: Option<String>,
-}
-
-struct Target {
-    session: String,
-    port: u16,
-    token: String,
 }
 
 impl LoopbackTransport {
     fn from_env(agent: Option<String>) -> Self {
-        let target = (|| {
-            Some(Target {
-                session: env::var(SESSION_ENV).ok()?,
-                port: env::var(PORT_ENV).ok()?.parse().ok()?,
-                token: env::var(TOKEN_ENV).ok()?,
-            })
-        })();
-        Self { target, agent }
+        Self {
+            session: env::var(SESSION_ENV).ok(),
+            agent,
+        }
     }
 }
 
@@ -152,22 +145,23 @@ const NOT_RUNNING: &str = "Could not reach Lynx. Check that the app is still ope
 
 impl ToolTransport for LoopbackTransport {
     fn call(&self, tool: &str, arguments: &Value) -> Result<Value, String> {
-        let target = self.target.as_ref().ok_or(NOT_IN_LYNX)?;
+        let session = self.session.as_ref().ok_or(NOT_IN_LYNX)?;
+        let hub = hub_address::current().ok_or(NOT_RUNNING)?;
         let body = json!({
-            "sessionId": target.session,
+            "sessionId": session,
             "agent": self.agent,
             "tool": tool,
             "arguments": arguments,
         })
         .to_string();
-        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, target.port));
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, hub.port));
         let mut stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)
             .map_err(|_| NOT_RUNNING.to_owned())?;
         let _ = stream.set_read_timeout(Some(ANSWER_TIMEOUT));
         let _ = stream.set_write_timeout(Some(CONNECT_TIMEOUT));
         let request = format!(
             "POST {TOOL_PATH} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n{TOKEN_HEADER}: {token}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{body}",
-            token = target.token,
+            token = hub.token,
             length = body.len(),
         );
         stream
@@ -350,7 +344,7 @@ mod tests {
     #[test]
     fn outside_a_lynx_terminal_a_call_explains_itself() {
         let transport = LoopbackTransport {
-            target: None,
+            session: None,
             agent: None,
         };
         let reason = transport.call("browser_snapshot", &json!({})).unwrap_err();

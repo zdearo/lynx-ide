@@ -44,7 +44,8 @@ const config: AppConfig = {
   terminal: DEFAULT_TERMINAL_CONFIG,
   worktrees: { directory: null },
   agents: { launchMode: "manual", launchArguments: {} },
-  notifications: { onDone: true, onNeedsYou: true },
+  notifications: { onDone: true, onNeedsYou: true, onUpdate: true },
+  updates: { checkAutomatically: true },
   browser: { agentAccess: "full", allowedSites: [] },
   usage: {
     visible: true,

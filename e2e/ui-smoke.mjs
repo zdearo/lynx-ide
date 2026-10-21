@@ -4393,6 +4393,59 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 });
 
+// Updates: a check finds a new version, the app says so, and the page installs it and offers a
+// restart that asks first.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  await p.getByRole("tab", { name: "Updates", exact: true }).click();
+  await p.waitForTimeout(300);
+  check(
+    "the Updates page shows the installed version and a check button",
+    (await p.getByText("Installed version 0.1.0").count()) === 1 &&
+      (await p.getByRole("button", { name: "Check now" }).count()) === 1,
+  );
+
+  await p.getByRole("button", { name: "Check now" }).click();
+  await p.waitForTimeout(1500);
+  check(
+    "a check finds 0.1.1, offers it on the page, and tells the user in the app",
+    (await p.getByRole("button", { name: "Update to 0.1.1" }).count()) === 1 &&
+      (await p.getByText("Lynx 0.1.1 is available").count()) >= 1,
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the Updates page",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await p.getByRole("button", { name: "Update to 0.1.1" }).click();
+  await p.waitForTimeout(1800);
+  check(
+    "an install ends with a restart offer",
+    (await p
+      .getByRole("button", { name: "Restart Lynx", exact: true })
+      .count()) === 1,
+  );
+
+  await p.getByRole("button", { name: "Restart Lynx", exact: true }).click();
+  await p.waitForTimeout(300);
+  check(
+    "restarting asks first, and says that terminals and agents close",
+    (await p.getByRole("alertdialog").count()) === 1 &&
+      (await p.getByText("Open terminals and agents will close").count()) === 1,
+  );
+  await p.keyboard.press("Escape");
+});
+
 console.log(results.join("\n"));
 await browser.close();
 vite.kill();

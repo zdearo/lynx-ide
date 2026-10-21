@@ -15,6 +15,7 @@ import type {
   PlanUsage,
   Repo,
   TerminalInfo,
+  UpdateStatus,
   WorktreeInfo,
 } from "@/bindings";
 
@@ -412,7 +413,8 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   worktrees: { directory: null },
   agents: { launchMode: "manual", launchArguments: {} },
-  notifications: { onDone: true, onNeedsYou: true },
+  notifications: { onDone: true, onNeedsYou: true, onUpdate: true },
+  updates: { checkAutomatically: true },
   browser: { agentAccess: "full", allowedSites: [] },
   usage: {
     visible: true,
@@ -468,6 +470,37 @@ export function installMockTauri(scenario: string): void {
   };
   const fileContents = new Map<string, { content: string; hash: string }>();
   let writeCounter = 0;
+  // The update flow in miniature: a check finds 0.1.1, and an install reports its download.
+  let updateStatus: UpdateStatus = {
+    currentVersion: "0.1.0",
+    checkedAt: null,
+    phase: { kind: "idle" },
+  };
+  function publishUpdate(phase: UpdateStatus["phase"]): UpdateStatus {
+    updateStatus = { ...updateStatus, phase };
+    void emit("update-status-changed", {
+      status: structuredClone(updateStatus),
+    });
+    return structuredClone(updateStatus);
+  }
+  async function checkMockUpdate(): Promise<UpdateStatus> {
+    publishUpdate({ kind: "checking" });
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    updateStatus = { ...updateStatus, checkedAt: new Date().toISOString() };
+    return publishUpdate({
+      kind: "available",
+      version: "0.1.1",
+      notes: "Faster terminal scrolling and fixes for the file explorer.",
+      date: new Date().toISOString(),
+    });
+  }
+  async function installMockUpdate(): Promise<UpdateStatus> {
+    for (const percent of [25, 60, 100]) {
+      publishUpdate({ kind: "downloading", version: "0.1.1", percent });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    return publishUpdate({ kind: "readyToRestart", version: "0.1.1" });
+  }
   const probe: { configFileOpened: boolean; revealed: string | null } = {
     configFileOpened: false,
     revealed: null,
@@ -1204,6 +1237,14 @@ export function installMockTauri(scenario: string): void {
         }
         case "reveal_in_file_manager":
           probe.revealed = `${String(args.worktreePath)}::${String(args.relativePath)}`;
+          return null;
+        case "get_update_status":
+          return structuredClone(updateStatus);
+        case "check_for_updates":
+          return await checkMockUpdate();
+        case "install_update":
+          return await installMockUpdate();
+        case "restart_to_update":
           return null;
         case "list_shells":
           return ["/bin/bash", "/bin/zsh", "/usr/bin/fish"];

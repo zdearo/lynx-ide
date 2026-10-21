@@ -26,6 +26,8 @@ import { TerminalWorkspace } from "@/terminal/TerminalWorkspace";
 import { StatusBar } from "@/status-bar/StatusBar";
 import { copy } from "@/ui-copy";
 import { notifyAgentStatus } from "@/notifications/notify-agent-status";
+import { notifyUpdate } from "@/updates/notify-update";
+import { useUpdateStore } from "@/updates/update-store";
 import { applyWorktreeChange } from "@/watching/apply-worktree-change";
 import { useWorktreeWatch } from "@/watching/use-worktree-watch";
 import { useLinkedFolderSync } from "@/workspace/use-linked-folder-sync";
@@ -83,6 +85,7 @@ function App() {
       useTerminalStore.getState().load(),
       useConfigStore.getState().load(),
       useAgentCatalogStore.getState().load(),
+      useUpdateStore.getState().load(),
     ]).catch((error: unknown) => {
       toast.error(copy.sidebar.loadError, { description: errorMessage(error) });
     });
@@ -133,6 +136,12 @@ function App() {
       useConfigStore.getState().apply(payload.snapshot);
     });
 
+    // The update check runs in the background; a new version is announced when it is found.
+    const unlistenUpdate = events.updateStatusChanged.listen(({ payload }) => {
+      notifyUpdate(payload.status);
+      useUpdateStore.getState().apply(payload.status);
+    });
+
     // Worktrees can change outside the app; coming back to the window is when it matters.
     let lastRefresh = 0;
     const refreshOnFocus = () => {
@@ -152,6 +161,7 @@ function App() {
       void unlistenAgentStatus.then((unlisten) => unlisten());
       void unlistenWorktree.then((unlisten) => unlisten());
       void unlistenConfig.then((unlisten) => unlisten());
+      void unlistenUpdate.then((unlisten) => unlisten());
       void unlistenBrowser.then((unlisten) => unlisten());
       void unlistenAgentBrowser.then((unlisten) => unlisten());
       void unlistenAgentReleased.then((unlisten) => unlisten());

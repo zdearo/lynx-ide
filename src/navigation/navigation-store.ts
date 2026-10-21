@@ -13,12 +13,14 @@ interface NavigationState {
   /** Narrow layout: the primary bar and side panel slide in over the terminal. */
   drawerOpen: boolean;
   settingsOpen: boolean;
+  /** The settings section to open on, when something elsewhere links to one. Null: the first. */
+  settingsSection: string | null;
 
   /** Clicking the active view again hides the panel, like the VS Code activity bar. */
   selectView: (view: NavigationViewId, wide: boolean) => void;
   togglePanel: (wide: boolean) => void;
   setDrawerOpen: (open: boolean) => void;
-  openSettings: () => void;
+  openSettings: (section?: string) => void;
   closeSettings: () => void;
 }
 
@@ -27,6 +29,7 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
   panelCollapsed: readFlag(PANEL_COLLAPSED_KEY),
   drawerOpen: false,
   settingsOpen: false,
+  settingsSection: null,
 
   selectView(view, wide) {
     const { activeView, panelCollapsed } = get();
@@ -51,8 +54,9 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
   },
 
   setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
-  openSettings: () => set({ settingsOpen: true }),
-  closeSettings: () => set({ settingsOpen: false }),
+  openSettings: (section) =>
+    set({ settingsOpen: true, settingsSection: section ?? null }),
+  closeSettings: () => set({ settingsOpen: false, settingsSection: null }),
 }));
 
 // localStorage can be blocked; these are conveniences, not state anyone depends on.

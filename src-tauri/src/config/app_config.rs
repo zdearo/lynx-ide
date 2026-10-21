@@ -151,7 +151,7 @@ pub struct GitConfig {
     pub commit_message_instructions: Option<String>,
 }
 
-/// When Lynx sends a system notification about an agent, while the window is not in front.
+/// When Lynx sends a system notification, while the window is not in front.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationsConfig {
@@ -159,6 +159,8 @@ pub struct NotificationsConfig {
     pub on_done: bool,
     /// An agent is waiting for an answer or a permission.
     pub on_needs_you: bool,
+    /// A new version of Lynx is out.
+    pub on_update: bool,
 }
 
 impl Default for NotificationsConfig {
@@ -166,6 +168,23 @@ impl Default for NotificationsConfig {
         Self {
             on_done: true,
             on_needs_you: true,
+            on_update: true,
+        }
+    }
+}
+
+/// How Lynx looks for new versions of itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatesConfig {
+    /// Look for a new version when Lynx starts and every few hours. Checking by hand always works.
+    pub check_automatically: bool,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check_automatically: true,
         }
     }
 }
@@ -245,6 +264,7 @@ pub struct AppConfig {
     pub notifications: NotificationsConfig,
     pub browser: BrowserConfig,
     pub usage: UsageConfig,
+    pub updates: UpdatesConfig,
 }
 
 /// One thing wrong with the config, addressed by its dotted key (`terminal.fontSize`).
@@ -435,6 +455,12 @@ impl AppConfig {
             "notifications.onNeedsYou" => {
                 self.notifications.on_needs_you = defaults.notifications.on_needs_you;
             }
+            "notifications.onUpdate" => {
+                self.notifications.on_update = defaults.notifications.on_update;
+            }
+            "updates.checkAutomatically" => {
+                self.updates.check_automatically = defaults.updates.check_automatically;
+            }
             "browser.agentAccess" => self.browser.agent_access = defaults.browser.agent_access,
             "browser.allowedSites" => self.browser.allowed_sites = defaults.browser.allowed_sites,
             "usage.visible" => self.usage.visible = defaults.usage.visible,
@@ -527,6 +553,14 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
         if let Some(value) = flag(notifications, "onNeedsYou", "notifications", &mut issues) {
             config.notifications.on_needs_you = value;
         }
+        if let Some(value) = flag(notifications, "onUpdate", "notifications", &mut issues) {
+            config.notifications.on_update = value;
+        }
+    }
+    if let Some(updates) = section(root, "updates", &mut issues)
+        && let Some(value) = flag(updates, "checkAutomatically", "updates", &mut issues)
+    {
+        config.updates.check_automatically = value;
     }
     if let Some(browser) = section(root, "browser", &mut issues) {
         config.browser.agent_access =
@@ -1306,6 +1340,29 @@ mod tests {
         let (config, issues) = parse(json!({ "notifications": { "onNeedsYou": "yes" } }));
         assert_eq!(keys(&issues), ["notifications.onNeedsYou"]);
         assert!(config.notifications.on_needs_you);
+    }
+
+    #[test]
+    fn update_notifications_and_automatic_checks_default_to_on() {
+        let (config, issues) = parse(json!({}));
+        assert!(issues.is_empty());
+        assert!(config.notifications.on_update);
+        assert!(config.updates.check_automatically);
+
+        let (config, issues) = parse(json!({
+            "notifications": { "onUpdate": false },
+            "updates": { "checkAutomatically": false },
+        }));
+        assert!(issues.is_empty());
+        assert!(!config.notifications.on_update);
+        assert!(!config.updates.check_automatically);
+    }
+
+    #[test]
+    fn an_invalid_update_flag_is_reported_and_keeps_the_default() {
+        let (config, issues) = parse(json!({ "updates": { "checkAutomatically": "no" } }));
+        assert_eq!(keys(&issues), ["updates.checkAutomatically"]);
+        assert!(config.updates.check_automatically);
     }
 
     #[test]

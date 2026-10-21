@@ -13,6 +13,7 @@ mod ipc;
 mod persistence;
 mod pull_request;
 mod terminal;
+mod updates;
 mod usage;
 mod watching;
 mod workspace;
@@ -83,6 +84,12 @@ pub fn run() {
             ));
             start_config_watcher(Arc::clone(&config), app.handle().clone());
             app.manage(Arc::clone(&config));
+
+            let updates = Arc::new(updates::update_service::UpdateService::new(
+                app.handle().clone(),
+            ));
+            Arc::clone(&updates).start_schedule(Arc::clone(&config));
+            app.manage(updates);
 
             let database_file = app.path().app_data_dir()?.join("app.db");
             let worktrees_config = Arc::clone(&config);

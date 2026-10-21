@@ -125,6 +125,73 @@ pub(super) fn output_of(events: &Events, id: &str) -> String {
         .collect()
 }
 
+/// The output without control sequences or whitespace. ConPTY redraws with cursor moves where a
+/// program wrote spaces, so a line can arrive in pieces; what is left is what must match.
+#[cfg(windows)]
+pub(super) fn squeezed(output: &str) -> String {
+    let mut text = String::new();
+    let mut chars = output.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => match chars.next() {
+                // CSI: parameters, then one final byte.
+                Some('[') => {
+                    for next in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&next) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: up to BEL or ESC \.
+                Some(']') => {
+                    while let Some(next) = chars.next() {
+                        if next == '\u{7}' {
+                            break;
+                        }
+                        if next == '\u{1b}' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                // Charset selection takes one more character.
+                Some('(' | ')') => {
+                    chars.next();
+                }
+                _ => {}
+            },
+            c if c.is_whitespace() || c.is_control() => {}
+            c => text.push(c),
+        }
+    }
+    text
+}
+
+/// Waits for text in a session's output, ignoring case, spaces and control sequences.
+#[cfg(windows)]
+pub(super) fn wait_for_plain_text(sink: &RecordingSink, id: &str, needle: &str) {
+    let wanted = squeezed(needle).to_lowercase();
+    sink.wait_until(&format!("{needle:?} in the output"), |events| {
+        squeezed(&output_of(events, id))
+            .to_lowercase()
+            .contains(&wanted)
+    });
+}
+
+/// ConPTY asks where the cursor is and waits for the answer before cmd draws anything. A real
+/// terminal (xterm.js) answers that; the tests have none, so they answer as one would.
+#[cfg(windows)]
+pub(super) fn answer_cursor_request(
+    sink: &RecordingSink,
+    manager: &super::terminal_manager::TerminalManager,
+    id: &str,
+) {
+    sink.wait_for_text(id, "\u{1b}[6n");
+    manager
+        .write(id, "\u{1b}[1;1R")
+        .expect("answer the cursor request");
+}
+
 pub(super) fn path_of(dir: &tempfile::TempDir) -> String {
     // cmd.exe cannot change into a `\\?\` path.
     without_verbatim_prefix(fs::canonicalize(dir.path()).expect("canonical"))

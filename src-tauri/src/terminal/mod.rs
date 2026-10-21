@@ -15,6 +15,8 @@ mod terminal_manager_tests;
 mod terminal_test_support;
 #[cfg(all(test, windows))]
 mod windows_foreground_tests;
+#[cfg(all(test, windows))]
+mod windows_terminal_tests;
 
 pub use shell_resolution::Shell;
 pub use terminal_error::TerminalError;

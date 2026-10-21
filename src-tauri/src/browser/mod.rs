@@ -59,22 +59,24 @@ pub use browser_state::{
 pub use engine_commands::BrowserEngineProgress;
 pub use page_owner::{PageOwner, SessionOwners};
 
-/// Keeps the page and its windows in step: closing the browser window moves the page back to the
-/// main window, and closing the main window closes the browser window too.
+/// Keeps the tabs and their windows in step: closing a tab's window brings the tab back to the main
+/// view, and closing the main window closes every tab window too.
 pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     if !matches!(event, tauri::WindowEvent::Destroyed) {
         return;
     }
     let app = window.app_handle();
-    if detached_window::is_main_window(window.label()) {
-        detached_window::close(app);
-    } else if detached_window::is_browser_window(window.label()) {
+    let label = window.label().to_owned();
+    if detached_window::is_main_window(&label) {
+        detached_window::close_all(app);
+    } else if let Some(page) = detached_window::page_of_label(&label) {
         let service = Arc::clone(&*app.state::<Arc<BrowserService>>());
-        service.set_detached(false);
+        let _ = service.attach_page(page);
         #[cfg(any(target_os = "linux", windows))]
         {
+            let forgotten = Arc::clone(&service);
             let _ = app.run_on_main_thread(move || {
-                platform_view::forget(&service, detached_window::LABEL);
+                platform_view::forget(&forgotten, &label);
             });
         }
         detached_window::show_main(app);

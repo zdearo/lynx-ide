@@ -2970,7 +2970,8 @@ await session("?mock=full", 1200, 760, async (p) => {
 });
 
 // An agent works the browser in the background; whoever opens it sees who is in control.
-await session("?mock=full", 1200, 760, async (p) => {
+// Wide enough for the side panel to dock: as a drawer it is modal and hides the page from getByRole.
+await session("?mock=full", 1400, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await p.waitForTimeout(400);
   check(
@@ -2986,7 +2987,10 @@ await session("?mock=full", 1200, 760, async (p) => {
     "an agent using the browser does not take over the screen",
     (await p.getByRole("toolbar", { name: "Browser" }).count()) === 0,
   );
-  await p.getByRole("button", { name: "Browser", exact: true }).click();
+  // The browser opens from one of its pages in the Browser tab of the side panel.
+  await p.keyboard.press("Control+Shift+E");
+  await p.getByRole("tab", { name: "Browser", exact: true }).click();
+  await p.getByRole("button", { name: /^Dashboard · Vite/ }).click();
   await p.waitForTimeout(500);
   check(
     "and the toolbar says what the agent is doing",
@@ -3007,10 +3011,14 @@ await session("?mock=full", 1200, 760, async (p) => {
 });
 
 // Without its engine the browser offers to download it, shows how it goes, and then opens.
-await session("?mock=full&engine=missing", 1200, 760, async (p) => {
+await session("?mock=full&engine=missing", 1400, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await p.waitForTimeout(400);
-  await p.getByRole("button", { name: "Browser", exact: true }).click();
+  await p.keyboard.press("Control+Shift+E");
+  await p.getByRole("tab", { name: "Browser", exact: true }).click();
+  await p.getByRole("button", { name: /^Dashboard · Vite/ }).click();
+  // Nothing has started the engine yet: the page offers to try again, and that starts it.
+  await p.getByRole("button", { name: "Try again", exact: true }).click();
   await p.waitForTimeout(500);
 
   check(

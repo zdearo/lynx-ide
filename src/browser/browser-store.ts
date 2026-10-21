@@ -68,10 +68,10 @@ interface BrowserStoreState {
   start: (url?: string) => Promise<void>;
   /** Goes to what was typed in the address bar. */
   navigate: (input: string) => Promise<void>;
-  /** Moves the page to a window of its own. */
-  detach: () => Promise<void>;
-  /** Brings the page back to the main window. */
-  attach: () => Promise<void>;
+  /** Moves a tab to a window of its own. */
+  detachPage: (page: number) => Promise<void>;
+  /** Brings a tab in its own window back to the main window. */
+  attachPage: (page: number) => Promise<void>;
   apply: (state: BrowserState) => void;
   loadEngine: () => Promise<void>;
   /** Downloads the engine. With `force`, an engine of the same version is installed again. */
@@ -146,18 +146,19 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
     }
   },
 
-  detach: async () => {
+  detachPage: async (page) => {
     try {
-      await unwrap(commands.browserDetach());
+      await unwrap(commands.browserPageDetach(page));
       set({ failure: null });
     } catch (error) {
       set({ failure: failureOf(error) });
     }
   },
 
-  attach: async () => {
+  attachPage: async (page) => {
     try {
-      await unwrap(commands.browserAttach());
+      await unwrap(commands.browserPageAttach(page));
+      set({ failure: null });
     } catch (error) {
       set({ failure: failureOf(error) });
     }

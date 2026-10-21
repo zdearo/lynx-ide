@@ -626,6 +626,7 @@ export function installMockTauri(scenario: string): void {
             title: "Dashboard · Vite",
             loading: false,
             agent: null,
+            detached: false,
           },
           {
             id: 2,
@@ -634,6 +635,7 @@ export function installMockTauri(scenario: string): void {
             title: "Pull request #4 · lynx-ide",
             loading: true,
             agent: null,
+            detached: false,
           },
           {
             id: 3,
@@ -642,6 +644,7 @@ export function installMockTauri(scenario: string): void {
             title: "API tokens · Docs",
             loading: false,
             agent: "claude",
+            detached: false,
           },
         ]
       : [];
@@ -660,6 +663,7 @@ export function installMockTauri(scenario: string): void {
       url: page?.url ?? "",
       title: page?.title ?? "",
       loading: page?.loading ?? false,
+      detached: page?.detached ?? false,
     };
   };
   // With no tab shown there is nothing to go to, as in the backend.
@@ -1605,6 +1609,7 @@ export function installMockTauri(scenario: string): void {
             title: "",
             loading: false,
             agent: null,
+            detached: false,
           };
           mockPages.push(page);
           setShown(page.id);
@@ -1631,6 +1636,46 @@ export function installMockTauri(scenario: string): void {
           if (shownPage === id) setShown(null);
           pagesChanged();
           return null;
+        }
+        case "browser_place":
+          // The mock draws no page, so where the engine's view sits does not matter.
+          return null;
+        case "browser_page_detach": {
+          const id = Number(args.page);
+          const page = mockPages.find((item) => item.id === id);
+          if (!page) {
+            throw { kind: "browser", message: `page not found: ${id}` };
+          }
+          page.detached = true;
+          setShown(id);
+          pagesChanged();
+          return null;
+        }
+        case "browser_page_attach": {
+          const id = Number(args.page);
+          const page = mockPages.find((item) => item.id === id);
+          if (!page) {
+            throw { kind: "browser", message: `page not found: ${id}` };
+          }
+          page.detached = false;
+          setShown(id);
+          pagesChanged();
+          return null;
+        }
+        case "browser_page_state": {
+          const id = Number(args.page);
+          const page = mockPages.find((item) => item.id === id);
+          if (!page) {
+            throw { kind: "browser", message: `page not found: ${id}` };
+          }
+          return structuredClone({
+            ...browserState,
+            page: id,
+            detached: page.detached,
+            url: page.url,
+            title: page.title,
+            loading: page.loading,
+          });
         }
         case "write_agent_prompt":
           lastAgentPrompt = String(args.prompt);

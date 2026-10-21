@@ -3,14 +3,21 @@ import { useEffect } from "react";
 import { commands, events } from "@/bindings";
 import { BrowserView } from "@/browser/BrowserView";
 import { useBrowserStore } from "@/browser/browser-store";
+import { browserWindowPage } from "@/browser/browser-window";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 
-/** What the browser window shows: the browser, and nothing else of the app. */
+/** What the window of one tab shows: the browser, and nothing else of the app. */
 export function DetachedBrowserApp() {
+  const page = browserWindowPage();
+
   useEffect(() => {
+    if (page === null) return;
+    // The backend reports every page; this window only applies the one it shows.
     const unlisten = events.browserStateChanged.listen(({ payload }) => {
-      useBrowserStore.getState().apply(payload.state);
+      if (payload.state.page === page) {
+        useBrowserStore.getState().apply(payload.state);
+      }
     });
     const unlistenAgent = events.browserAgentActivity.listen(({ payload }) => {
       useBrowserStore
@@ -21,7 +28,7 @@ export function DetachedBrowserApp() {
       useBrowserStore.getState().releaseAgent();
     });
     // The state may have changed before this window was listening.
-    void commands.browserState().then((result) => {
+    void commands.browserPageState(page).then((result) => {
       if (result.status === "ok") useBrowserStore.getState().apply(result.data);
     });
     return () => {
@@ -29,7 +36,7 @@ export function DetachedBrowserApp() {
       void unlistenAgent.then((stop) => stop());
       void unlistenReleased.then((stop) => stop());
     };
-  }, []);
+  }, [page]);
 
   return (
     <TooltipProvider delayDuration={400}>

@@ -8,8 +8,8 @@ vi.mock("@/bindings", () => ({
   commands: {
     browserOpen: vi.fn(),
     browserNavigate: vi.fn(),
-    browserDetach: vi.fn(),
-    browserAttach: vi.fn(),
+    browserPageDetach: vi.fn(),
+    browserPageAttach: vi.fn(),
     browserEngineStatus: vi.fn(),
     browserEngineInstall: vi.fn(),
     browserEngineRemove: vi.fn(),
@@ -146,43 +146,43 @@ describe("state from the engine", () => {
 });
 
 describe("a window of its own", () => {
-  it("asks the backend to move the page, and does not guess the result", async () => {
-    useBrowserStore.setState({ state: running });
-    api.browserDetach.mockResolvedValue(ok(null));
+  it("asks the backend to move the tab, and does not guess the result", async () => {
+    useBrowserStore.setState({ state: { ...running, page: 1 } });
+    api.browserPageDetach.mockResolvedValue(ok(null));
 
-    await useBrowserStore.getState().detach();
+    await useBrowserStore.getState().detachPage(1);
 
-    expect(api.browserDetach).toHaveBeenCalledOnce();
-    // Where the page is shown arrives as an event, from the backend that knows.
+    expect(api.browserPageDetach).toHaveBeenCalledWith(1);
+    // Whether the tab is in its own window arrives as an event, from the backend that knows.
     expect(useBrowserStore.getState().state.detached).toBe(false);
   });
 
-  it("follows the backend when the page is detached and brought back", () => {
-    useBrowserStore.getState().apply({ ...running, detached: true });
+  it("applies the state of the page it is given, detached or not", () => {
+    useBrowserStore.getState().apply({ ...running, page: 1, detached: true });
     expect(useBrowserStore.getState().state.detached).toBe(true);
 
-    useBrowserStore.getState().apply({ ...running, detached: false });
+    useBrowserStore.getState().apply({ ...running, page: 1, detached: false });
     expect(useBrowserStore.getState().state.detached).toBe(false);
   });
 
-  it("shows why the page could not be moved", async () => {
-    api.browserDetach.mockResolvedValue(
+  it("shows why the tab could not be moved", async () => {
+    api.browserPageDetach.mockResolvedValue(
       failure("browser", "the browser is not running"),
     );
 
-    await useBrowserStore.getState().detach();
+    await useBrowserStore.getState().detachPage(1);
 
     expect(useBrowserStore.getState().failure?.message).toBe(
       "the browser is not running",
     );
   });
 
-  it("brings the page back through the backend", async () => {
-    api.browserAttach.mockResolvedValue(ok(null));
+  it("brings the tab back through the backend", async () => {
+    api.browserPageAttach.mockResolvedValue(ok(null));
 
-    await useBrowserStore.getState().attach();
+    await useBrowserStore.getState().attachPage(1);
 
-    expect(api.browserAttach).toHaveBeenCalledOnce();
+    expect(api.browserPageAttach).toHaveBeenCalledWith(1);
   });
 });
 

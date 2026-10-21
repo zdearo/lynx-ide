@@ -296,6 +296,7 @@ export const copy = {
       untitled: "New tab",
       close: (title: string) => `Close ${title}`,
       working: (agent: string) => `${agent} is working`,
+      inWindow: "In its own window",
     },
     agentNames: {
       claude: "Claude Code",

@@ -29,11 +29,12 @@ export function BrowserView() {
   const running = state.status === "running";
   // The engine runs but no tab is shown: the page area offers to open one instead.
   const showing = running && state.page !== null;
+  const page = state.page;
 
   // Where the page goes follows this box. Polling every frame is deliberate: a resized window or
   // a moved panel shifts the box without resizing it, and an observer would miss that.
   useEffect(() => {
-    if (!showing) return;
+    if (!showing || page === null) return;
     let frame = 0;
     let last = "";
     const tick = () => {
@@ -46,7 +47,13 @@ export function BrowserView() {
       if (key !== last) {
         last = key;
         if (box && !covered) {
-          void commands.browserPlace(box.left, box.top, box.width, box.height);
+          void commands.browserPlace(
+            page,
+            box.left,
+            box.top,
+            box.width,
+            box.height,
+          );
         } else {
           void commands.browserHide();
         }
@@ -58,7 +65,7 @@ export function BrowserView() {
       cancelAnimationFrame(frame);
       void commands.browserHide();
     };
-  }, [showing]);
+  }, [showing, page]);
 
   return (
     <div className="absolute inset-0 flex flex-col bg-background">
@@ -89,8 +96,8 @@ function Toolbar() {
   const hasPage = running && state.page !== null;
   const [typed, setTyped] = useState<string | null>(null);
 
-  const detach = useBrowserStore((s) => s.detach);
-  const attach = useBrowserStore((s) => s.attach);
+  const detachPage = useBrowserStore((s) => s.detachPage);
+  const attachPage = useBrowserStore((s) => s.attachPage);
   const agentAction = useBrowserStore((s) => s.agentAction);
   const inOwnWindow = isBrowserWindow();
   const reload = () => void commands.browserReload(false);
@@ -159,7 +166,10 @@ function Toolbar() {
       {inOwnWindow ? (
         <TooltipIconButton
           label={copy.browser.attach}
-          onClick={() => void attach()}
+          disabled={!hasPage}
+          onClick={() => {
+            if (state.page !== null) void attachPage(state.page);
+          }}
         >
           <MinimizeWindowGlyph18 />
         </TooltipIconButton>
@@ -167,7 +177,9 @@ function Toolbar() {
         <TooltipIconButton
           label={copy.browser.detach}
           disabled={!hasPage}
-          onClick={() => void detach()}
+          onClick={() => {
+            if (state.page !== null) void detachPage(state.page);
+          }}
         >
           <OpenInNewWindowGlyph18 />
         </TooltipIconButton>

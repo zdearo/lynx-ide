@@ -83,6 +83,11 @@ export function BrowserPageTile({
               </span>
             </span>
           )}
+          {page.detached && (
+            <span className="block truncate text-meta text-muted-foreground">
+              {copy.browser.panel.inWindow}
+            </span>
+          )}
         </span>
       </button>
       <TooltipIconButton

@@ -805,7 +805,7 @@ mod tests {
     }
 
     impl FrameSink for Nowhere {
-        fn frame(&self, _frame: Frame) {}
+        fn frame(&self, _page: PageId, _frame: Frame) {}
     }
 
     fn owner() -> PageOwner {
@@ -968,7 +968,7 @@ mod tests {
             Arc::new(Nowhere),
             Arc::new(Nowhere),
         ));
-        service.resize(800, 600, 1.0);
+        service.set_default_size(800, 600, 1.0);
         let browser = AgentBrowser::new(
             Arc::clone(&service),
             Arc::new(Policy(AgentBrowserAccess::Full, Vec::new())),

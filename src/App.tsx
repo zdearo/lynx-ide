@@ -108,7 +108,9 @@ function App() {
 
     // The config file is meant to be edited by hand, so changes can arrive at any time.
     const unlistenBrowser = events.browserStateChanged.listen(({ payload }) => {
-      useBrowserStore.getState().apply(payload.state);
+      // A tab in its own window reports to that window; the main one shows the rest.
+      if (!payload.state.detached)
+        useBrowserStore.getState().apply(payload.state);
     });
 
     const unlistenAgentBrowser = events.browserAgentActivity.listen(

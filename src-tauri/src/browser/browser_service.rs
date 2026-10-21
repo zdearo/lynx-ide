@@ -69,7 +69,8 @@ pub trait BrowserEvents: Send + Sync + 'static {
 
 /// Where frames go to be shown. Called on the link's thread, so it must not block.
 pub trait FrameSink: Send + Sync + 'static {
-    fn frame(&self, frame: Frame);
+    /// A frame of `page`: the shown page, or a page in its own window.
+    fn frame(&self, page: PageId, frame: Frame);
 
     /// An agent's pointer or control changed, so the view must repaint and keep animating.
     fn pointer_changed(&self) {}
@@ -98,6 +99,10 @@ struct Page {
     turn: Arc<Mutex<()>>,
     /// A thread is waiting for the agent's control of this page to end.
     watching: Arc<AtomicBool>,
+    /// The tab is in its own window, not in the main view.
+    detached: bool,
+    /// The size the person's area of this page has, once a view has given one.
+    view: Option<View>,
     /// The harness of the agent in control of the page, while it is.
     agent: Option<String>,
     /// The last picture of the page, as base64 PNG, and when it was made.
@@ -119,6 +124,8 @@ impl Page {
             agent: None,
             thumbnail: None,
             thumbnail_at: None,
+            detached: false,
+            view: None,
         }
     }
 
@@ -130,6 +137,7 @@ impl Page {
             title: self.content.title.clone(),
             loading: self.content.loading,
             agent: self.agent.clone(),
+            detached: self.detached,
         }
     }
 }
@@ -149,9 +157,8 @@ struct Inner {
     view: Option<View>,
     /// Whether the person sees the browser now; only the shown page is ever drawn.
     visible: bool,
-    detached: bool,
-    /// The state the interface was last told about, so an unchanged one is not sent again.
-    published: BrowserState,
+    /// The state the interface was last told about for each page, so an unchanged one is not sent again.
+    published: HashMap<Option<PageId>, BrowserState>,
     /// The page list the interface was last told about, for the same reason.
     published_pages: Vec<BrowserPageInfo>,
 }
@@ -171,8 +178,9 @@ impl Inner {
             can_go_back: content.can_go_back,
             can_go_forward: content.can_go_forward,
             error: self.engine_error.clone().or(content.error),
-            detached: self.detached,
-            page: self.shown,
+            detached: page
+                .is_some_and(|id| self.pages.get(&id).is_some_and(|entry| entry.detached)),
+            page,
         }
     }
 
@@ -226,8 +234,7 @@ impl BrowserService {
                 next_page: 1,
                 view: None,
                 visible: true,
-                detached: false,
-                published: BrowserState::default(),
+                published: HashMap::new(),
                 published_pages: Vec::new(),
             }),
             starting: Mutex::new(()),
@@ -329,10 +336,21 @@ impl BrowserService {
 
     /// Tells the interface when what it shows has changed, and only then.
     fn publish(&self, inner: &mut Inner) {
-        let state = inner.describe(inner.shown);
-        if state != inner.published {
-            inner.published = state.clone();
-            self.events.state_changed(&state);
+        // The shown page and every page in its own window each have a state of their own.
+        let mut described = vec![inner.shown];
+        described.extend(
+            inner
+                .pages
+                .iter()
+                .filter(|(_, entry)| entry.detached)
+                .map(|(id, _)| Some(*id)),
+        );
+        for key in described {
+            let state = inner.describe(key);
+            if inner.published.get(&key) != Some(&state) {
+                inner.published.insert(key, state.clone());
+                self.events.state_changed(&state);
+            }
         }
         let pages = inner.page_list();
         if pages != inner.published_pages {
@@ -510,31 +528,91 @@ impl BrowserService {
 
     /// Shows `page` to the person, and hides the page that was shown before.
     pub fn show_page(&self, page: PageId) -> Result<BrowserState, BrowserError> {
-        let (link, previous, visible) = {
+        let previous = {
             let mut inner = self.lock();
             if !inner.pages.get(&page).is_some_and(|entry| entry.created) {
                 return Err(BrowserError::NotRunning);
             }
+            // A tab in its own window is not shown here: its window is brought forward instead.
+            if inner.pages.get(&page).is_some_and(|entry| entry.detached) {
+                return Ok(inner.describe(Some(page)));
+            }
+            inner.shown.replace(page)
+        };
+        if let Some(previous) = previous.filter(|previous| *previous != page) {
+            self.apply_visibility(previous);
+        }
+        self.apply_visibility(page);
+        let mut inner = self.lock();
+        self.publish(&mut inner);
+        Ok(inner.describe(Some(page)))
+    }
+
+    /// Moves a page into its own window. The main view shows nothing if it was the shown page.
+    pub fn detach_page(&self, page: PageId) -> Result<(), BrowserError> {
+        {
+            let mut inner = self.lock();
+            if !inner.pages.get(&page).is_some_and(|entry| entry.created) {
+                return Err(BrowserError::NotRunning);
+            }
+            if let Some(entry) = inner.pages.get_mut(&page) {
+                entry.detached = true;
+            }
+            if inner.shown == Some(page) {
+                inner.shown = None;
+            }
+            self.publish(&mut inner);
+        }
+        self.apply_visibility(page);
+        Ok(())
+    }
+
+    /// Brings a page back from its own window into the main view, where it is shown.
+    pub fn attach_page(&self, page: PageId) -> Result<BrowserState, BrowserError> {
+        let previous = {
+            let mut inner = self.lock();
+            let Some(entry) = inner.pages.get_mut(&page) else {
+                return Err(BrowserError::NotRunning);
+            };
+            if !entry.detached {
+                return Ok(inner.describe(Some(page)));
+            }
+            entry.detached = false;
             let previous = inner.shown.replace(page);
-            (inner.link.clone(), previous, inner.visible)
+            self.publish(&mut inner);
+            previous
+        };
+        if let Some(previous) = previous.filter(|previous| *previous != page) {
+            self.apply_visibility(previous);
+        }
+        self.apply_visibility(page);
+        Ok(self.state())
+    }
+
+    /// Whether a page is in its own window.
+    pub fn is_detached(&self, page: PageId) -> bool {
+        self.lock()
+            .pages
+            .get(&page)
+            .is_some_and(|entry| entry.detached)
+    }
+
+    /// Tells the engine whether a page is painted: the shown page while the person sees the browser,
+    /// and any page in its own window.
+    fn apply_visibility(&self, page: PageId) {
+        let (link, visible) = {
+            let inner = self.lock();
+            if !inner.pages.get(&page).is_some_and(|entry| entry.created) {
+                return;
+            }
+            (inner.link.clone(), wants_visible(&inner, page))
         };
         if let Some(link) = link {
-            if let Some(previous) = previous.filter(|previous| *previous != page) {
-                let _ = link.send(&ToHost::Page {
-                    page: previous,
-                    command: PageCommand::Visible { visible: false },
-                });
-            }
             let _ = link.send(&ToHost::Page {
                 page,
                 command: PageCommand::Visible { visible },
             });
         }
-        {
-            let mut inner = self.lock();
-            self.publish(&mut inner);
-        }
-        Ok(self.state())
     }
 
     /// Closes a page. Nothing is shown afterwards if it was the shown one. A page that does not
@@ -631,16 +709,7 @@ impl BrowserService {
             .map(|entry| Arc::clone(&entry.turn))
     }
 
-    /// The pointer drawn over the shown page, if there is one.
-    pub fn active_pointer(&self) -> Option<Arc<AgentPointer>> {
-        let inner = self.lock();
-        inner
-            .shown
-            .and_then(|page| inner.pages.get(&page))
-            .map(|entry| Arc::clone(&entry.pointer))
-    }
-
-    fn pointer_of(&self, page: PageId) -> Option<Arc<AgentPointer>> {
+    pub fn pointer_of(&self, page: PageId) -> Option<Arc<AgentPointer>> {
         self.lock()
             .pages
             .get(&page)
@@ -812,12 +881,16 @@ impl BrowserService {
     /// waiting for it are woken.
     fn on_page_created(&self, page: PageId) {
         let mut inner = self.lock();
-        let shown = inner.shown == Some(page) && inner.visible;
-        let view = inner.view;
+        let visible = wants_visible(&inner, page);
+        let view = inner
+            .pages
+            .get(&page)
+            .and_then(|entry| entry.view)
+            .or(inner.view);
         if let Some(link) = inner.link.clone() {
             let _ = link.send(&ToHost::Page {
                 page,
-                command: PageCommand::Visible { visible: shown },
+                command: PageCommand::Visible { visible },
             });
             if let Some(view) = view {
                 let _ = link.send(&ToHost::Page {
@@ -850,7 +923,8 @@ impl BrowserService {
                 let (shown, due) = {
                     let inner = self.lock();
                     (
-                        inner.shown == Some(page),
+                        inner.shown == Some(page)
+                            || inner.pages.get(&page).is_some_and(|entry| entry.detached),
                         inner.pages.get(&page).is_some_and(|entry| {
                             entry
                                 .thumbnail_at
@@ -865,11 +939,14 @@ impl BrowserService {
                             self.store_thumbnail(page, &png);
                         }
                         if shown {
-                            self.frames.frame(Frame {
-                                width,
-                                height,
-                                pixels,
-                            });
+                            self.frames.frame(
+                                page,
+                                Frame {
+                                    width,
+                                    height,
+                                    pixels,
+                                },
+                            );
                         }
                     }
                 }
@@ -1001,72 +1078,73 @@ impl BrowserService {
         }
     }
 
-    /// The size of the area the person sees, in logical pixels, and its screen's scale. Every page
-    /// is given it.
-    pub fn resize(&self, width: u32, height: u32, scale: f32) {
+    /// The size pages get before a view has given one: the size of the area the person sees, in
+    /// logical pixels, and its screen's scale. The views give it on every placement.
+    #[cfg(test)]
+    pub fn set_default_size(&self, width: u32, height: u32, scale: f32) {
+        self.lock().view = Some(View {
+            width,
+            height,
+            scale,
+        });
+    }
+
+    pub fn resize_page(&self, page: PageId, width: u32, height: u32, scale: f32) {
         let view = View {
             width,
             height,
             scale,
         };
-        let (link, pages) = {
+        let link = {
             let mut inner = self.lock();
             inner.view = Some(view);
-            let pages: Vec<PageId> = inner
-                .pages
-                .iter()
-                .filter(|(_, entry)| entry.created)
-                .map(|(page, _)| *page)
-                .collect();
-            (inner.link.clone(), pages)
+            let created = match inner.pages.get_mut(&page) {
+                Some(entry) => {
+                    entry.view = Some(view);
+                    entry.created
+                }
+                None => false,
+            };
+            created.then(|| inner.link.clone()).flatten()
         };
         if let Some(link) = link {
-            for page in pages {
-                let _ = link.send(&ToHost::Page {
-                    page,
-                    command: PageCommand::Resize {
-                        width,
-                        height,
-                        scale,
-                    },
-                });
-            }
+            let _ = link.send(&ToHost::Page {
+                page,
+                command: PageCommand::Resize {
+                    width,
+                    height,
+                    scale,
+                },
+            });
         }
     }
 
     /// Whether the person sees the browser now. The shown page follows it.
     pub fn set_visible(&self, visible: bool) {
-        let (link, page) = {
+        let shown = {
             let mut inner = self.lock();
             inner.visible = visible;
-            let created = inner
-                .shown
-                .filter(|page| inner.pages.get(page).is_some_and(|entry| entry.created));
-            (inner.link.clone(), created)
+            inner.shown
         };
-        if let (Some(link), Some(page)) = (link, page) {
-            let _ = link.send(&ToHost::Page {
-                page,
-                command: PageCommand::Visible { visible },
-            });
+        if let Some(page) = shown {
+            self.apply_visibility(page);
         }
     }
 
     /// A page an agent works on is painted only while a tool runs on it: a hidden page does not
     /// take clicks. The shown page is governed by `set_visible`, not by this.
     pub fn set_page_working(&self, page: PageId, working: bool) {
-        let link = {
+        let (link, visible) = {
             let inner = self.lock();
-            let created = inner.pages.get(&page).is_some_and(|entry| entry.created);
-            if inner.shown == Some(page) || !created {
+            if !inner.pages.get(&page).is_some_and(|entry| entry.created) {
                 return;
             }
-            inner.link.clone()
+            (inner.link.clone(), working || wants_visible(&inner, page))
         };
         if let Some(link) = link {
             let _ = link.send(&ToHost::Page {
                 page,
-                command: PageCommand::Visible { visible: working },
+                command: PageCommand::Visible { visible },
             });
         }
     }
@@ -1086,15 +1164,6 @@ impl BrowserService {
         }
     }
 
-    /// Records that the shown page is in its own window (or back in the main one).
-    pub fn set_detached(&self, detached: bool) {
-        let mut inner = self.lock();
-        if inner.detached != detached {
-            inner.detached = detached;
-            self.publish(&mut inner);
-        }
-    }
-
     /// Stops the engine. Safe to call when it is not running.
     pub fn shutdown(&self) {
         self.stopping.store(true, Ordering::Release);
@@ -1109,6 +1178,13 @@ impl BrowserService {
         inner.engine_error = None;
         self.publish(&mut inner);
     }
+}
+
+/// Whether a page is painted now: the shown page while the person sees the browser, or a page in
+/// its own window.
+fn wants_visible(inner: &Inner, page: PageId) -> bool {
+    inner.pages.get(&page).is_some_and(|entry| entry.detached)
+        || (inner.shown == Some(page) && inner.visible)
 }
 
 /// The message in a DevTools error object, which looks like `{"code": -32000, "message": "..."}`.
@@ -1147,7 +1223,7 @@ mod tests {
     struct Nowhere;
 
     impl FrameSink for Nowhere {
-        fn frame(&self, _frame: Frame) {}
+        fn frame(&self, _page: PageId, _frame: Frame) {}
     }
 
     fn service(home: &std::path::Path) -> (Arc<BrowserService>, Arc<Recorder>) {
@@ -1228,7 +1304,7 @@ mod tests {
     fn a_view_size_given_early_is_remembered() {
         let home = tempfile::tempdir().unwrap();
         let (service, _) = service(home.path());
-        service.resize(480, 320, 2.0);
+        service.resize_page(1, 480, 320, 2.0);
         let view = service.lock().view.unwrap();
         assert_eq!((view.width, view.height, view.scale), (480, 320, 2.0));
     }
@@ -1334,7 +1410,7 @@ mod tests {
 
         struct Counting(Arc<AtomicUsize>);
         impl FrameSink for Counting {
-            fn frame(&self, frame: Frame) {
+            fn frame(&self, _page: PageId, frame: Frame) {
                 assert_eq!(
                     frame.pixels.len(),
                     frame.width as usize * frame.height as usize * 4
@@ -1393,7 +1469,7 @@ mod tests {
         };
 
         // The size is given before the engine exists, and must reach it once it does.
-        service.resize(400, 300, 1.0);
+        service.set_default_size(400, 300, 1.0);
         service
             .new_page(workspace("/test"), Some(&format!("127.0.0.1:{port}")))
             .expect("the engine starts");
@@ -1439,27 +1515,59 @@ mod tests {
     }
 
     #[test]
-    fn where_the_page_is_shown_is_told_once_and_survives_other_changes() {
+    fn a_tab_detached_leaves_the_main_view_and_comes_back_on_attach() {
         let home = tempfile::tempdir().unwrap();
         let (service, recorder) = service(home.path());
+        let first = made_page(&service, workspace("/a"), "https://a.test/");
+        let second = made_page(&service, workspace("/a"), "https://b.test/");
+        service.lock().shown = Some(first);
 
-        service.set_detached(true);
-        service.set_detached(true);
-        assert_eq!(
-            recorder.states.lock().unwrap().len(),
-            1,
-            "an unchanged value is not news"
+        service.detach_page(first).unwrap();
+        assert!(service.is_detached(first));
+        assert_eq!(service.state().page, None, "the main view shows nothing");
+        let window = service.state_of(first);
+        assert_eq!(window.url, "https://a.test/");
+        assert!(window.detached, "its own state says it is in a window");
+        assert!(
+            recorder
+                .states
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|state| state.page == Some(first) && state.detached),
+            "the window of the tab is told about its state"
         );
-        assert!(service.state().detached);
 
-        // A failed start replaces the engine's status; the window it is shown in must not be lost.
-        let _ = service.open(Some("example.com"));
-        let state = service.state();
-        assert_eq!(state.status, BrowserStatus::Failed);
-        assert!(state.detached);
+        // Another tab goes to the main view and leaves the window alone.
+        service.show_page(second).unwrap();
+        assert_eq!(service.state().page, Some(second));
+        assert!(service.is_detached(first));
 
-        service.set_detached(false);
-        assert!(!service.state().detached);
+        // Asking for the detached tab does not take it from its window.
+        service.show_page(first).unwrap();
+        assert_eq!(service.state().page, Some(second));
+
+        service.attach_page(first).unwrap();
+        assert_eq!(service.state().page, Some(first));
+        assert!(!service.is_detached(first));
+    }
+
+    #[test]
+    fn two_tabs_can_each_be_in_their_own_window() {
+        let home = tempfile::tempdir().unwrap();
+        let (service, _) = service(home.path());
+        let first = made_page(&service, workspace("/a"), "");
+        let second = made_page(&service, workspace("/a"), "");
+        service.lock().shown = Some(first);
+        service.detach_page(first).unwrap();
+        service.show_page(second).unwrap();
+        service.detach_page(second).unwrap();
+        assert!(service.is_detached(first) && service.is_detached(second));
+        assert_eq!(service.state().page, None);
+        assert_eq!(
+            service.pages().iter().filter(|page| page.detached).count(),
+            2
+        );
     }
 
     #[test]

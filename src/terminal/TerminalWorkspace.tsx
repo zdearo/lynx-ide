@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { useDialogStore } from "@/dialog-store";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { BrowserView } from "@/browser/BrowserView";
-import { DetachedNotice } from "@/browser/DetachedNotice";
 import { useBrowserStore } from "@/browser/browser-store";
 import { FileTabs } from "@/editor/FileTabs";
 import { activeFileOf, useEditorStore } from "@/editor/editor-store";
@@ -54,7 +53,6 @@ export function TerminalWorkspace({
   const hasSessions = sessions.some((session) => session.worktreePath === path);
   const openFile = useEditorStore((state) => activeFileOf(state, path));
   const browserOpen = useBrowserStore((state) => state.open);
-  const browserDetached = useBrowserStore((state) => state.state.detached);
 
   // Looking at a finished agent is what clears its "done" mark.
   const activeFinished = sessions.some(
@@ -65,6 +63,11 @@ export function TerminalWorkspace({
       useTerminalStore.getState().markSeen(activeId);
     }
   }, [activeFinished, activeId]);
+
+  // A file opened from the explorer or the tabs comes in front of the browser.
+  useEffect(() => {
+    if (openFile) useBrowserStore.getState().setOpen(false);
+  }, [openFile]);
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">
@@ -103,8 +106,7 @@ export function TerminalWorkspace({
         {loaded && selected && !hasSessions && !openFile && !browserOpen && (
           <EmptyWorktree selected={selected} />
         )}
-        {browserOpen &&
-          (browserDetached ? <DetachedNotice /> : <BrowserView />)}
+        {browserOpen && <BrowserView />}
       </div>
     </main>
   );

@@ -30,7 +30,8 @@ pub struct BrowserState {
     pub error: Option<String>,
     /// The page is shown in its own window, not in the main one.
     pub detached: bool,
-    /// The page the person sees, or None when no tab is shown.
+    /// The page this state describes: the one shown to the person, or the one in its own window.
+    /// None when no page is shown.
     pub page: Option<u32>,
 }
 
@@ -52,6 +53,8 @@ pub struct BrowserPageInfo {
     pub loading: bool,
     /// The harness of the agent working on this page right now ("claude", "codex"...), or None.
     pub agent: Option<String>,
+    /// The tab is in its own window.
+    pub detached: bool,
 }
 
 /// The last picture of a page, as a PNG at most 240 pixels wide.

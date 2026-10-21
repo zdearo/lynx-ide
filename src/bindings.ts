@@ -7,8 +7,8 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 export const commands = {
 	appInfo: () => __TAURI_INVOKE<AppInfo>("app_info"),
 	/**
-	 *  Starts the browser engine if needed and optionally opens an address. The engine's start-up
-	 *  blocks for a moment, so this runs off the async runtime.
+	 *  Starts the browser engine if needed and optionally opens an address in the shown page. The
+	 *  engine's start-up blocks for a moment, so this runs off the async runtime.
 	 */
 	browserOpen: (url: string | null) => typedError<BrowserState, IpcError>(__TAURI_INVOKE("browser_open", { url })),
 	browserNavigate: (url: string) => typedError<null, IpcError>(__TAURI_INVOKE("browser_navigate", { url })),
@@ -24,25 +24,30 @@ export const commands = {
 	 *  for a moment, so this runs off the async runtime.
 	 */
 	browserPageNew: (worktreePath: string, url: string | null) => typedError<BrowserPageInfo, IpcError>(__TAURI_INVOKE("browser_page_new", { worktreePath, url })),
+	/**
+	 *  Shows a page to the person. A page in its own window is not taken from it: that window is
+	 *  brought forward instead.
+	 */
 	browserPageShow: (page: number) => typedError<BrowserState, IpcError>(__TAURI_INVOKE("browser_page_show", { page })),
-	/**  Closes a page. A page that is already gone counts as closed. */
+	/**  Closes a page, and its window if it has one. A page that is already gone counts as closed. */
 	browserPageClose: (page: number) => typedError<null, IpcError>(__TAURI_INVOKE("browser_page_close", { page })),
 	/**
 	 *  Shows the page in the window this is called from, over the rectangle the interface reserved
-	 *  for it: logical pixels, relative to the top-left corner of the window's content. A page is
-	 *  shown in one window at a time, so any other window loses it.
+	 *  for it: logical pixels, relative to the top-left corner of the window's content.
 	 */
-	browserPlace: (x: number | null, y: number | null, width: number | null, height: number | null) => typedError<null, IpcError>(__TAURI_INVOKE("browser_place", { x, y, width, height })),
+	browserPlace: (page: number, x: number | null, y: number | null, width: number | null, height: number | null) => typedError<null, IpcError>(__TAURI_INVOKE("browser_place", { page, x, y, width, height })),
 	/**
 	 *  Takes the page off the window this is called from, when its view is not shown or something
 	 *  must be drawn over it.
 	 */
 	browserHide: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_hide")),
-	/**  Moves the page to a window of its own. The page keeps running: only where it is shown changes. */
-	browserDetach: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_detach")),
-	/**  Brings the page back to the main window and closes the browser window. */
-	browserAttach: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_attach")),
-	/**  Stops the engine. The next open starts a new one. */
+	/**  The state of one page, for the window that shows it. */
+	browserPageState: (page: number) => typedError<BrowserState, IpcError>(__TAURI_INVOKE("browser_page_state", { page })),
+	/**  Moves a page into its own window. The main view stops showing it; the page keeps running. */
+	browserPageDetach: (page: number) => typedError<null, IpcError>(__TAURI_INVOKE("browser_page_detach", { page })),
+	/**  Brings a page back from its own window into the main view, and closes that window. */
+	browserPageAttach: (page: number) => typedError<null, IpcError>(__TAURI_INVOKE("browser_page_attach", { page })),
+	/**  Stops the engine. The next open starts a new one, and every tab window closes with it. */
 	browserClose: () => typedError<null, IpcError>(__TAURI_INVOKE("browser_close")),
 	browserEngineStatus: () => typedError<EngineStatus, IpcError>(__TAURI_INVOKE("browser_engine_status")),
 	/**
@@ -348,6 +353,8 @@ export type BrowserPageInfo = {
 	loading: boolean,
 	/**  The harness of the agent working on this page right now ("claude", "codex"...), or None. */
 	agent: string | null,
+	/**  The tab is in its own window. */
+	detached: boolean,
 };
 
 /**  Sent when the list of pages changes, for every owner. */
@@ -366,7 +373,10 @@ export type BrowserState = {
 	error: string | null,
 	/**  The page is shown in its own window, not in the main one. */
 	detached: boolean,
-	/**  The page the person sees, or None when no tab is shown. */
+	/**
+	 *  The page this state describes: the one shown to the person, or the one in its own window.
+	 *  None when no page is shown.
+	 */
 	page: number | null,
 };
 

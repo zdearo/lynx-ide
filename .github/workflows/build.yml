@@ -154,6 +154,11 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # Artifacts keep their folders (appimage/, nsis/), so move the installers up to dist/ itself.
+      - name: Flatten the installers
+        run: |
+          find dist -mindepth 2 -type f -exec mv {} dist/ \;
+
       # The manifest may only move forward, so read what the stable channel serves now.
       # A 404 means no release has been published yet.
       - name: Read the current stable version

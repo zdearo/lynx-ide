@@ -129,7 +129,7 @@ impl Page {
         }
     }
 
-    fn info(&self, id: PageId) -> BrowserPageInfo {
+    fn info(&self, id: PageId, agent_page: bool) -> BrowserPageInfo {
         BrowserPageInfo {
             id,
             owner: self.owner.clone(),
@@ -138,6 +138,7 @@ impl Page {
             loading: self.content.loading,
             agent: self.agent.clone(),
             detached: self.detached,
+            agent_page,
         }
     }
 }
@@ -188,7 +189,10 @@ impl Inner {
         let mut ids: Vec<PageId> = self.pages.keys().copied().collect();
         ids.sort_unstable();
         ids.iter()
-            .filter_map(|id| self.pages.get(id).map(|page| page.info(*id)))
+            .filter_map(|id| {
+                let page = self.pages.get(id)?;
+                Some(page.info(*id, self.agent_pages.get(&page.owner) == Some(id)))
+            })
             .collect()
     }
 }
@@ -458,7 +462,27 @@ impl BrowserService {
 
     /// The registry's view of one page.
     pub fn page_info(&self, page: PageId) -> Option<BrowserPageInfo> {
-        self.lock().pages.get(&page).map(|entry| entry.info(page))
+        self.lock()
+            .page_list()
+            .into_iter()
+            .find(|info| info.id == page)
+    }
+
+    /// Makes `page` the tab its owner's agents use. The tab they used before stays open as an
+    /// ordinary one.
+    pub fn assign_agent_page(&self, page: PageId) -> Result<(), BrowserError> {
+        let mut inner = self.lock();
+        let Some(owner) = inner
+            .pages
+            .get(&page)
+            .filter(|entry| entry.created)
+            .map(|entry| entry.owner.clone())
+        else {
+            return Err(BrowserError::NotRunning);
+        };
+        inner.agent_pages.insert(owner, page);
+        self.publish(&mut inner);
+        Ok(())
     }
 
     /// Makes a page for `owner`, or returns the owner's agent page when `agent` is set and it
@@ -533,10 +557,8 @@ impl BrowserService {
             if !inner.pages.get(&page).is_some_and(|entry| entry.created) {
                 return Err(BrowserError::NotRunning);
             }
-            // A tab in its own window is not shown here: its window is brought forward instead.
-            if inner.pages.get(&page).is_some_and(|entry| entry.detached) {
-                return Ok(inner.describe(Some(page)));
-            }
+            // A tab in its own window can be the shown one: the main view says where it is instead
+            // of drawing it, and the window is brought forward by the caller.
             inner.shown.replace(page)
         };
         if let Some(previous) = previous.filter(|previous| *previous != page) {
@@ -548,7 +570,8 @@ impl BrowserService {
         Ok(inner.describe(Some(page)))
     }
 
-    /// Moves a page into its own window. The main view shows nothing if it was the shown page.
+    /// Moves a page into its own window. If it was the shown page it stays selected in the main
+    /// view, which says the tab is in a window until the window closes.
     pub fn detach_page(&self, page: PageId) -> Result<(), BrowserError> {
         {
             let mut inner = self.lock();
@@ -557,9 +580,6 @@ impl BrowserService {
             }
             if let Some(entry) = inner.pages.get_mut(&page) {
                 entry.detached = true;
-            }
-            if inner.shown == Some(page) {
-                inner.shown = None;
             }
             self.publish(&mut inner);
         }
@@ -1524,7 +1544,13 @@ mod tests {
 
         service.detach_page(first).unwrap();
         assert!(service.is_detached(first));
-        assert_eq!(service.state().page, None, "the main view shows nothing");
+        let main = service.state();
+        assert_eq!(
+            main.page,
+            Some(first),
+            "the main view still has it selected"
+        );
+        assert!(main.detached, "and says it is in a window");
         let window = service.state_of(first);
         assert_eq!(window.url, "https://a.test/");
         assert!(window.detached, "its own state says it is in a window");
@@ -1543,13 +1569,69 @@ mod tests {
         assert_eq!(service.state().page, Some(second));
         assert!(service.is_detached(first));
 
-        // Asking for the detached tab does not take it from its window.
-        service.show_page(first).unwrap();
-        assert_eq!(service.state().page, Some(second));
+        // Asking for the detached tab selects it, and leaves it in its window.
+        let asked = service.show_page(first).unwrap();
+        assert!(asked.detached);
+        assert_eq!(service.state().page, Some(first));
+        assert!(service.is_detached(first));
 
         service.attach_page(first).unwrap();
         assert_eq!(service.state().page, Some(first));
         assert!(!service.is_detached(first));
+    }
+
+    #[test]
+    fn a_tab_of_the_person_can_become_the_tab_the_agents_use() {
+        let home = tempfile::tempdir().unwrap();
+        let (service, recorder) = service(home.path());
+        let agents = made_page(&service, workspace("/a"), "https://agent.test/");
+        let mine = made_page(&service, workspace("/a"), "https://mine.test/");
+        let elsewhere = made_page(&service, workspace("/b"), "https://other.test/");
+        service.lock().agent_pages.insert(workspace("/a"), agents);
+
+        let flags = |service: &BrowserService| {
+            service
+                .pages()
+                .iter()
+                .map(|page| (page.id, page.agent_page))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            flags(&service),
+            vec![(agents, true), (mine, false), (elsewhere, false)]
+        );
+
+        service.assign_agent_page(mine).unwrap();
+
+        // The worktree's agents moved to the tab; the old one is an ordinary tab still open, and
+        // another worktree's tabs are left alone.
+        assert_eq!(
+            flags(&service),
+            vec![(agents, false), (mine, true), (elsewhere, false)]
+        );
+        assert_eq!(
+            service.lock().agent_pages.get(&workspace("/a")),
+            Some(&mine)
+        );
+        assert!(
+            recorder
+                .pages
+                .lock()
+                .unwrap()
+                .last()
+                .is_some_and(|pages| pages.iter().any(|page| page.id == mine && page.agent_page)),
+            "the interface is told"
+        );
+    }
+
+    #[test]
+    fn a_tab_that_does_not_exist_cannot_be_the_agents() {
+        let home = tempfile::tempdir().unwrap();
+        let (service, _) = service(home.path());
+        assert!(matches!(
+            service.assign_agent_page(9),
+            Err(BrowserError::NotRunning)
+        ));
     }
 
     #[test]
@@ -1563,7 +1645,11 @@ mod tests {
         service.show_page(second).unwrap();
         service.detach_page(second).unwrap();
         assert!(service.is_detached(first) && service.is_detached(second));
-        assert_eq!(service.state().page, None);
+        assert_eq!(
+            service.state().page,
+            Some(second),
+            "the main view keeps the last one selected, as a notice"
+        );
         assert_eq!(
             service.pages().iter().filter(|page| page.detached).count(),
             2

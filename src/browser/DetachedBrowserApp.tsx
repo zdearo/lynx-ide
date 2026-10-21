@@ -27,6 +27,11 @@ export function DetachedBrowserApp() {
     const unlistenReleased = events.browserAgentReleased.listen(() => {
       useBrowserStore.getState().releaseAgent();
     });
+    // The toolbar marks the tab the agents use, which the list of pages says.
+    const unlistenPages = events.browserPagesChanged.listen(({ payload }) => {
+      useBrowserStore.getState().applyPages(payload.pages);
+    });
+    void useBrowserStore.getState().loadPages();
     // The state may have changed before this window was listening.
     void commands.browserPageState(page).then((result) => {
       if (result.status === "ok") useBrowserStore.getState().apply(result.data);
@@ -35,6 +40,7 @@ export function DetachedBrowserApp() {
       void unlisten.then((stop) => stop());
       void unlistenAgent.then((stop) => stop());
       void unlistenReleased.then((stop) => stop());
+      void unlistenPages.then((stop) => stop());
     };
   }, [page]);
 

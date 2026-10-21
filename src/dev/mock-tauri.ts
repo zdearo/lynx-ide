@@ -660,6 +660,7 @@ export function installMockTauri(scenario: string): void {
             loading: false,
             agent: null,
             detached: false,
+            agentPage: false,
           },
           {
             id: 2,
@@ -669,6 +670,7 @@ export function installMockTauri(scenario: string): void {
             loading: true,
             agent: null,
             detached: false,
+            agentPage: false,
           },
           {
             id: 3,
@@ -678,6 +680,7 @@ export function installMockTauri(scenario: string): void {
             loading: false,
             agent: "claude",
             detached: false,
+            agentPage: true,
           },
         ]
       : [];
@@ -1651,6 +1654,7 @@ export function installMockTauri(scenario: string): void {
             loading: false,
             agent: null,
             detached: false,
+            agentPage: false,
           };
           mockPages.push(page);
           setShown(page.id);
@@ -1666,6 +1670,21 @@ export function installMockTauri(scenario: string): void {
           setShown(id);
           pagesChanged();
           return structuredClone(browserState);
+        }
+        case "browser_page_assign_agent": {
+          const id = Number(args.page);
+          const page = mockPages.find((item) => item.id === id);
+          if (!page) {
+            throw { kind: "browser", message: `page not found: ${id}` };
+          }
+          // One agent tab per worktree: the owner's other tabs stay open as ordinary ones.
+          for (const other of mockPages) {
+            if (JSON.stringify(other.owner) === JSON.stringify(page.owner)) {
+              other.agentPage = other.id === id;
+            }
+          }
+          pagesChanged();
+          return null;
         }
         case "browser_page_close": {
           const id = Number(args.page);

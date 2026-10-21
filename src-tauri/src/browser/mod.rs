@@ -71,13 +71,18 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         detached_window::close_all(app);
     } else if let Some(page) = detached_window::page_of_label(&label) {
         let service = Arc::clone(&*app.state::<Arc<BrowserService>>());
-        let _ = service.attach_page(page);
+        // The window's view goes first: once the tab is attached it is no longer in a window of
+        // its own, and releasing the view would then tell the engine nobody is looking at it.
         #[cfg(any(target_os = "linux", windows))]
         {
-            let forgotten = Arc::clone(&service);
             let _ = app.run_on_main_thread(move || {
-                platform_view::forget(&forgotten, &label);
+                platform_view::forget(&service, &label);
+                let _ = service.attach_page(page);
             });
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            let _ = (&label, service.attach_page(page));
         }
         detached_window::show_main(app);
     }

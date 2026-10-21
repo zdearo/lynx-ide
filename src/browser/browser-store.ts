@@ -72,6 +72,8 @@ interface BrowserStoreState {
   detachPage: (page: number) => Promise<void>;
   /** Brings a tab in its own window back to the main window. */
   attachPage: (page: number) => Promise<void>;
+  /** Makes a tab the one the agents of its worktree use. */
+  assignAgentPage: (page: number) => Promise<void>;
   apply: (state: BrowserState) => void;
   loadEngine: () => Promise<void>;
   /** Downloads the engine. With `force`, an engine of the same version is installed again. */
@@ -158,6 +160,15 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
   attachPage: async (page) => {
     try {
       await unwrap(commands.browserPageAttach(page));
+      set({ failure: null });
+    } catch (error) {
+      set({ failure: failureOf(error) });
+    }
+  },
+
+  assignAgentPage: async (page) => {
+    try {
+      await unwrap(commands.browserPageAssignAgent(page));
       set({ failure: null });
     } catch (error) {
       set({ failure: failureOf(error) });

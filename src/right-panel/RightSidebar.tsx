@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
 import { RIGHT_PANEL_TABS } from "@/right-panel/right-panel-tabs";
@@ -21,23 +22,27 @@ export function RightSidebar() {
         className="flex h-9 shrink-0 items-center gap-1 px-1.5"
       >
         {RIGHT_PANEL_TABS.map((candidate) => (
-          <TooltipIconButton
-            key={candidate.id}
-            role="tab"
-            id={`side-tab-${candidate.id}`}
-            aria-selected={candidate.id === tab.id}
-            aria-controls="side-panel"
-            label={candidate.label}
-            onClick={() => selectTab(candidate.id)}
-            className={cn(
-              "size-7",
-              candidate.id === tab.id
-                ? "bg-sidebar-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground",
+          <Fragment key={candidate.id}>
+            {candidate.separatorBefore && (
+              <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
             )}
-          >
-            <candidate.icon className="size-4" />
-          </TooltipIconButton>
+            <TooltipIconButton
+              role="tab"
+              id={`side-tab-${candidate.id}`}
+              aria-selected={candidate.id === tab.id}
+              aria-controls="side-panel"
+              label={candidate.label}
+              onClick={() => selectTab(candidate.id)}
+              className={cn(
+                "size-7",
+                candidate.id === tab.id
+                  ? "bg-sidebar-accent text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <candidate.icon className="size-4" />
+            </TooltipIconButton>
+          </Fragment>
         ))}
       </div>
       <div

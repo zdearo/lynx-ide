@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use crate::agents::activity::AgentStatus;
 use crate::agents::harness::{HarnessId, harness_name};
 use crate::agents::hook_hub::{HookHub, PORT_ENV, TOKEN_ENV};
+use crate::browser::{PageOwner, SessionOwners};
 
 use super::terminal_events::TerminalEventSink;
 use super::terminal_manager::TerminalManager;
@@ -29,6 +30,7 @@ fn setup() -> (TerminalManager, Arc<RecordingSink>, tempfile::TempDir) {
         shell,
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         HookHub::disabled(),
+        SessionOwners::default(),
     );
     (manager, sink, tempfile::tempdir().expect("temp dir"))
 }
@@ -318,6 +320,35 @@ fn a_session_records_when_it_started_and_keeps_that_time() {
     assert_eq!(manager.list()[0].started_at, info.started_at);
 }
 
+#[test]
+fn a_session_belongs_to_its_worktree_until_it_is_closed() {
+    let owners = SessionOwners::default();
+    let shell = Arc::new(|| Shell {
+        program: "/bin/sh".to_owned(),
+        args: Vec::new(),
+    });
+    let manager = TerminalManager::new(
+        shell,
+        Arc::new(RecordingSink::default()) as Arc<dyn TerminalEventSink>,
+        HookHub::disabled(),
+        owners.clone(),
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let info = manager
+        .create(&path_of(&dir), None, 80, 24)
+        .expect("create");
+    assert_eq!(
+        owners.get(&info.id),
+        Some(PageOwner::Workspace {
+            worktree_path: path_of(&dir),
+        })
+    );
+
+    manager.close(&info.id).expect("close");
+
+    assert_eq!(owners.get(&info.id), None);
+}
+
 /// Posts a hook report the way the relay does, to the listener the session was given.
 fn post_hook(hub: &HookHub, session: &str, harness: &str, payload: &str) -> String {
     let env = hub.session_env(session);
@@ -357,6 +388,7 @@ fn a_shell_becomes_the_harness_that_reports_from_it_and_back(
         shell,
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         hub.clone(),
+        SessionOwners::default(),
     );
     let dir = tempfile::tempdir().expect("temp dir");
     let info = manager
@@ -412,6 +444,7 @@ fn an_agent_typed_by_hand_in_a_shell_is_followed_until_it_exits() {
         shell,
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         hub.clone(),
+        SessionOwners::default(),
     );
     let dir = tempfile::tempdir().expect("temp dir");
     let bin = fake_cli(dir.path(), "claude");

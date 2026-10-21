@@ -6,8 +6,9 @@ use tauri_specta::{Builder, collect_commands, collect_events};
 use crate::agents::agent_commands as agents;
 use crate::app_info;
 use crate::browser::{
-    BrowserAgentActivity, BrowserAgentReleased, BrowserEngineProgress, BrowserStateChanged,
-    browser_commands as browser, engine_commands as engine,
+    BrowserAgentActivity, BrowserAgentReleased, BrowserEngineProgress, BrowserPagesChanged,
+    BrowserStateChanged, BrowserThumbnailChanged, browser_commands as browser,
+    engine_commands as engine,
 };
 use crate::changes::changes_commands as changes;
 use crate::config::config_commands as config;
@@ -34,10 +35,16 @@ pub fn builder() -> Builder<tauri::Wry> {
             browser::browser_reload,
             browser::browser_stop,
             browser::browser_state,
+            browser::browser_pages,
+            browser::browser_thumbnails,
+            browser::browser_page_new,
+            browser::browser_page_show,
+            browser::browser_page_close,
             browser::browser_place,
             browser::browser_hide,
-            browser::browser_detach,
-            browser::browser_attach,
+            browser::browser_page_state,
+            browser::browser_page_detach,
+            browser::browser_page_attach,
             browser::browser_close,
             engine::browser_engine_status,
             engine::browser_engine_install,
@@ -125,6 +132,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             ConfigChanged,
             WorktreeChanged,
             BrowserStateChanged,
+            BrowserPagesChanged,
+            BrowserThumbnailChanged,
             BrowserAgentActivity,
             BrowserAgentReleased,
             BrowserEngineProgress,

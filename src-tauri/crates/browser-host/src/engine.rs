@@ -3,6 +3,7 @@
 //! thread, which is CEF's UI thread, so the state is thread-local.
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -10,7 +11,9 @@ use std::time::Duration;
 
 use cef::*;
 use lynx_browser_protocol::frame_buffer::{FrameBuffer, MAX_HEIGHT, MAX_WIDTH, SlotPool};
-use lynx_browser_protocol::message::{EditCommand, FromHost, NoticeKind, ToHost, write_message};
+use lynx_browser_protocol::message::{
+    EditCommand, FromHost, NoticeKind, PageCommand, PageEvent, PageId, ToHost, write_message,
+};
 use lynx_browser_protocol::transport::Connection;
 
 use crate::input;
@@ -27,41 +30,47 @@ pub enum Event {
 /// Set once, before CEF starts, so callbacks on any thread can reach the main loop.
 pub static EVENTS: OnceLock<Sender<Event>> = OnceLock::new();
 static CONTEXT_READY: AtomicBool = AtomicBool::new(false);
-static BROWSER_CLOSED: AtomicBool = AtomicBool::new(false);
 
 pub fn context_ready() -> bool {
     CONTEXT_READY.load(Ordering::Acquire)
 }
 
-pub fn browser_closed() -> bool {
-    BROWSER_CLOSED.load(Ordering::Acquire)
-}
-
-struct State {
+/// One page: a browser the engine draws off-screen, and what it needs to draw it.
+struct Page {
+    /// None until the engine has made the browser, and again once it is being closed.
     browser: Option<Browser>,
+    closing: bool,
     width: i32,
     height: i32,
     scale: f32,
-    pool: SlotPool,
-    frames: Option<FrameBuffer>,
-    link: Option<Connection>,
     /// Keeps the DevTools observer attached; dropping it would stop the answers.
     devtools: Option<Registration>,
 }
 
-impl Default for State {
+impl Default for Page {
     fn default() -> Self {
         Self {
             browser: None,
+            closing: false,
             width: 800,
             height: 600,
             scale: 1.0,
-            pool: SlotPool::default(),
-            frames: None,
-            link: None,
             devtools: None,
         }
     }
+}
+
+#[derive(Default)]
+struct State {
+    pages: HashMap<PageId, Page>,
+    /// The engine's own id for each browser, so a callback that only names the browser finds its page.
+    by_browser: HashMap<i32, PageId>,
+    /// The frame slots are shared by every page.
+    pool: SlotPool,
+    /// Pages whose frame was dropped for lack of a free slot; they paint again once one is back.
+    starved: HashSet<PageId>,
+    frames: Option<FrameBuffer>,
+    link: Option<Connection>,
 }
 
 thread_local! {
@@ -73,7 +82,7 @@ fn with_state<T>(read: impl FnOnce(&mut State) -> T) -> T {
     STATE.with(|state| read(&mut state.borrow_mut()))
 }
 
-/// Gives the engine the way back to Lynx. Call once, before creating the page.
+/// Gives the engine the way back to Lynx. Call once, before telling Lynx it is ready.
 pub fn connect(frames: FrameBuffer, link: Connection) {
     with_state(|state| {
         state.frames = Some(frames);
@@ -91,22 +100,32 @@ fn emit(message: FromHost) {
     });
 }
 
-fn browser() -> Option<Browser> {
-    with_state(|state| state.browser.clone())
+fn emit_page(page: PageId, event: PageEvent) {
+    emit(FromHost::Page { page, event });
 }
 
-fn host() -> Option<BrowserHost> {
-    browser().and_then(|browser| browser.host())
+/// Tells Lynx the engine is up. Pages are made when Lynx asks for them.
+pub fn announce_ready() {
+    emit(FromHost::Ready);
 }
 
-/// Creates the one page, blank. Call once CEF's context is ready; `Ready` goes out when it exists.
-pub fn create_page() {
+fn browser_of(page: PageId) -> Option<Browser> {
+    with_state(|state| state.pages.get(&page).and_then(|page| page.browser.clone()))
+}
+
+/// Makes one blank page. `PageCreated` goes out once the engine has it.
+fn create_page(page: PageId) {
+    if with_state(|state| state.pages.contains_key(&page)) {
+        eprintln!("lynx-browser-host: page {page} already exists");
+        return;
+    }
+    with_state(|state| state.pages.insert(page, Page::default()));
     let window = WindowInfo::default().set_as_windowless(Default::default());
     let settings = BrowserSettings {
         windowless_frame_rate: 60,
         ..Default::default()
     };
-    let mut client = HostClient::new();
+    let mut client = HostClient::new(page);
     let url = CefString::from("about:blank");
     let answer = browser_host_create_browser(
         Some(&window),
@@ -117,77 +136,135 @@ pub fn create_page() {
         None,
     );
     if answer != 1 {
-        eprintln!("lynx-browser-host: the engine refused to create a page ({answer})");
+        eprintln!("lynx-browser-host: the engine refused to create page {page} ({answer})");
+        with_state(|state| state.pages.remove(&page));
+        emit(FromHost::PageClosed { page });
     }
+}
+
+/// Closes a page. `PageClosed` goes out once the engine finished doing so.
+fn close_page(page: PageId) {
+    enum Step {
+        Unknown,
+        Closing,
+        NotMadeYet,
+        Close(Browser),
+    }
+    let step = with_state(|state| match state.pages.get_mut(&page) {
+        None => Step::Unknown,
+        Some(page) if page.closing => Step::Closing,
+        Some(page) => match page.browser.take() {
+            Some(browser) => {
+                page.closing = true;
+                Step::Close(browser)
+            }
+            None => Step::NotMadeYet,
+        },
+    });
+    match step {
+        Step::Closing => {}
+        // Closing a page that is already gone is not an error; Lynx just wants to hear it is gone.
+        Step::Unknown => emit(FromHost::PageClosed { page }),
+        // The browser is still being made: it closes itself when `on_after_created` finds no page.
+        Step::NotMadeYet => {
+            with_state(|state| state.pages.remove(&page));
+            emit(FromHost::PageClosed { page });
+        }
+        Step::Close(browser) => {
+            if let Some(host) = browser.host() {
+                host.close_browser(1);
+            }
+        }
+    }
+}
+
+/// Asks every page to close, for when the host quits.
+pub fn close_all_pages() {
+    let pages: Vec<PageId> = with_state(|state| state.pages.keys().copied().collect());
+    for page in pages {
+        close_page(page);
+    }
+}
+
+/// True once no page is left, which is when `close_all_pages` is done.
+pub fn pages_closed() -> bool {
+    with_state(|state| state.pages.is_empty())
 }
 
 /// Applies one command from Lynx.
 pub fn handle(command: ToHost) {
-    let Some(host) = host() else {
-        eprintln!("lynx-browser-host: command before the page was ready: {command:?}");
+    match command {
+        ToHost::CreatePage { page } => create_page(page),
+        ToHost::ClosePage { page } => close_page(page),
+        ToHost::FrameDone { slot } => release_slot(slot),
+        ToHost::Page { page, command } => handle_page(page, command),
+        ToHost::Shutdown => {}
+    }
+}
+
+/// A slot is free again, so pages that went without a frame paint once more.
+fn release_slot(slot: u8) {
+    let starved: Vec<PageId> = with_state(|state| {
+        if state.pool.release(usize::from(slot)) {
+            state.starved.drain().collect()
+        } else {
+            Vec::new()
+        }
+    });
+    for page in starved {
+        if let Some(host) = browser_of(page).and_then(|browser| browser.host()) {
+            host.invalidate(PaintElementType::VIEW);
+        }
+    }
+}
+
+fn handle_page(page: PageId, command: PageCommand) {
+    let Some(browser) = browser_of(page) else {
+        eprintln!("lynx-browser-host: page {page} cannot take a command: {command:?}");
         return;
     };
+    let Some(host) = browser.host() else { return };
     match command {
-        ToHost::Navigate { url } => {
-            if let Some(frame) = browser().and_then(|browser| browser.main_frame()) {
+        PageCommand::Navigate { url } => {
+            if let Some(frame) = browser.main_frame() {
                 frame.load_url(Some(&CefString::from(url.as_str())));
             }
         }
-        ToHost::Reload { ignore_cache } => {
-            if let Some(browser) = browser() {
-                if ignore_cache {
-                    browser.reload_ignore_cache();
-                } else {
-                    browser.reload();
-                }
+        PageCommand::Reload { ignore_cache } => {
+            if ignore_cache {
+                browser.reload_ignore_cache();
+            } else {
+                browser.reload();
             }
         }
-        ToHost::Back => {
-            if let Some(browser) = browser() {
-                browser.go_back();
-            }
-        }
-        ToHost::Forward => {
-            if let Some(browser) = browser() {
-                browser.go_forward();
-            }
-        }
-        ToHost::Stop => {
-            if let Some(browser) = browser() {
-                browser.stop_load();
-            }
-        }
-        ToHost::Resize {
+        PageCommand::Back => browser.go_back(),
+        PageCommand::Forward => browser.go_forward(),
+        PageCommand::Stop => browser.stop_load(),
+        PageCommand::Resize {
             width,
             height,
             scale,
         } => {
             with_state(|state| {
-                state.width = width.max(1) as i32;
-                state.height = height.max(1) as i32;
-                state.scale = scale.max(1.0);
+                if let Some(page) = state.pages.get_mut(&page) {
+                    page.width = width.max(1) as i32;
+                    page.height = height.max(1) as i32;
+                    page.scale = scale.max(1.0);
+                }
             });
             host.notify_screen_info_changed();
             host.was_resized();
         }
-        ToHost::Visible { visible } => host.was_hidden(i32::from(!visible)),
-        ToHost::Focus { focused } => host.set_focus(i32::from(focused)),
-        ToHost::FrameDone { slot } => {
-            let repaint = with_state(|state| state.pool.release(usize::from(slot)));
-            if repaint {
-                host.invalidate(PaintElementType::VIEW);
-            }
-        }
-        ToHost::Cdp { id, method, params } => send_cdp(&host, id, &method, params),
-        ToHost::Edit { command } => edit(command),
-        ToHost::Shutdown => {}
+        PageCommand::Visible { visible } => host.was_hidden(i32::from(!visible)),
+        PageCommand::Focus { focused } => host.set_focus(i32::from(focused)),
+        PageCommand::Cdp { id, method, params } => send_cdp(page, &host, id, &method, params),
+        PageCommand::Edit { command } => edit(&browser, command),
         input_command => input::apply(&host, input_command),
     }
 }
 
 /// Runs an editing action on the frame that has the focus, falling back to the main frame.
-fn edit(command: EditCommand) {
-    let Some(browser) = browser() else { return };
+fn edit(browser: &Browser, command: EditCommand) {
     let Some(frame) = browser.focused_frame().or_else(|| browser.main_frame()) else {
         return;
     };
@@ -202,30 +279,26 @@ fn edit(command: EditCommand) {
 }
 
 /// Sends one DevTools call to the page; the answer comes back through [`HostDevTools`].
-fn send_cdp(host: &BrowserHost, id: u32, method: &str, params: serde_json::Value) {
+fn send_cdp(page: PageId, host: &BrowserHost, id: u32, method: &str, params: serde_json::Value) {
     let message = serde_json::json!({ "id": id, "method": method, "params": params });
     let accepted = serde_json::to_vec(&message)
         .is_ok_and(|bytes| host.send_dev_tools_message(Some(&bytes)) == 1);
     if !accepted {
-        emit(FromHost::CdpResult {
-            id,
-            ok: false,
-            result: serde_json::json!({ "message": "the page refused the DevTools call" }),
-        });
-    }
-}
-
-/// Closes the page. `browser_closed` turns true once the engine finished doing so.
-pub fn close_page() {
-    if let Some(host) = with_state(|state| state.browser.take()).and_then(|b| b.host()) {
-        host.close_browser(1);
-    } else {
-        BROWSER_CLOSED.store(true, Ordering::Release);
+        emit_page(
+            page,
+            PageEvent::CdpResult {
+                id,
+                ok: false,
+                result: serde_json::json!({ "message": "the page refused the DevTools call" }),
+            },
+        );
     }
 }
 
 wrap_dev_tools_message_observer! {
-    struct HostDevTools {}
+    struct HostDevTools {
+        page: PageId,
+    }
 
     impl DevToolsMessageObserver {
         fn on_dev_tools_method_result(
@@ -238,7 +311,7 @@ wrap_dev_tools_message_observer! {
             let result = result
                 .and_then(|bytes| serde_json::from_slice(bytes).ok())
                 .unwrap_or(serde_json::Value::Null);
-            emit(FromHost::CdpResult {
+            emit_page(self.page, PageEvent::CdpResult {
                 id: message_id.max(0) as u32,
                 ok: success == 1,
                 result,
@@ -261,11 +334,11 @@ wrap_dev_tools_message_observer! {
             let params = params
                 .and_then(|bytes| serde_json::from_slice(bytes).ok())
                 .unwrap_or(serde_json::Value::Null);
-            emit(FromHost::CdpEvent { method, params });
+            emit_page(self.page, PageEvent::CdpEvent { method, params });
         }
 
         fn on_dev_tools_agent_attached(&self, _browser: Option<&mut Browser>) {
-            emit(FromHost::DevToolsAttached);
+            emit_page(self.page, PageEvent::DevToolsAttached);
         }
     }
 }
@@ -282,8 +355,8 @@ const FORWARDED_EVENTS: &[&str] = &[
 ];
 
 /// Tells Lynx what the engine answered on its own, in words.
-fn notice(kind: NoticeKind, text: String) {
-    emit(FromHost::Notice { kind, text });
+fn notice(page: PageId, kind: NoticeKind, text: String) {
+    emit_page(page, PageEvent::Notice { kind, text });
 }
 
 /// A quoted, shortened copy of what a page wrote, for a notice.
@@ -297,7 +370,9 @@ fn quoted(text: Option<&CefString>) -> String {
 }
 
 wrap_jsdialog_handler! {
-    struct HostJsDialog {}
+    struct HostJsDialog {
+        page: PageId,
+    }
 
     impl JsdialogHandler {
         // Nobody sits at this page to answer a dialog, and a page waiting on one would hang every
@@ -324,7 +399,11 @@ wrap_jsdialog_handler! {
                 callback.cont(i32::from(accept), None);
             }
             let answer = if accept { "closed" } else { "answered no" };
-            notice(NoticeKind::Dialog, format!("The page showed a {kind} {message}; Lynx {answer}."));
+            notice(
+                self.page,
+                NoticeKind::Dialog,
+                format!("The page showed a {kind} {message}; Lynx {answer}."),
+            );
             1
         }
 
@@ -340,6 +419,7 @@ wrap_jsdialog_handler! {
                 callback.cont(1, None);
             }
             notice(
+                self.page,
                 NoticeKind::Dialog,
                 format!("The page asked to confirm leaving {}; Lynx let it leave.", quoted(message_text)),
             );
@@ -349,7 +429,9 @@ wrap_jsdialog_handler! {
 }
 
 wrap_permission_handler! {
-    struct HostPermissions {}
+    struct HostPermissions {
+        page: PageId,
+    }
 
     impl PermissionHandler {
         fn on_request_media_access_permission(
@@ -364,6 +446,7 @@ wrap_permission_handler! {
                 callback.cancel();
             }
             notice(
+                self.page,
                 NoticeKind::Permission,
                 format!("{} asked for the camera or microphone; Lynx refused.", quoted(requesting_origin)),
             );
@@ -382,6 +465,7 @@ wrap_permission_handler! {
                 callback.cont(PermissionRequestResult::DENY);
             }
             notice(
+                self.page,
                 NoticeKind::Permission,
                 format!("{} asked for a permission; Lynx refused.", quoted(requesting_origin)),
             );
@@ -391,7 +475,9 @@ wrap_permission_handler! {
 }
 
 wrap_download_handler! {
-    struct HostDownloads {}
+    struct HostDownloads {
+        page: PageId,
+    }
 
     impl DownloadHandler {
         // Nothing is saved to the person's disk on a page's say-so.
@@ -401,14 +487,20 @@ wrap_download_handler! {
             url: Option<&CefString>,
             _request_method: Option<&CefString>,
         ) -> std::os::raw::c_int {
-            notice(NoticeKind::Download, format!("A download from {} was blocked.", quoted(url)));
+            notice(
+                self.page,
+                NoticeKind::Download,
+                format!("A download from {} was blocked.", quoted(url)),
+            );
             0
         }
     }
 }
 
 wrap_dialog_handler! {
-    struct HostFileChooser {}
+    struct HostFileChooser {
+        page: PageId,
+    }
 
     impl DialogHandler {
         fn on_file_dialog(
@@ -425,7 +517,11 @@ wrap_dialog_handler! {
             if let Some(callback) = callback {
                 callback.cancel();
             }
-            notice(NoticeKind::FileChooser, "The page asked for a file; no file chooser is offered.".to_owned());
+            notice(
+                self.page,
+                NoticeKind::FileChooser,
+                "The page asked for a file; no file chooser is offered.".to_owned(),
+            );
             1
         }
     }
@@ -478,25 +574,48 @@ wrap_browser_process_handler! {
 }
 
 wrap_life_span_handler! {
-    struct HostLifeSpan {}
+    struct HostLifeSpan {
+        page: PageId,
+    }
 
     impl LifeSpanHandler {
         fn on_after_created(&self, browser: Option<&mut Browser>) {
-            if let Some(browser) = browser {
-                let browser = browser.clone();
-                let registration = browser.host().and_then(|host| {
-                    host.add_dev_tools_message_observer(Some(&mut HostDevTools::new()))
-                });
-                with_state(|state| {
-                    state.browser = Some(browser);
-                    state.devtools = registration;
-                });
-                emit(FromHost::Ready);
+            let Some(browser) = browser else { return };
+            let browser = browser.clone();
+            let page = self.page;
+            // Lynx closed the page while the engine was still making it.
+            if !with_state(|state| state.pages.contains_key(&page)) {
+                if let Some(host) = browser.host() {
+                    host.close_browser(1);
+                }
+                return;
             }
+            let registration = browser.host().and_then(|host| {
+                host.add_dev_tools_message_observer(Some(&mut HostDevTools::new(page)))
+            });
+            let identifier = browser.identifier();
+            with_state(|state| {
+                state.by_browser.insert(identifier, page);
+                if let Some(entry) = state.pages.get_mut(&page) {
+                    entry.browser = Some(browser);
+                    entry.devtools = registration;
+                }
+            });
+            emit(FromHost::PageCreated { page });
         }
 
-        fn on_before_close(&self, _browser: Option<&mut Browser>) {
-            BROWSER_CLOSED.store(true, Ordering::Release);
+        fn on_before_close(&self, browser: Option<&mut Browser>) {
+            let identifier = browser.map(|browser| browser.identifier());
+            let page = with_state(|state| {
+                let page = identifier
+                    .and_then(|identifier| state.by_browser.remove(&identifier))
+                    .unwrap_or(self.page);
+                state.starved.remove(&page);
+                state.pages.remove(&page).map(|_| page)
+            });
+            if let Some(page) = page {
+                emit(FromHost::PageClosed { page });
+            }
         }
 
         // A window that would pop up has nowhere to be shown: load it in the page instead.
@@ -520,7 +639,11 @@ wrap_life_span_handler! {
                 && let Some(frame) = browser.main_frame()
             {
                 frame.load_url(Some(url));
-                notice(NoticeKind::Popup, format!("A new window to {} opened in this page.", quoted(Some(url))));
+                notice(
+                    self.page,
+                    NoticeKind::Popup,
+                    format!("A new window to {} opened in this page.", quoted(Some(url))),
+                );
             }
             1
         }
@@ -528,12 +651,14 @@ wrap_life_span_handler! {
 }
 
 wrap_display_handler! {
-    struct HostDisplay {}
+    struct HostDisplay {
+        page: PageId,
+    }
 
     impl DisplayHandler {
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             if let Some(title) = title {
-                emit(FromHost::Title { title: title.to_string() });
+                emit_page(self.page, PageEvent::Title { title: title.to_string() });
             }
         }
 
@@ -545,14 +670,16 @@ wrap_display_handler! {
         ) {
             let main = frame.is_some_and(|frame| frame.is_main() == 1);
             if let (true, Some(url)) = (main, url) {
-                emit(FromHost::Address { url: url.to_string() });
+                emit_page(self.page, PageEvent::Address { url: url.to_string() });
             }
         }
     }
 }
 
 wrap_load_handler! {
-    struct HostLoad {}
+    struct HostLoad {
+        page: PageId,
+    }
 
     impl LoadHandler {
         fn on_loading_state_change(
@@ -562,7 +689,7 @@ wrap_load_handler! {
             can_go_back: std::os::raw::c_int,
             can_go_forward: std::os::raw::c_int,
         ) {
-            emit(FromHost::Loading {
+            emit_page(self.page, PageEvent::Loading {
                 loading: is_loading == 1,
                 can_go_back: can_go_back == 1,
                 can_go_forward: can_go_forward == 1,
@@ -579,7 +706,7 @@ wrap_load_handler! {
         ) {
             let text = error_text.map(|text| text.to_string()).unwrap_or_default();
             let url = failed_url.map(|url| url.to_string()).unwrap_or_default();
-            emit(FromHost::LoadFailed {
+            emit_page(self.page, PageEvent::LoadFailed {
                 url,
                 message: format!("{error_code:?} {text}").trim().to_owned(),
             });
@@ -588,11 +715,18 @@ wrap_load_handler! {
 }
 
 wrap_render_handler! {
-    struct HostRender {}
+    struct HostRender {
+        page: PageId,
+    }
 
     impl RenderHandler {
         fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
-            let (width, height) = with_state(|state| (state.width, state.height));
+            let (width, height) = with_state(|state| {
+                state
+                    .pages
+                    .get(&self.page)
+                    .map_or((800, 600), |page| (page.width, page.height))
+            });
             if let Some(rect) = rect {
                 *rect = Rect { x: 0, y: 0, width, height };
             }
@@ -606,8 +740,12 @@ wrap_render_handler! {
             let Some(info) = screen_info else {
                 return 0;
             };
-            let (width, height, scale) =
-                with_state(|state| (state.width, state.height, state.scale));
+            let (width, height, scale) = with_state(|state| {
+                state
+                    .pages
+                    .get(&self.page)
+                    .map_or((800, 600, 1.0), |page| (page.width, page.height, page.scale))
+            });
             info.device_scale_factor = scale;
             info.rect = Rect { x: 0, y: 0, width, height };
             info.available_rect = Rect { x: 0, y: 0, width, height };
@@ -631,13 +769,21 @@ wrap_render_handler! {
                 eprintln!("lynx-browser-host: a {width}x{height} view is larger than a frame slot");
                 return;
             }
+            let page = self.page;
             let length = width as usize * height as usize * 4;
             // SAFETY: CEF passes a BGRA buffer of width * height * 4 bytes, valid only during
             // this call; it is copied into shared memory before returning.
             let pixels = unsafe { std::slice::from_raw_parts(buffer, length) };
             let slot = with_state(|state| {
-                let slot = state.pool.acquire()?;
-                let frames = state.frames.as_mut()?;
+                let Some(slot) = state.pool.acquire() else {
+                    // With no free slot the frame is dropped; `FrameDone` brings a repaint.
+                    state.starved.insert(page);
+                    return None;
+                };
+                let Some(frames) = state.frames.as_mut() else {
+                    state.pool.release(slot);
+                    return None;
+                };
                 match frames.write(slot, pixels) {
                     Ok(()) => Some(slot),
                     Err(error) => {
@@ -647,9 +793,8 @@ wrap_render_handler! {
                     }
                 }
             });
-            // With no free slot the frame is dropped; `FrameDone` brings a repaint.
             if let Some(slot) = slot {
-                emit(FromHost::Frame {
+                emit_page(page, PageEvent::Frame {
                     slot: slot as u8,
                     width: width as u32,
                     height: height as u32,
@@ -660,39 +805,41 @@ wrap_render_handler! {
 }
 
 wrap_client! {
-    struct HostClient {}
+    struct HostClient {
+        page: PageId,
+    }
 
     impl Client {
         fn render_handler(&self) -> Option<RenderHandler> {
-            Some(HostRender::new())
+            Some(HostRender::new(self.page))
         }
 
         fn display_handler(&self) -> Option<DisplayHandler> {
-            Some(HostDisplay::new())
+            Some(HostDisplay::new(self.page))
         }
 
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
-            Some(HostLifeSpan::new())
+            Some(HostLifeSpan::new(self.page))
         }
 
         fn load_handler(&self) -> Option<LoadHandler> {
-            Some(HostLoad::new())
+            Some(HostLoad::new(self.page))
         }
 
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
-            Some(HostJsDialog::new())
+            Some(HostJsDialog::new(self.page))
         }
 
         fn permission_handler(&self) -> Option<PermissionHandler> {
-            Some(HostPermissions::new())
+            Some(HostPermissions::new(self.page))
         }
 
         fn download_handler(&self) -> Option<DownloadHandler> {
-            Some(HostDownloads::new())
+            Some(HostDownloads::new(self.page))
         }
 
         fn dialog_handler(&self) -> Option<DialogHandler> {
-            Some(HostFileChooser::new())
+            Some(HostFileChooser::new(self.page))
         }
 
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {

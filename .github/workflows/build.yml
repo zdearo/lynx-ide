@@ -2,16 +2,18 @@ name: Build
 
 # Two jobs per platform, side by side. `verify` checks the frontend and the backend and runs the Rust
 # tests: the terminal code has Windows-only paths that nothing else here compiles. `package` builds the
-# installers, signed for the updater. `publish` checks the update manifest and, for a v* tag or a manual
-# run with `publish` set, uploads it to the update server. Run it by hand, or push a v* tag.
+# installers, signed for the updater. `publish` releases the update when the version in the config is
+# newer than the stable channel. That happens on every push to main, so a release is a version bump
+# merged to main: nothing is launched by hand. A v* tag and a manual run with `publish` ask for it too.
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Upload the update to the update server (tags always do)
+        description: Release the update if its version is newer than the stable channel
         type: boolean
         default: false
   push:
+    branches: [main]
     tags: ["v*"]
 
 jobs:
@@ -135,14 +137,15 @@ jobs:
     name: Publish the update
     needs: package
     runs-on: ubuntu-22.04
-    # One publish at a time, so two tags cannot promote over each other.
+    # One publish at a time, so two runs cannot promote over each other.
     concurrency:
       group: publish-stable
       cancel-in-progress: false
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true' }}
+      # A tag, a push to main and a manual run with `publish` all ask for a release.
+      REQUESTED: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' || github.event.inputs.publish == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -170,8 +173,30 @@ jobs:
             *) echo "could not read the stable channel: HTTP $status"; exit 1 ;;
           esac
 
-      # A manual run without `publish` has no tag, so it checks against the version in the config.
+      # A version already on the stable channel is not released again. So a merge to main that does
+      # not bump the version publishes nothing, and a manual run only checks the package.
+      - name: Decide what this run does
+        id: decide
+        run: |
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          current=""
+          if [ -f current.json ]; then current=$(jq -r .version current.json); fi
+          newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]; }
+          if [ "$REQUESTED" != "true" ]; then
+            mode=check
+          elif [ -n "$current" ] && ! newer "$version" "$current"; then
+            mode=skip
+            echo "version $version is already on the stable channel ($current): nothing to release"
+          else
+            mode=publish
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "this run will $mode"
+
       - name: Build and check the manifest
+        if: steps.decide.outputs.mode != 'skip'
+        env:
+          MODE: ${{ steps.decide.outputs.mode }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             tag="$GITHUB_REF_NAME"
@@ -179,18 +204,19 @@ jobs:
             tag="v$(jq -r .version src-tauri/tauri.conf.json)"
           fi
           args=(--dist dist --tag "$tag" --out out)
-          if [ -f current.json ]; then args+=(--current current.json); fi
+          # Only a release must be newer than the channel; a check run just shows the manifest builds.
+          if [ "$MODE" = publish ] && [ -f current.json ]; then args+=(--current current.json); fi
           bun scripts/release-manifest.mjs "${args[@]}"
 
       - name: Install the upload tool
-        if: env.PUBLISH == 'true'
+        if: steps.decide.outputs.mode == 'publish'
         working-directory: services/update-worker
         run: bun install --frozen-lockfile
 
       # Installers first, then the archived manifest, and the stable pointer last: nobody should read
       # a pointer to files that are not there yet.
       - name: Upload the installers and the manifest
-        if: env.PUBLISH == 'true'
+        if: steps.decide.outputs.mode == 'publish'
         working-directory: services/update-worker
         run: |
           version=$(jq -r .version ../../out/manifest.json)
@@ -206,7 +232,7 @@ jobs:
 
       # The run id in the query keeps the Worker's five-minute cache from answering with an old version.
       - name: Check that the update server offers it
-        if: env.PUBLISH == 'true'
+        if: steps.decide.outputs.mode == 'publish'
         run: |
           version=$(jq -r .version out/manifest.json)
           offered=$(curl -fsS "https://updates.zdearo.dev/api/update/linux/x86_64/0.0.0?channel=stable&run=$GITHUB_RUN_ID" | jq -r .version)

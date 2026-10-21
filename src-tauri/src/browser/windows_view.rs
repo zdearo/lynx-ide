@@ -12,7 +12,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use lynx_browser_protocol::message::{EditCommand, KeyKind, MouseButton, ToHost, modifiers};
+use lynx_browser_protocol::message::{
+    EditCommand, KeyKind, MouseButton, PageCommand, PageId, modifiers,
+};
 use tauri::{AppHandle, Manager};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -56,22 +58,27 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 const CLASS_NAME: PCWSTR = w!("LynxBrowserView");
 
 thread_local! {
-    // One window per Tauri window that has shown the page. Only the active one is visible.
+    // One window per Tauri window that has a view. Each view shows one page, or none.
     static VIEWS: RefCell<HashMap<String, HWND>> = RefCell::default();
-    // The label of the window the page is shown in right now.
-    static ACTIVE: RefCell<Option<String>> = const { RefCell::new(None) };
-    // The newest frame, drawn by every repaint until the next one comes.
-    static FRAME: RefCell<Option<Frame>> = const { RefCell::new(None) };
-    // The agent pointer and mark, drawn over the frame.
-    static POINTER: RefCell<Option<Arc<AgentPointer>>> = const { RefCell::new(None) };
-    // A timer is repainting for the pointer's motion.
-    static ANIMATING: Cell<bool> = const { Cell::new(false) };
+    // The page each window's view shows, and the agent pointer that page draws over itself.
+    static BINDINGS: RefCell<HashMap<String, Binding>> = RefCell::default();
+    // The newest frame of each page, drawn by every window that shows the page.
+    static FRAMES: RefCell<HashMap<PageId, Frame>> = RefCell::default();
     static CLASS_REGISTERED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// What one window's view shows.
+#[derive(Clone)]
+struct Binding {
+    page: PageId,
+    pointer: Option<Arc<AgentPointer>>,
 }
 
 /// What a window knows about itself, reached through its user data from the window procedure.
 struct ViewData {
     service: Arc<BrowserService>,
+    /// The window this view is in; its binding says which page it shows.
+    label: String,
     clicks: ClickCounter,
     /// Pixels per logical pixel, set each time the view is placed.
     scale: f64,
@@ -80,6 +87,8 @@ struct ViewData {
     /// The first half of a character outside the basic plane, waiting for its second.
     high_surrogate: Option<u16>,
     last_position: (i32, i32),
+    /// This window's animation timer is running.
+    timer_armed: bool,
 }
 
 /// The font for labels, read once from the system.
@@ -95,7 +104,7 @@ fn clock() -> f64 {
 }
 
 struct Shared {
-    latest: Mutex<Option<Frame>>,
+    latest: Mutex<HashMap<PageId, Frame>>,
     /// A paint is already queued on the main thread; newer frames just replace the latest one.
     queued: AtomicBool,
 }
@@ -111,7 +120,7 @@ impl NativeView {
         Self {
             app,
             shared: Arc::new(Shared {
-                latest: Mutex::new(None),
+                latest: Mutex::new(HashMap::new()),
                 queued: AtomicBool::new(false),
             }),
         }
@@ -119,26 +128,26 @@ impl NativeView {
 }
 
 impl FrameSink for NativeView {
-    fn frame(&self, frame: Frame) {
-        *self
-            .shared
+    fn frame(&self, page: PageId, frame: Frame) {
+        self.shared
             .latest
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(frame);
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(page, frame);
         if self.shared.queued.swap(true, Ordering::AcqRel) {
             return;
         }
         let shared = Arc::clone(&self.shared);
         let _ = self.app.run_on_main_thread(move || {
             shared.queued.store(false, Ordering::Release);
-            let frame = shared
+            let frames: Vec<(PageId, Frame)> = shared
                 .latest
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .take();
-            if let Some(frame) = frame {
-                FRAME.with(|slot| *slot.borrow_mut() = Some(frame));
-                repaint_active();
+                .drain()
+                .collect();
+            for (page, frame) in frames {
+                show_frame(page, frame);
             }
         });
     }
@@ -148,53 +157,101 @@ impl FrameSink for NativeView {
     }
 }
 
-fn active_window() -> Option<HWND> {
-    let label = ACTIVE.with(|active| active.borrow().clone())?;
-    VIEWS.with(|views| views.borrow().get(&label).copied())
+/// Every window that has a view.
+fn all_windows() -> Vec<HWND> {
+    VIEWS.with(|views| views.borrow().values().copied().collect())
 }
 
-fn repaint_active() {
-    if let Some(hwnd) = active_window() {
-        // SAFETY: the handle is one of ours, on the thread that made it.
-        unsafe {
-            let _ = InvalidateRect(Some(hwnd), None, false);
-        }
+/// The windows that show `page`, in whichever window they are.
+fn windows_showing(page: PageId) -> Vec<HWND> {
+    let labels: Vec<String> = BINDINGS.with(|bindings| {
+        bindings
+            .borrow()
+            .iter()
+            .filter(|(_, binding)| binding.page == page)
+            .map(|(label, _)| label.clone())
+            .collect()
+    });
+    VIEWS.with(|views| {
+        let views = views.borrow();
+        labels
+            .iter()
+            .filter_map(|label| views.get(label).copied())
+            .collect()
+    })
+}
+
+fn invalidate(hwnd: HWND) {
+    // SAFETY: the handle is one of ours, on the thread that made it.
+    unsafe {
+        let _ = InvalidateRect(Some(hwnd), None, false);
     }
 }
 
-/// Repaints every frame for as long as an agent is in control, so the pointer glides and the
-/// marks fade; the timer stops itself when control ends, after one last repaint clears them.
+/// Repaints the windows that show `page`.
+fn repaint_page(page: PageId) {
+    for hwnd in windows_showing(page) {
+        invalidate(hwnd);
+    }
+}
+
+/// Stores the newest frame of `page` and repaints the windows that show it.
+fn show_frame(page: PageId, frame: Frame) {
+    FRAMES.with(|frames| frames.borrow_mut().insert(page, frame));
+    repaint_page(page);
+}
+
+/// Repaints every window for as long as an agent is in control, so the pointer glides and the
+/// marks fade. Each window's timer stops itself once no pointer is in control.
 fn animate_pointer() {
-    repaint_active();
-    if ANIMATING.with(|animating| animating.replace(true)) {
+    for hwnd in all_windows() {
+        invalidate(hwnd);
+        arm_timer(hwnd);
+    }
+}
+
+/// Starts the animation timer of one window, unless it runs already.
+fn arm_timer(hwnd: HWND) {
+    let Some(data) = view_data(hwnd) else {
+        return;
+    };
+    if data.timer_armed {
         return;
     }
-    if let Some(hwnd) = active_window() {
-        // SAFETY: the handle is one of ours, on the thread that made it.
-        unsafe {
-            SetTimer(Some(hwnd), ANIMATION_TIMER, FRAME_INTERVAL_MS, None);
-        }
-    } else {
-        ANIMATING.with(|animating| animating.set(false));
+    data.timer_armed = true;
+    // SAFETY: the handle is one of ours, on the thread that made it.
+    unsafe {
+        SetTimer(Some(hwnd), ANIMATION_TIMER, FRAME_INTERVAL_MS, None);
     }
 }
 
+/// The page the window `label` shows, if it shows one.
+fn bound_page(label: &str) -> Option<PageId> {
+    BINDINGS.with(|bindings| bindings.borrow().get(label).map(|binding| binding.page))
+}
+
+/// Whether a pointer of any page on the screen is in control.
 fn control_is_active() -> bool {
-    POINTER.with(|pointer| {
-        pointer
-            .borrow()
-            .as_ref()
-            .is_some_and(|pointer| pointer.view(Instant::now()).is_some())
+    let now = Instant::now();
+    BINDINGS.with(|bindings| {
+        bindings.borrow().values().any(|binding| {
+            binding
+                .pointer
+                .as_ref()
+                .is_some_and(|pointer| pointer.view(now).is_some())
+        })
     })
 }
 
 /// Puts the view over the page at `rect` in the window `label` (logical pixels, from the
 /// webview's top-left corner), creating it first if needed, and tells the engine the size to
-/// render at. The page is shown in one window at a time: any other loses it. Main thread only.
+/// render the page at. Each window shows one page; a page in its own window is drawn there.
+/// Main thread only.
 pub fn place(
     app: &AppHandle,
     service: &Arc<BrowserService>,
     label: &str,
+    page: PageId,
     rect: (f64, f64, f64, f64),
 ) -> Result<(), String> {
     let window = app
@@ -205,16 +262,6 @@ pub fn place(
 
     let (x, y, width, height) = rect;
     let (width, height) = (width.round().max(1.0), height.round().max(1.0));
-    VIEWS.with(|views| {
-        for (other, handle) in views.borrow().iter() {
-            if other != label {
-                // SAFETY: the handle is one of ours, on the thread that made it.
-                unsafe {
-                    let _ = ShowWindow(*handle, SW_HIDE);
-                }
-            }
-        }
-    });
     set_scale(hwnd, scale);
     // SAFETY: the handle is one of ours, on the thread that made it.
     unsafe {
@@ -229,17 +276,28 @@ pub fn place(
             SWP_NOACTIVATE | SWP_SHOWWINDOW,
         )
         .map_err(|error| error.to_string())?;
-        let _ = InvalidateRect(Some(hwnd), None, false);
     }
-    service.resize(width as u32, height as u32, scale as f32);
-    service.set_visible(true);
-    ACTIVE.with(|active| *active.borrow_mut() = Some(label.to_owned()));
+    service.resize_page(page, width as u32, height as u32, scale as f32);
+    // Read before the borrow, so no call into the service runs while the bindings are borrowed.
+    let pointer = service.pointer_of(page);
+    BINDINGS.with(|bindings| {
+        bindings
+            .borrow_mut()
+            .insert(label.to_owned(), Binding { page, pointer })
+    });
+    invalidate(hwnd);
+    if control_is_active() {
+        arm_timer(hwnd);
+    }
+    // The main view shows the page the person chose; a page in its own window is always painted.
+    if !service.is_detached(page) {
+        service.set_visible(true);
+    }
     Ok(())
 }
 
 /// Takes the view off the window `label`. When that window was showing the page, the engine is
-/// told nobody is looking. A window that is not the active one changes nothing about the engine:
-/// its hide can arrive after the page already moved to another window. Main thread only.
+/// told nobody is looking, unless the page is in a window of its own. Main thread only.
 pub fn hide(service: &Arc<BrowserService>, label: &str) {
     if let Some(hwnd) = VIEWS.with(|views| views.borrow().get(label).copied()) {
         // SAFETY: the handle is one of ours, on the thread that made it.
@@ -247,9 +305,7 @@ pub fn hide(service: &Arc<BrowserService>, label: &str) {
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
     }
-    if release_active(label) {
-        service.set_visible(false);
-    }
+    release(service, label);
 }
 
 /// The window `label` is gone, and its view with it. Main thread only.
@@ -261,20 +317,18 @@ pub fn forget(service: &Arc<BrowserService>, label: &str) {
             let _ = DestroyWindow(hwnd);
         }
     }
-    if release_active(label) {
-        service.set_visible(false);
-    }
+    release(service, label);
 }
 
-fn release_active(label: &str) -> bool {
-    ACTIVE.with(|active| {
-        let mut active = active.borrow_mut();
-        let was = active.as_deref() == Some(label);
-        if was {
-            *active = None;
-        }
-        was
-    })
+/// The window `label` shows nothing any more. A main view that showed the page tells the engine
+/// nobody is looking; a page in its own window stays painted.
+fn release(service: &Arc<BrowserService>, label: &str) {
+    let Some(binding) = BINDINGS.with(|bindings| bindings.borrow_mut().remove(label)) else {
+        return;
+    };
+    if !service.is_detached(binding.page) {
+        service.set_visible(false);
+    }
 }
 
 fn view_data<'a>(hwnd: HWND) -> Option<&'a mut ViewData> {
@@ -302,15 +356,16 @@ fn ensure_installed(
     }
     let parent = window.hwnd().map_err(|error| error.to_string())?;
     register_class()?;
-    POINTER.with(|pointer| *pointer.borrow_mut() = Some(service.pointer()));
 
     let data = Box::new(ViewData {
         service: Arc::clone(service),
+        label: label.to_owned(),
         clicks: ClickCounter::default(),
         scale: 1.0,
         tracking_mouse: false,
         high_surrogate: None,
         last_position: (0, 0),
+        timer_armed: false,
     });
     let data = Box::into_raw(data);
     // SAFETY: `data` outlives the window: it is freed in WM_NCDESTROY, or right here if the window
@@ -461,9 +516,12 @@ fn handle_message(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> Option<LRESULT> {
-    let send = |command: ToHost| {
-        // The engine may not be running (or not yet); input then goes nowhere, which is right.
-        let _ = data.service.send(command);
+    let send = |command: PageCommand| {
+        // Input goes to the page this window shows. The engine may not be running (or not yet);
+        // input then goes nowhere, which is right.
+        if let Some(page) = bound_page(&data.label) {
+            let _ = data.service.send(page, command);
+        }
     };
     match message {
         WM_ERASEBKGND => Some(LRESULT(1)),
@@ -478,29 +536,26 @@ fn handle_message(
             Some(LRESULT(1))
         }
         WM_PAINT => {
-            paint(hwnd, data.scale);
+            paint(hwnd, &data.label, data.scale);
             Some(LRESULT(0))
         }
         WM_TIMER if wparam.0 == ANIMATION_TIMER => {
-            // SAFETY: the handle is this window's.
-            unsafe {
-                let _ = InvalidateRect(Some(hwnd), None, false);
-            }
+            invalidate(hwnd);
             if !control_is_active() {
                 // SAFETY: the handle is this window's.
                 unsafe {
                     let _ = KillTimer(Some(hwnd), ANIMATION_TIMER);
                 }
-                ANIMATING.with(|animating| animating.set(false));
+                data.timer_armed = false;
             }
             Some(LRESULT(0))
         }
         WM_SETFOCUS => {
-            send(ToHost::Focus { focused: true });
+            send(PageCommand::Focus { focused: true });
             Some(LRESULT(0))
         }
         WM_KILLFOCUS => {
-            send(ToHost::Focus { focused: false });
+            send(PageCommand::Focus { focused: false });
             Some(LRESULT(0))
         }
         WM_MOUSEMOVE => {
@@ -519,7 +574,7 @@ fn handle_message(
                     let _ = TrackMouseEvent(&mut track);
                 }
             }
-            send(ToHost::MouseMove {
+            send(PageCommand::MouseMove {
                 x,
                 y,
                 modifiers: current_modifiers(wparam.0),
@@ -530,7 +585,7 @@ fn handle_message(
         WM_MOUSELEAVE => {
             data.tracking_mouse = false;
             let (x, y) = data.last_position;
-            send(ToHost::MouseMove {
+            send(PageCommand::MouseMove {
                 x,
                 y,
                 modifiers: current_modifiers(0),
@@ -553,7 +608,7 @@ fn handle_message(
             // SAFETY: reads the time of the message being handled.
             let at = Duration::from_millis(u64::from(unsafe { GetMessageTime() } as u32));
             let clicks = data.clicks.press(at, x, y, code);
-            send(ToHost::MouseClick {
+            send(PageCommand::MouseClick {
                 x,
                 y,
                 button,
@@ -574,7 +629,7 @@ fn handle_message(
                 let _ = ReleaseCapture();
             }
             let (x, y) = logical(data, low(lparam.0), high(lparam.0));
-            send(ToHost::MouseClick {
+            send(PageCommand::MouseClick {
                 x,
                 y,
                 button,
@@ -603,7 +658,7 @@ fn handle_message(
             } else {
                 (-amount, 0)
             };
-            send(ToHost::MouseWheel {
+            send(PageCommand::MouseWheel {
                 x,
                 y,
                 delta_x,
@@ -617,10 +672,10 @@ fn handle_message(
             let bits = current_modifiers(0);
             // Copy, paste and the like: an off-screen page has no system bindings behind it.
             if let Some(command) = EditCommand::from_shortcut(bits, virtual_key) {
-                send(ToHost::Edit { command });
+                send(PageCommand::Edit { command });
                 return Some(LRESULT(0));
             }
-            send(ToHost::Key {
+            send(PageCommand::Key {
                 kind: KeyKind::Down,
                 windows_code: virtual_key,
                 native_code: lparam.0 as i32,
@@ -631,7 +686,7 @@ fn handle_message(
             Some(LRESULT(0))
         }
         WM_KEYUP => {
-            send(ToHost::Key {
+            send(PageCommand::Key {
                 kind: KeyKind::Up,
                 windows_code: wparam.0 as i32,
                 native_code: lparam.0 as i32,
@@ -655,7 +710,7 @@ fn handle_message(
                 (Some(high), 0xdc00..=0xdfff) => String::from_utf16_lossy(&[high, unit]),
                 _ => String::from_utf16_lossy(&[unit]),
             };
-            send(ToHost::Text { text });
+            send(PageCommand::Text { text });
             Some(LRESULT(0))
         }
         WM_IME_STARTCOMPOSITION => {
@@ -684,8 +739,9 @@ fn handle_message(
     }
 }
 
-/// Draws the latest frame, with the agent's marks over it while one is in control.
-fn paint(hwnd: HWND, scale: f64) {
+/// Draws the page this window shows, from its latest frame, with the agent's marks over it while
+/// one is in control.
+fn paint(hwnd: HWND, label: &str, scale: f64) {
     let mut paint = PAINTSTRUCT::default();
     // SAFETY: the standard paint sequence for a window of this thread.
     unsafe {
@@ -693,10 +749,12 @@ fn paint(hwnd: HWND, scale: f64) {
         let mut client = RECT::default();
         let _ = GetClientRect(hwnd, &mut client);
 
-        let drawn = FRAME.with(|slot| {
-            let frame = slot.borrow();
-            let frame = frame.as_ref()?;
-            let pixels = with_overlay(frame, scale);
+        let binding = BINDINGS.with(|bindings| bindings.borrow().get(label).cloned());
+        let drawn = FRAMES.with(|frames| {
+            let frames = frames.borrow();
+            let binding = binding.as_ref()?;
+            let frame = frames.get(&binding.page)?;
+            let pixels = with_overlay(frame, scale, binding.pointer.as_deref());
             let info = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: size_of::<BITMAPINFOHEADER>() as u32,
@@ -738,14 +796,13 @@ fn paint(hwnd: HWND, scale: f64) {
     }
 }
 
-/// The frame's pixels, with the agent's marks laid over them while one is in control.
-fn with_overlay(frame: &Frame, scale: f64) -> std::borrow::Cow<'_, [u8]> {
-    let view = POINTER.with(|pointer| {
-        pointer
-            .borrow()
-            .as_ref()
-            .and_then(|pointer| pointer.view(Instant::now()))
-    });
+/// The frame's pixels, with the agent's marks laid over them while the page's agent is in control.
+fn with_overlay<'a>(
+    frame: &'a Frame,
+    scale: f64,
+    pointer: Option<&AgentPointer>,
+) -> std::borrow::Cow<'a, [u8]> {
+    let view = pointer.and_then(|pointer| pointer.view(Instant::now()));
     let Some(view) = view else {
         return std::borrow::Cow::Borrowed(&frame.pixels);
     };

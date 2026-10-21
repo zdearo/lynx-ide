@@ -1,17 +1,19 @@
 use std::sync::Arc;
 
-use tauri::{AppHandle, State, WebviewWindow};
+use lynx_browser_protocol::message::PageCommand;
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::blocking_task::run_blocking;
 use crate::error::{AppError, IpcError};
 
 use super::browser_error::BrowserError;
 use super::browser_service::BrowserService;
-use super::browser_state::{BrowserState, BrowserStatus};
+use super::browser_state::{BrowserPageInfo, BrowserState, BrowserThumbnail};
 use super::detached_window;
+use super::page_owner::PageOwner;
 
-/// Starts the browser engine if needed and optionally opens an address. The engine's start-up
-/// blocks for a moment, so this runs off the async runtime.
+/// Starts the browser engine if needed and optionally opens an address in the shown page. The
+/// engine's start-up blocks for a moment, so this runs off the async runtime.
 #[tauri::command]
 #[specta::specta]
 pub async fn browser_open(
@@ -39,13 +41,13 @@ pub async fn browser_navigate(
 #[tauri::command]
 #[specta::specta]
 pub async fn browser_back(service: State<'_, Arc<BrowserService>>) -> Result<(), IpcError> {
-    send(&service, lynx_browser_protocol::message::ToHost::Back)
+    send(&service, PageCommand::Back)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn browser_forward(service: State<'_, Arc<BrowserService>>) -> Result<(), IpcError> {
-    send(&service, lynx_browser_protocol::message::ToHost::Forward)
+    send(&service, PageCommand::Forward)
 }
 
 #[tauri::command]
@@ -54,24 +56,18 @@ pub async fn browser_reload(
     service: State<'_, Arc<BrowserService>>,
     ignore_cache: bool,
 ) -> Result<(), IpcError> {
-    send(
-        &service,
-        lynx_browser_protocol::message::ToHost::Reload { ignore_cache },
-    )
+    send(&service, PageCommand::Reload { ignore_cache })
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn browser_stop(service: State<'_, Arc<BrowserService>>) -> Result<(), IpcError> {
-    send(&service, lynx_browser_protocol::message::ToHost::Stop)
+    send(&service, PageCommand::Stop)
 }
 
-fn send(
-    service: &Arc<BrowserService>,
-    command: lynx_browser_protocol::message::ToHost,
-) -> Result<(), IpcError> {
+fn send(service: &Arc<BrowserService>, command: PageCommand) -> Result<(), IpcError> {
     service
-        .send(command)
+        .send_shown(command)
         .map_err(|error| AppError::from(error).into())
 }
 
@@ -83,15 +79,124 @@ pub async fn browser_state(
     Ok(service.state())
 }
 
+/// The state of one page, for the window that shows it.
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_state(
+    service: State<'_, Arc<BrowserService>>,
+    page: u32,
+) -> Result<BrowserState, IpcError> {
+    Ok(service.state_of(page))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_pages(
+    service: State<'_, Arc<BrowserService>>,
+) -> Result<Vec<BrowserPageInfo>, IpcError> {
+    Ok(service.pages())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_thumbnails(
+    service: State<'_, Arc<BrowserService>>,
+) -> Result<Vec<BrowserThumbnail>, IpcError> {
+    Ok(service.thumbnails())
+}
+
+/// Opens a page for a project's worktree and shows it. The engine makes the page and may block
+/// for a moment, so this runs off the async runtime.
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_new(
+    service: State<'_, Arc<BrowserService>>,
+    worktree_path: String,
+    url: Option<String>,
+) -> Result<BrowserPageInfo, IpcError> {
+    if cfg!(not(any(target_os = "linux", windows))) {
+        return Err(AppError::from(BrowserError::Unsupported).into());
+    }
+    let service = Arc::clone(&service);
+    run_blocking(move || {
+        Ok(service.new_page(PageOwner::Workspace { worktree_path }, url.as_deref())?)
+    })
+    .await
+}
+
+/// Shows a page to the person. A page in its own window is not taken from it: that window is
+/// brought forward instead.
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_show(
+    app: AppHandle,
+    service: State<'_, Arc<BrowserService>>,
+    page: u32,
+) -> Result<BrowserState, IpcError> {
+    let state = service
+        .show_page(page)
+        .map_err(|error| IpcError::from(AppError::from(error)))?;
+    if service.is_detached(page) {
+        detached_window::focus(&app, page);
+    }
+    Ok(state)
+}
+
+/// Closes a page, and its window if it has one. A page that is already gone counts as closed.
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_close(
+    app: AppHandle,
+    service: State<'_, Arc<BrowserService>>,
+    page: u32,
+) -> Result<(), IpcError> {
+    detached_window::close(&app, page);
+    service
+        .close_page(page)
+        .map_err(|error| AppError::from(error).into())
+}
+
+/// Moves a page into its own window. The main view stops showing it; the page keeps running.
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_detach(
+    app: AppHandle,
+    service: State<'_, Arc<BrowserService>>,
+    page: u32,
+) -> Result<(), IpcError> {
+    service
+        .detach_page(page)
+        .map_err(|error| IpcError::from(AppError::from(error)))?;
+    detached_window::open(&app, page).map_err(|error| {
+        let _ = service.attach_page(page);
+        IpcError::from(AppError::from(error))
+    })
+}
+
+/// Brings a page back from its own window into the main view, and closes that window.
+#[tauri::command]
+#[specta::specta]
+pub async fn browser_page_attach(
+    app: AppHandle,
+    service: State<'_, Arc<BrowserService>>,
+    page: u32,
+) -> Result<(), IpcError> {
+    service
+        .attach_page(page)
+        .map_err(|error| IpcError::from(AppError::from(error)))?;
+    detached_window::close(&app, page);
+    detached_window::show_main(&app);
+    Ok(())
+}
+
 /// Shows the page in the window this is called from, over the rectangle the interface reserved
-/// for it: logical pixels, relative to the top-left corner of the window's content. A page is
-/// shown in one window at a time, so any other window loses it.
+/// for it: logical pixels, relative to the top-left corner of the window's content.
 #[tauri::command]
 #[specta::specta]
 pub async fn browser_place(
     app: AppHandle,
     window: WebviewWindow,
-    service: State<'_, Arc<BrowserService>>,
+    page: u32,
     x: f64,
     y: f64,
     width: f64,
@@ -99,12 +204,12 @@ pub async fn browser_place(
 ) -> Result<(), IpcError> {
     #[cfg(any(target_os = "linux", windows))]
     {
-        let service = Arc::clone(&service);
+        let service = Arc::clone(&*app.state::<Arc<BrowserService>>());
         let handle = app.clone();
         let label = window.label().to_owned();
         app.run_on_main_thread(move || {
             let rect = (x, y, width, height);
-            if let Err(error) = super::platform_view::place(&handle, &service, &label, rect) {
+            if let Err(error) = super::platform_view::place(&handle, &service, &label, page, rect) {
                 eprintln!("browser: {error}");
             }
         })
@@ -112,7 +217,7 @@ pub async fn browser_place(
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = (app, window, service, x, y, width, height);
+        let _ = (app, window, page, x, y, width, height);
         Err(AppError::from(BrowserError::Unsupported).into())
     }
 }
@@ -140,46 +245,14 @@ pub async fn browser_hide(
     }
 }
 
-/// Moves the page to a window of its own. The page keeps running: only where it is shown changes.
-#[tauri::command]
-#[specta::specta]
-pub async fn browser_detach(
-    app: AppHandle,
-    service: State<'_, Arc<BrowserService>>,
-) -> Result<(), IpcError> {
-    if service.state().status != BrowserStatus::Running {
-        return Err(AppError::from(BrowserError::NotRunning).into());
-    }
-    // The main window gives the page up first, so it never shows it twice.
-    service.set_detached(true);
-    detached_window::open(&app).map_err(|error| {
-        service.set_detached(false);
-        IpcError::from(AppError::from(error))
-    })
-}
-
-/// Brings the page back to the main window and closes the browser window.
-#[tauri::command]
-#[specta::specta]
-pub async fn browser_attach(
-    app: AppHandle,
-    service: State<'_, Arc<BrowserService>>,
-) -> Result<(), IpcError> {
-    service.set_detached(false);
-    detached_window::close(&app);
-    detached_window::show_main(&app);
-    Ok(())
-}
-
-/// Stops the engine. The next open starts a new one.
+/// Stops the engine. The next open starts a new one, and every tab window closes with it.
 #[tauri::command]
 #[specta::specta]
 pub async fn browser_close(
     app: AppHandle,
     service: State<'_, Arc<BrowserService>>,
 ) -> Result<(), IpcError> {
-    service.set_detached(false);
-    detached_window::close(&app);
+    detached_window::close_all(&app);
     let service = Arc::clone(&service);
     run_blocking(move || {
         service.shutdown();

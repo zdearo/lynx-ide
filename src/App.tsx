@@ -111,16 +111,28 @@ function App() {
 
     // The config file is meant to be edited by hand, so changes can arrive at any time.
     const unlistenBrowser = events.browserStateChanged.listen(({ payload }) => {
-      useBrowserStore.getState().apply(payload.state);
+      // A tab in its own window reports to that window; the main one shows the rest.
+      if (!payload.state.detached)
+        useBrowserStore.getState().apply(payload.state);
     });
 
     const unlistenAgentBrowser = events.browserAgentActivity.listen(
       ({ payload }) => {
         useBrowserStore
           .getState()
-          .noteAgentAction(payload.agent, payload.summary);
+          .noteAgentAction(payload.page, payload.agent, payload.summary);
       },
     );
+
+    const unlistenPages = events.browserPagesChanged.listen(({ payload }) => {
+      useBrowserStore.getState().applyPages(payload.pages);
+    });
+    const unlistenThumbnails = events.browserThumbnailChanged.listen(
+      ({ payload }) => {
+        useBrowserStore.getState().applyThumbnail(payload.page, payload.png);
+      },
+    );
+    void useBrowserStore.getState().loadPages();
 
     const unlistenAgentReleased = events.browserAgentReleased.listen(() => {
       useBrowserStore.getState().releaseAgent();
@@ -164,6 +176,8 @@ function App() {
       void unlistenUpdate.then((unlisten) => unlisten());
       void unlistenBrowser.then((unlisten) => unlisten());
       void unlistenAgentBrowser.then((unlisten) => unlisten());
+      void unlistenPages.then((unlisten) => unlisten());
+      void unlistenThumbnails.then((unlisten) => unlisten());
       void unlistenAgentReleased.then((unlisten) => unlisten());
       void unlistenEngine.then((unlisten) => unlisten());
     };

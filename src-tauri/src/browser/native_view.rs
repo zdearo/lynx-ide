@@ -17,7 +17,9 @@ use gtk::gdk;
 use gtk::glib::Propagation;
 use gtk::glib::translate::IntoGlib;
 use gtk::prelude::*;
-use lynx_browser_protocol::message::{EditCommand, KeyKind, MouseButton, ToHost, modifiers};
+use lynx_browser_protocol::message::{
+    EditCommand, KeyKind, MouseButton, PageCommand, PageId, modifiers,
+};
 use tauri::{AppHandle, Manager};
 
 use super::agent_icon;
@@ -30,16 +32,21 @@ use super::key_codes::{control_character, windows_key_code};
 const WHEEL_STEP: f64 = 100.0;
 
 thread_local! {
-    // One drawing area per window that has shown the page. Only the active one is visible.
+    // One drawing area per window that shows a page: the main window, and each tab in its own.
     static AREAS: RefCell<HashMap<String, gtk::DrawingArea>> = RefCell::default();
-    // The label of the window the page is shown in right now.
-    static ACTIVE: RefCell<Option<String>> = const { RefCell::new(None) };
-    // The newest frame, as a surface that owns its pixels, so showing it copies nothing more.
-    static FRAME: RefCell<Option<ImageSurface>> = const { RefCell::new(None) };
-    // The agent pointer and mark, painted over the frame.
-    static POINTER: RefCell<Option<Arc<AgentPointer>>> = const { RefCell::new(None) };
+    // The page each window's area shows, and the agent pointer that page draws over itself.
+    static BINDINGS: RefCell<HashMap<String, Binding>> = RefCell::default();
+    // The newest frame of each page, as a surface that owns its pixels, so showing it copies nothing more.
+    static FRAMES: RefCell<HashMap<PageId, ImageSurface>> = RefCell::default();
     // A timer is repainting for the pointer's motion.
     static ANIMATING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// What one window's area shows.
+#[derive(Clone)]
+struct Binding {
+    page: PageId,
+    pointer: Option<Arc<AgentPointer>>,
 }
 
 /// The mark of an agent in control: the `--agent` token of the theme, converted by hand because
@@ -50,7 +57,7 @@ const CURSOR_SCALE: f64 = 1.3;
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 struct Shared {
-    latest: Mutex<Option<Frame>>,
+    latest: Mutex<HashMap<PageId, Frame>>,
     /// A paint is already queued on the main thread; newer frames just replace the latest one.
     queued: AtomicBool,
 }
@@ -66,7 +73,7 @@ impl NativeView {
         Self {
             app,
             shared: Arc::new(Shared {
-                latest: Mutex::new(None),
+                latest: Mutex::new(HashMap::new()),
                 queued: AtomicBool::new(false),
             }),
         }
@@ -74,25 +81,26 @@ impl NativeView {
 }
 
 impl FrameSink for NativeView {
-    fn frame(&self, frame: Frame) {
-        *self
-            .shared
+    fn frame(&self, page: PageId, frame: Frame) {
+        self.shared
             .latest
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(frame);
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(page, frame);
         if self.shared.queued.swap(true, Ordering::AcqRel) {
             return;
         }
         let shared = Arc::clone(&self.shared);
         let _ = self.app.run_on_main_thread(move || {
             shared.queued.store(false, Ordering::Release);
-            let frame = shared
+            let frames: Vec<(PageId, Frame)> = shared
                 .latest
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .take();
-            if let Some(frame) = frame {
-                show_frame(frame);
+                .drain()
+                .collect();
+            for (page, frame) in frames {
+                show_frame(page, frame);
             }
         });
     }
@@ -105,17 +113,19 @@ impl FrameSink for NativeView {
 /// Repaints every frame for as long as an agent is in control, so the pointer glides and the
 /// marks fade; when control ends, one last repaint clears them.
 fn animate_pointer() {
-    redraw_active();
+    redraw_all();
     if ANIMATING.with(|animating| animating.replace(true)) {
         return;
     }
     gtk::glib::timeout_add_local(FRAME_INTERVAL, || {
-        redraw_active();
-        let alive = POINTER.with(|pointer| {
-            pointer
-                .borrow()
-                .as_ref()
-                .is_some_and(|pointer| pointer.view(Instant::now()).is_some())
+        redraw_all();
+        let alive = BINDINGS.with(|bindings| {
+            bindings.borrow().values().any(|binding| {
+                binding
+                    .pointer
+                    .as_ref()
+                    .is_some_and(|pointer| pointer.view(Instant::now()).is_some())
+            })
         });
         if alive {
             gtk::glib::ControlFlow::Continue
@@ -126,35 +136,48 @@ fn animate_pointer() {
     });
 }
 
-fn redraw_active() {
-    let Some(label) = ACTIVE.with(|active| active.borrow().clone()) else {
-        return;
-    };
+fn redraw_all() {
     AREAS.with(|areas| {
-        if let Some(area) = areas.borrow().get(&label) {
+        for area in areas.borrow().values() {
             area.queue_draw();
         }
     });
 }
 
-/// Puts the view over the page at `rect` in the window `label` (logical pixels, from the
-/// webview's top-left corner), installing it first if needed, and tells the engine the size to
-/// render at. The page is shown in one window at a time: any other loses it. Main thread only.
+/// Repaints the areas that show `page`, in whichever window they are.
+fn redraw_page(page: PageId) {
+    let labels: Vec<String> = BINDINGS.with(|bindings| {
+        bindings
+            .borrow()
+            .iter()
+            .filter(|(_, binding)| binding.page == page)
+            .map(|(label, _)| label.clone())
+            .collect()
+    });
+    AREAS.with(|areas| {
+        for label in labels {
+            if let Some(area) = areas.borrow().get(&label) {
+                area.queue_draw();
+            }
+        }
+    });
+}
+
+/// Shows `page` over the rectangle `rect` of the window `label` (logical pixels, from the
+/// webview's top-left corner), installing the view first if needed, and tells the engine the size
+/// to render the page at. Each window shows one page; a page in its own window is drawn there.
+/// Main thread only.
 pub fn place(
     app: &AppHandle,
     service: &Arc<BrowserService>,
     label: &str,
+    page: PageId,
     rect: (f64, f64, f64, f64),
 ) -> Result<(), String> {
     ensure_installed(app, service, label)?;
     let (x, y, width, height) = rect;
     AREAS.with(|areas| {
         let areas = areas.borrow();
-        for (other, area) in areas.iter() {
-            if other != label {
-                area.set_visible(false);
-            }
-        }
         let area = areas
             .get(label)
             .ok_or("the browser view is not installed")?;
@@ -165,11 +188,27 @@ pub fn place(
         area.set_size_request(width, height);
         area.set_visible(true);
         area.queue_draw();
-        service.resize(width as u32, height as u32, area.scale_factor() as f32);
-        service.set_visible(true);
+        service.resize_page(
+            page,
+            width as u32,
+            height as u32,
+            area.scale_factor() as f32,
+        );
         Ok::<(), String>(())
     })?;
-    ACTIVE.with(|active| *active.borrow_mut() = Some(label.to_owned()));
+    BINDINGS.with(|bindings| {
+        bindings.borrow_mut().insert(
+            label.to_owned(),
+            Binding {
+                page,
+                pointer: service.pointer_of(page),
+            },
+        )
+    });
+    // The main view shows the page the person chose; a page in its own window is always painted.
+    if !service.is_detached(page) {
+        service.set_visible(true);
+    }
     Ok(())
 }
 
@@ -182,36 +221,27 @@ pub fn hide(service: &Arc<BrowserService>, label: &str) {
             area.set_visible(false);
         }
     });
-    let was_active = ACTIVE.with(|active| {
-        let mut active = active.borrow_mut();
-        let was = active.as_deref() == Some(label);
-        if was {
-            *active = None;
-        }
-        was
-    });
-    if was_active {
-        service.set_visible(false);
-    }
+    release(service, label);
 }
 
 /// The window `label` is gone, and its view with it. Main thread only.
 pub fn forget(service: &Arc<BrowserService>, label: &str) {
     AREAS.with(|areas| areas.borrow_mut().remove(label));
-    let was_active = ACTIVE.with(|active| {
-        let mut active = active.borrow_mut();
-        let was = active.as_deref() == Some(label);
-        if was {
-            *active = None;
-        }
-        was
-    });
-    if was_active {
+    release(service, label);
+}
+
+/// The window `label` shows nothing any more. A main view that showed the page tells the engine
+/// nobody is looking; a page in its own window stays painted.
+fn release(service: &Arc<BrowserService>, label: &str) {
+    let Some(binding) = BINDINGS.with(|bindings| bindings.borrow_mut().remove(label)) else {
+        return;
+    };
+    if !service.is_detached(binding.page) {
         service.set_visible(false);
     }
 }
 
-fn show_frame(frame: Frame) {
+fn show_frame(page: PageId, frame: Frame) {
     let format = Format::ARgb32;
     let surface = format.stride_for_width(frame.width).and_then(|stride| {
         ImageSurface::create_for_data(
@@ -225,18 +255,8 @@ fn show_frame(frame: Frame) {
     let Ok(surface) = surface else {
         return;
     };
-    let Some(label) = ACTIVE.with(|active| active.borrow().clone()) else {
-        return;
-    };
-    AREAS.with(|areas| {
-        if let Some(area) = areas.borrow().get(&label) {
-            // The frame is in device pixels; the area is in logical ones.
-            let scale = f64::from(area.scale_factor());
-            surface.set_device_scale(scale, scale);
-            FRAME.with(|frame| *frame.borrow_mut() = Some(surface));
-            area.queue_draw();
-        }
-    });
+    FRAMES.with(|frames| frames.borrow_mut().insert(page, surface));
+    redraw_page(page);
 }
 
 fn ensure_installed(
@@ -265,9 +285,8 @@ fn ensure_installed(
     area.set_valign(gtk::Align::Start);
     // Hidden until the first placement.
     area.set_no_show_all(true);
-    POINTER.with(|pointer| *pointer.borrow_mut() = Some(service.pointer()));
-    connect_drawing(&area);
-    connect_input(&area, service);
+    connect_drawing(&area, label.to_owned());
+    connect_input(&area, service, label.to_owned());
     overlay.add_overlay(&area);
 
     vbox.pack_start(&overlay, true, true, 0);
@@ -276,23 +295,28 @@ fn ensure_installed(
     Ok(())
 }
 
-fn connect_drawing(area: &gtk::DrawingArea) {
-    area.connect_draw(|area, context| {
+fn connect_drawing(area: &gtk::DrawingArea, label: String) {
+    area.connect_draw(move |area, context| {
         // Before the first frame, or while the engine starts: a plain dark page.
         context.set_source_rgb(0.1, 0.1, 0.1);
         let _ = context.paint();
-        FRAME.with(|frame| {
-            if let Some(surface) = frame.borrow().as_ref() {
+        let binding = BINDINGS.with(|bindings| bindings.borrow().get(&label).cloned());
+        let Some(binding) = binding else {
+            return Propagation::Stop;
+        };
+        FRAMES.with(|frames| {
+            if let Some(surface) = frames.borrow().get(&binding.page) {
+                // The frame is in device pixels; the area is in logical ones.
+                let scale = f64::from(area.scale_factor());
+                surface.set_device_scale(scale, scale);
                 let _ = context.set_source_surface(surface, 0.0, 0.0);
                 let _ = context.paint();
             }
         });
-        let view = POINTER.with(|pointer| {
-            pointer
-                .borrow()
-                .as_ref()
-                .and_then(|pointer| pointer.view(Instant::now()))
-        });
+        let view = binding
+            .pointer
+            .as_ref()
+            .and_then(|pointer| pointer.view(Instant::now()));
         if let Some(view) = view {
             let size = (
                 f64::from(area.allocated_width()),
@@ -539,7 +563,7 @@ fn modifiers_of(state: gdk::ModifierType) -> u32 {
     bits
 }
 
-fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
+fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>, label: String) {
     area.set_can_focus(true);
     area.add_events(
         gdk::EventMask::POINTER_MOTION_MASK
@@ -553,11 +577,15 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
             | gdk::EventMask::FOCUS_CHANGE_MASK,
     );
 
-    // The engine may not be running (or not yet); input then goes nowhere, which is right.
+    // Input goes to the page this window shows. The engine may not be running (or not yet); input
+    // then goes nowhere, which is right.
     let send = {
         let service = Arc::clone(service);
-        move |command: ToHost| {
-            let _ = service.send(command);
+        move |command: PageCommand| {
+            let page = BINDINGS.with(|bindings| bindings.borrow().get(&label).map(|b| b.page));
+            if let Some(page) = page {
+                let _ = service.send(page, command);
+            }
         }
     };
 
@@ -565,7 +593,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
         let send = send.clone();
         move |_, event| {
             let (x, y) = event.position();
-            send(ToHost::MouseMove {
+            send(PageCommand::MouseMove {
                 x: x as i32,
                 y: y as i32,
                 modifiers: modifiers_of(event.state()),
@@ -578,7 +606,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
         let send = send.clone();
         move |_, event| {
             let (x, y) = event.position();
-            send(ToHost::MouseMove {
+            send(PageCommand::MouseMove {
                 x: x as i32,
                 y: y as i32,
                 modifiers: modifiers_of(event.state()),
@@ -609,7 +637,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
                 y,
                 event.button(),
             );
-            send(ToHost::MouseClick {
+            send(PageCommand::MouseClick {
                 x,
                 y,
                 button,
@@ -625,7 +653,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
         move |_, event| {
             if let Some(button) = mouse_button(event.button()) {
                 let (x, y) = event.position();
-                send(ToHost::MouseClick {
+                send(PageCommand::MouseClick {
                     x: x as i32,
                     y: y as i32,
                     button,
@@ -654,7 +682,7 @@ fn connect_input(area: &gtk::DrawingArea, service: &Arc<BrowserService>) {
                 _ => (0.0, 0.0),
             };
             if dx != 0.0 || dy != 0.0 {
-                send(ToHost::MouseWheel {
+                send(PageCommand::MouseWheel {
                     x: x as i32,
                     y: y as i32,
                     delta_x: (dx * WHEEL_STEP) as i32,
@@ -680,12 +708,12 @@ fn mouse_button(button: u32) -> Option<MouseButton> {
 
 /// Keys go through the input method first, which composes accents and dead keys into text; what
 /// it leaves alone goes to the engine as key events, plus the character for printable keys.
-fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'static) {
+fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(PageCommand) + Clone + 'static) {
     let input_method = gtk::IMMulticontext::new();
     input_method.connect_commit({
         let send = send.clone();
         move |_, text| {
-            send(ToHost::Text {
+            send(PageCommand::Text {
                 text: text.to_owned(),
             })
         }
@@ -698,7 +726,7 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
         let (send, input_method) = (send.clone(), input_method.clone());
         move |_, _| {
             input_method.focus_in();
-            send(ToHost::Focus { focused: true });
+            send(PageCommand::Focus { focused: true });
             Propagation::Proceed
         }
     });
@@ -706,7 +734,7 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
         let (send, input_method) = (send.clone(), input_method.clone());
         move |_, _| {
             input_method.focus_out();
-            send(ToHost::Focus { focused: false });
+            send(PageCommand::Focus { focused: false });
             Propagation::Proceed
         }
     });
@@ -728,10 +756,10 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
             if let Some(command) =
                 EditCommand::from_shortcut(modifiers_of(state), windows_key_code(keysym))
             {
-                send(ToHost::Edit { command });
+                send(PageCommand::Edit { command });
                 return Propagation::Stop;
             }
-            send(ToHost::Key {
+            send(PageCommand::Key {
                 kind: KeyKind::Down,
                 windows_code: windows_key_code(keysym),
                 native_code: i32::from(hardware),
@@ -746,7 +774,7 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
                 .to_unicode()
                 .filter(|character| !character.is_control() && !shortcut);
             if let Some(character) = character {
-                send(ToHost::Text {
+                send(PageCommand::Text {
                     text: character.to_string(),
                 });
             }
@@ -761,7 +789,7 @@ fn connect_keyboard(area: &gtk::DrawingArea, send: impl Fn(ToHost) + Clone + 'st
             }
             let hardware = event.hardware_keycode();
             if pressed.borrow_mut().remove(&hardware) {
-                send(ToHost::Key {
+                send(PageCommand::Key {
                     kind: KeyKind::Up,
                     windows_code: windows_key_code(event.keyval().into_glib()),
                     native_code: i32::from(hardware),

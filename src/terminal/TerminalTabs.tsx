@@ -1,11 +1,10 @@
-import type { KeyboardEvent } from "react";
+import { useEffect, type KeyboardEvent } from "react";
 import { useEditorStore } from "@/editor/editor-store";
 import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
 import { SidebarLeftGlyph18 } from "@/components/icons/SidebarLeftGlyph18";
 import { SidebarRightGlyph18 } from "@/components/icons/SidebarRightGlyph18";
 import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 
-import { GlobeGlyph18 } from "@/components/icons/GlobeGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { useBrowserStore } from "@/browser/browser-store";
 import { cn } from "@/lib/utils";
@@ -37,8 +36,17 @@ export function TerminalTabs({
   const allSessions = useTerminalStore((state) => state.sessions);
   const activeByWorktree = useTerminalStore((state) => state.activeByWorktree);
   const setActive = useTerminalStore((state) => state.setActive);
-  const browserOpen = useBrowserStore((state) => state.open);
-  const toggleBrowser = useBrowserStore((state) => state.toggle);
+
+  // A terminal started from anywhere (the + menu, the shortcut) comes in front of the browser.
+  useEffect(
+    () =>
+      useTerminalStore.subscribe((state, previous) => {
+        if (state.sessions.length > previous.sessions.length) {
+          useBrowserStore.getState().setOpen(false);
+        }
+      }),
+    [],
+  );
 
   const path = selected?.worktree.path ?? null;
   // While a file is on screen no terminal tab is the current one.
@@ -59,6 +67,7 @@ export function TerminalTabs({
     const next = sessions[(index + step + sessions.length) % sessions.length];
     if (!next) return;
     event.preventDefault();
+    useBrowserStore.getState().setOpen(false);
     setActive(path, next.id);
     useEditorStore.getState().show(path, null);
     document.getElementById(`tab-${next.id}`)?.focus();
@@ -111,6 +120,7 @@ export function TerminalTabs({
                 ) {
                   requestCloseTerminal(session.id);
                 } else if (path) {
+                  useBrowserStore.getState().setOpen(false);
                   setActive(path, session.id);
                   useEditorStore.getState().show(path, null);
                 }
@@ -165,13 +175,6 @@ export function TerminalTabs({
         </div>
       )}
       <div className="ml-auto flex items-center gap-0.5 px-1.5">
-        <TooltipIconButton
-          label={copy.browser.toggle}
-          aria-pressed={browserOpen}
-          onClick={toggleBrowser}
-        >
-          <GlobeGlyph18 />
-        </TooltipIconButton>
         <TooltipIconButton
           label={copy.rightPanel.toggle}
           shortcut={shortcutLabel("toggleFilesPanel")}

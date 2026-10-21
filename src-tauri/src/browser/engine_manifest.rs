@@ -8,9 +8,9 @@ use url::Url;
 
 use super::engine_install_error::EngineInstallError;
 
-/// Where the manifests of the latest engine are published, one per platform.
+/// Where the manifests of the latest engine are published, one per platform, next to the archives.
 /// `LYNX_ENGINE_MANIFEST_URL` replaces the address, for a mirror or a build under test.
-const RELEASE_DOWNLOADS: &str = "https://github.com/zdearo/lynx-ide/releases/latest/download";
+const ENGINE_DOWNLOADS: &str = "https://downloads.zdearo.dev/engine";
 pub const MANIFEST_URL_ENV: &str = "LYNX_ENGINE_MANIFEST_URL";
 
 /// The platform this build can run an engine on, as the manifest names it.
@@ -38,8 +38,11 @@ pub struct EngineManifest {
 }
 
 pub fn manifest_url() -> String {
-    std::env::var(MANIFEST_URL_ENV)
-        .unwrap_or_else(|_| format!("{RELEASE_DOWNLOADS}/browser-engine-manifest-{PLATFORM}.json"))
+    std::env::var(MANIFEST_URL_ENV).unwrap_or_else(|_| default_manifest_url(PLATFORM))
+}
+
+fn default_manifest_url(platform: &str) -> String {
+    format!("{ENGINE_DOWNLOADS}/browser-engine-manifest-{platform}.json")
 }
 
 impl EngineManifest {
@@ -145,6 +148,14 @@ mod tests {
         let mut short = manifest();
         short.sha256 = "abc".to_owned();
         assert!(short.check(2).is_err());
+    }
+
+    #[test]
+    fn the_default_manifest_is_published_next_to_the_engine_archives() {
+        assert_eq!(
+            default_manifest_url("linux-x64"),
+            "https://downloads.zdearo.dev/engine/browser-engine-manifest-linux-x64.json"
+        );
     }
 
     #[test]

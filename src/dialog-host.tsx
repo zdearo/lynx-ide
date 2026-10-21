@@ -113,6 +113,7 @@ export function DialogHost() {
   useEffect(prefetchDialogs, []);
 
   const settingsOpen = useNavigationStore((state) => state.settingsOpen);
+  const settingsSection = useNavigationStore((state) => state.settingsSection);
   const addProjectOpen = useDialogStore((state) => state.addProjectOpen);
   const closeTerminalId = useDialogStore((state) => state.closeTerminalId);
   const closeFileTarget = useDialogStore((state) => state.closeFileTarget);
@@ -136,7 +137,7 @@ export function DialogHost() {
 
   return (
     <Suspense fallback={null}>
-      {settingsOpen && <SettingsDialog />}
+      {settingsOpen && <SettingsDialog key={settingsSection ?? "default"} />}
       {addProjectOpen && <AddProjectDialog />}
       {closeTerminalId !== null && <CloseTerminalDialog />}
       {closeFileTarget !== null && <CloseFileDialog />}

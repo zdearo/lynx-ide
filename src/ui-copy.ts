@@ -198,6 +198,46 @@ export const copy = {
         label: "Agent needs you",
         hint: "Notify when an agent waits for an answer or a permission.",
       },
+      update: {
+        label: "New version available",
+        hint: "Notify when a new version of Lynx is out, while the window is not in front.",
+      },
+    },
+    updates: {
+      title: "Updates",
+      intro:
+        "Lynx looks for new versions and tells you when one is out. An update replaces the app itself. Your projects, worktrees and settings stay as they are.",
+      installed: (version: string) => `Installed version ${version}`,
+      lastChecked: (time: string) => `Last checked ${time}`,
+      unsupported:
+        "This copy of Lynx cannot update itself. On Linux, updates work for the AppImage only.",
+      idle: "Lynx has not checked for updates yet.",
+      checking: "Checking for updates…",
+      upToDate: "Lynx is up to date.",
+      available: (version: string) => `Version ${version} is available.`,
+      notes: "What's new",
+      downloading: (percent: number | null) =>
+        percent === null
+          ? "Downloading the update…"
+          : `Downloading the update… ${percent}%`,
+      readyToRestart: (version: string) =>
+        `Version ${version} is installed. Restart Lynx to start it.`,
+      failed: "The last update step failed. Try again.",
+      check: "Check now",
+      install: (version: string) => `Update to ${version}`,
+      restart: "Restart Lynx",
+      restartTitle: "Restart Lynx now?",
+      restartBody:
+        "Open terminals and agents will close. Files you saved stay as they are.",
+      restartConfirm: "Restart",
+      cancel: "Cancel",
+      checkFailed: "Could not check for updates",
+      installFailed: "Could not install the update",
+      restartFailed: "Could not restart Lynx",
+      automatic: {
+        label: "Check automatically",
+        hint: "Look for a new version when Lynx starts and every few hours.",
+      },
     },
     usage: {
       title: "Plan limits",
@@ -719,6 +759,9 @@ export const copy = {
   notifications: {
     done: (agent: string) => `${agent} finished`,
     needsYou: (agent: string) => `${agent} needs you`,
+    updateAvailable: (version: string) => `Lynx ${version} is available`,
+    updateBody: "Install it from Settings > Updates.",
+    updateView: "View",
   },
 
   fixWithAi: {

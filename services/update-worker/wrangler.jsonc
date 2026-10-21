@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lynx-updates",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // One public address: the custom domain. workers.dev stays off.
+  "workers_dev": false,
+  "routes": [{ "pattern": "updates.zdearo.dev", "custom_domain": true }],
+  // Hosts that a manifest's download URLs may use, comma-separated.
+  "vars": { "DOWNLOAD_HOSTS": "downloads.zdearo.dev" },
+  "r2_buckets": [
+    { "binding": "RELEASES", "bucket_name": "lynx-releases-prod" },
+  ],
+}

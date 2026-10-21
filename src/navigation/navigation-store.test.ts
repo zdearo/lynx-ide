@@ -54,4 +54,11 @@ describe("settings", () => {
     useNavigationStore.getState().closeSettings();
     expect(useNavigationStore.getState().settingsOpen).toBe(false);
   });
+
+  it("opens on the section asked for, and forgets it on close", () => {
+    useNavigationStore.getState().openSettings("updates");
+    expect(useNavigationStore.getState().settingsSection).toBe("updates");
+    useNavigationStore.getState().closeSettings();
+    expect(useNavigationStore.getState().settingsSection).toBeNull();
+  });
 });

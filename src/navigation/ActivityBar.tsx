@@ -51,7 +51,7 @@ export function ActivityBar({ wide, panelVisible }: ActivityBarProps) {
         label={copy.navigation.settings}
         shortcut={shortcutLabel("openSettings")}
         tooltipSide="right"
-        onClick={openSettings}
+        onClick={() => openSettings()}
         className="size-9 text-muted-foreground hover:text-foreground"
       >
         <GearGlyph18 className="size-5" />

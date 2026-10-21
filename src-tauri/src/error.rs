@@ -81,6 +81,8 @@ pub enum AppError {
     AgentHooks(#[from] HookInstallError),
     #[error(transparent)]
     Browser(#[from] crate::browser::BrowserError),
+    #[error(transparent)]
+    Update(#[from] crate::updates::update_service::UpdateError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
 }
@@ -141,6 +143,7 @@ pub enum IpcErrorKind {
     BrowserEngineMissing,
     BrowserEngineOutdated,
     Browser,
+    Update,
     Internal,
 }
 
@@ -218,6 +221,7 @@ impl From<AppError> for IpcError {
                 IpcErrorKind::BrowserEngineOutdated
             }
             AppError::Browser(_) => IpcErrorKind::Browser,
+            AppError::Update(_) => IpcErrorKind::Update,
             AppError::TaskFailed(_) => IpcErrorKind::Internal,
         };
         Self {

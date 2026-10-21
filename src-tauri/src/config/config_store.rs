@@ -13,7 +13,8 @@ use crate::agents::harness::{HarnessId, harness_name, supported};
 
 use super::app_config::{
     AppConfig, BrowserConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, GitConfig,
-    LaunchMode, NotificationsConfig, TerminalConfig, UsageConfig, expand_home, parse_config,
+    LaunchMode, NotificationsConfig, TerminalConfig, UpdatesConfig, UsageConfig, expand_home,
+    parse_config,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -356,6 +357,22 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
         "onNeedsYou",
         (notifications.on_needs_you != notification_defaults.on_needs_you)
             .then(|| json!(notifications.on_needs_you)),
+    );
+    put(
+        root,
+        "notifications",
+        "onUpdate",
+        (notifications.on_update != notification_defaults.on_update)
+            .then(|| json!(notifications.on_update)),
+    );
+    let updates = &config.updates;
+    let updates_defaults = UpdatesConfig::default();
+    put(
+        root,
+        "updates",
+        "checkAutomatically",
+        (updates.check_automatically != updates_defaults.check_automatically)
+            .then(|| json!(updates.check_automatically)),
     );
     let usage = &config.usage;
     let usage_defaults = UsageConfig::default();

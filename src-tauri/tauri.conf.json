@@ -26,6 +26,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -33,5 +34,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFEQUI1NDFFQkEyNkNCOUIKUldTYnl5YTZIbFNyclJ5L0xVU1JDQ3B4Q2prYU9EWlRjRndkcUduSDV6dkFOTFJhdFlVWWRFVXgK",
+      "endpoints": [
+        "https://updates.zdearo.dev/api/update/{{target}}/{{arch}}/{{current_version}}?channel=stable"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

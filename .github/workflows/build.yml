@@ -2,9 +2,15 @@ name: Build
 
 # Two jobs per platform, side by side. `verify` checks the frontend and the backend and runs the Rust
 # tests: the terminal code has Windows-only paths that nothing else here compiles. `package` builds the
-# installers. Run it by hand, or push a v* tag.
+# installers, signed for the updater. `publish` checks the update manifest and, for a v* tag or a manual
+# run with `publish` set, uploads it to the update server. Run it by hand, or push a v* tag.
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload the update to the update server (tags always do)
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -107,6 +113,9 @@ jobs:
           # installers build, so they skip LTO, which is most of the link time.
           CARGO_PROFILE_RELEASE_LTO: ${{ startsWith(github.ref, 'refs/tags/v') && 'fat' || 'off' }}
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '16' }}
+          # Signs the updater files (.sig). Without the key the bundle step stops.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun run tauri build
 
       - uses: actions/upload-artifact@v4
@@ -116,6 +125,89 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
             src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe.sig
             src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
+
+  publish:
+    name: Publish the update
+    needs: package
+    runs-on: ubuntu-22.04
+    # One publish at a time, so two tags cannot promote over each other.
+    concurrency:
+      group: publish-stable
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lynx-*
+          merge-multiple: true
+          path: dist
+
+      # Artifacts keep their folders (appimage/, nsis/), so move the installers up to dist/ itself.
+      - name: Flatten the installers
+        run: |
+          find dist -mindepth 2 -type f -exec mv {} dist/ \;
+
+      # The manifest may only move forward, so read what the stable channel serves now.
+      # A 404 means no release has been published yet.
+      - name: Read the current stable version
+        run: |
+          status=$(curl -s -o current.json -w '%{http_code}' https://downloads.zdearo.dev/channels/stable.json)
+          case "$status" in
+            200) ;;
+            404) rm -f current.json ;;
+            *) echo "could not read the stable channel: HTTP $status"; exit 1 ;;
+          esac
+
+      # A manual run without `publish` has no tag, so it checks against the version in the config.
+      - name: Build and check the manifest
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(jq -r .version src-tauri/tauri.conf.json)"
+          fi
+          args=(--dist dist --tag "$tag" --out out)
+          if [ -f current.json ]; then args+=(--current current.json); fi
+          bun scripts/release-manifest.mjs "${args[@]}"
+
+      - name: Install the upload tool
+        if: env.PUBLISH == 'true'
+        working-directory: services/update-worker
+        run: bun install --frozen-lockfile
+
+      # Installers first, then the archived manifest, and the stable pointer last: nobody should read
+      # a pointer to files that are not there yet.
+      - name: Upload the installers and the manifest
+        if: env.PUBLISH == 'true'
+        working-directory: services/update-worker
+        run: |
+          version=$(jq -r .version ../../out/manifest.json)
+          for url in $(jq -r '.platforms[].url' ../../out/manifest.json); do
+            name=$(basename "$url")
+            ./node_modules/.bin/wrangler r2 object put "lynx-releases-prod/v$version/$name" \
+              --file "../../dist/$name" --remote
+          done
+          ./node_modules/.bin/wrangler r2 object put "lynx-releases-prod/v$version/manifest.json" \
+            --file ../../out/manifest.json --content-type application/json --remote
+          ./node_modules/.bin/wrangler r2 object put "lynx-releases-prod/channels/stable.json" \
+            --file ../../out/manifest.json --content-type application/json --remote
+
+      # The run id in the query keeps the Worker's five-minute cache from answering with an old version.
+      - name: Check that the update server offers it
+        if: env.PUBLISH == 'true'
+        run: |
+          version=$(jq -r .version out/manifest.json)
+          offered=$(curl -fsS "https://updates.zdearo.dev/api/update/linux/x86_64/0.0.0?channel=stable&run=$GITHUB_RUN_ID" | jq -r .version)
+          test "$offered" = "$version"

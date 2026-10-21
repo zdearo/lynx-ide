@@ -191,7 +191,7 @@ Decidido em vez de um browser no estilo Orca: o Chromium (CEF) roda num processo
 - [x] O agente visível na página: cursor com a marca do agente, rótulo da ação, anel de carregamento e moldura; o browser não abre sozinho
 - [x] O que ninguém responde, o host responde: diálogos JS, permissões, downloads, seletor de arquivo e menu de contexto
 - [x] Download do motor de dentro do app, com manifesto, SHA-256, versão de protocolo e pacote gerado por `--bundle` (workflow `browser-engine.yml`)
-- [ ] **Publicar a primeira release com o pacote do motor** (o endereço padrão do manifesto aponta para ela; o workflow não foi executado)
+- [ ] **Publicar a primeira versão do motor no R2** (o endereço padrão do manifesto é `downloads.zdearo.dev/engine/`; o workflow `browser-engine.yml` ainda não publicou nada, só roda com `publish` marcado)
 - [ ] Sandbox do Chromium (hoje `no_sandbox`) e perfil persistente (login salvo)
 - [ ] Várias abas, ou uma página por worktree; hoje há uma só e dois agentes disputam a mesma
 - [ ] Cópia e cola, Tab preso na página, atalhos do Lynx com a página em foco e o `<select>` nativo para o usuário

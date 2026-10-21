@@ -16,6 +16,8 @@ use crate::files::files_commands as files;
 use crate::pull_request::pull_request_commands as pull_request;
 use crate::terminal::terminal_commands as terminal;
 use crate::terminal::terminal_events::{AgentStatusChanged, TerminalExit, TerminalOutput};
+use crate::updates::update_commands as updates;
+use crate::updates::update_events::UpdateStatusChanged;
 use crate::usage::usage_commands as usage;
 use crate::watching::watch_commands as watching;
 use crate::watching::worktree_events::WorktreeChanged;
@@ -111,6 +113,10 @@ pub fn builder() -> Builder<tauri::Wry> {
             pull_request::create_pull_request,
             watching::watch_worktree,
             usage::get_plan_usage,
+            updates::get_update_status,
+            updates::check_for_updates,
+            updates::install_update,
+            updates::restart_to_update,
         ])
         .events(collect_events![
             TerminalOutput,
@@ -121,7 +127,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             BrowserStateChanged,
             BrowserAgentActivity,
             BrowserAgentReleased,
-            BrowserEngineProgress
+            BrowserEngineProgress,
+            UpdateStatusChanged,
         ])
 }
 

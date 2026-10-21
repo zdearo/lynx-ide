@@ -1,6 +1,6 @@
 import { fileURLToPath, URL } from "node:url";
 import process from "node:process";
-import { defineConfig } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -14,6 +14,11 @@ export default defineConfig(() => ({
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
+  },
+
+  test: {
+    // services/ has its own package, tests and tsconfig.
+    exclude: [...configDefaults.exclude, "services/**"],
   },
 
   // CodeMirror loads on first use; listing it here stops the dev server from re-optimizing (and reloading the page) at that moment.

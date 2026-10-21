@@ -208,6 +208,13 @@ export const commands = {
 	 *  `force` skips the cache: used on refresh.
 	 */
 	getPlanUsage: (force: boolean) => typedError<PlanUsage[], IpcError>(__TAURI_INVOKE("get_plan_usage", { force })),
+	getUpdateStatus: () => typedError<UpdateStatus, IpcError>(__TAURI_INVOKE("get_update_status")),
+	/**  Looks for a newer version now. A failed check comes back as the status, not as an error. */
+	checkForUpdates: () => typedError<UpdateStatus, IpcError>(__TAURI_INVOKE("check_for_updates")),
+	/**  Downloads and installs the version the last check found. */
+	installUpdate: () => typedError<UpdateStatus, IpcError>(__TAURI_INVOKE("install_update")),
+	/**  Restarts Lynx so the installed version runs. Open terminals and agents close with it. */
+	restartToUpdate: () => __TAURI_INVOKE<void>("restart_to_update"),
 };
 
 /** Events */
@@ -220,6 +227,7 @@ export const events = {
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
 	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
+	updateStatusChanged: makeEvent<UpdateStatusChanged>("update-status-changed"),
 	worktreeChanged: makeEvent<WorktreeChanged>("worktree-changed"),
 };
 
@@ -273,6 +281,7 @@ export type AppConfig = {
 	notifications: NotificationsConfig,
 	browser: BrowserConfig,
 	usage: UsageConfig,
+	updates: UpdatesConfig,
 };
 
 export type AppInfo = {
@@ -596,7 +605,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "update" | "internal";
 
 export type LastCommitMessage = {
 	summary: string,
@@ -636,12 +645,14 @@ export type MergeState =
 /**  A draft, or checks are still running or failing. */
 "unstable" | "unknown";
 
-/**  When Lynx sends a system notification about an agent, while the window is not in front. */
+/**  When Lynx sends a system notification, while the window is not in front. */
 export type NotificationsConfig = {
 	/**  An agent finished its work. */
 	onDone: boolean,
 	/**  An agent is waiting for an answer or a permission. */
 	onNeedsYou: boolean,
+	/**  A new version of Lynx is out. */
+	onUpdate: boolean,
 };
 
 export type PlanUsage = {
@@ -839,6 +850,39 @@ export type TerminalSnapshot = {
 	lastSeq: number,
 	running: boolean,
 	exitCode: number | null,
+};
+
+/**  Where an update stands. The screen shows each case in its own words. */
+export type UpdatePhase = 
+/**  This copy cannot replace itself, so Lynx does not look for updates. */
+{ kind: "unsupported" } | 
+/**  Nothing has been checked yet, or checks are off. */
+{ kind: "idle" } | { kind: "checking" } | { kind: "upToDate" } | { kind: "available"; version: string; notes: string | null; 
+/**  RFC 3339, when the release was published. */
+date: string | null } | { kind: "downloading"; version: string; 
+/**  `None` while the size of the download is unknown. */
+percent: number | null } | 
+/**  Installed. The new version runs after a restart. */
+{ kind: "readyToRestart"; version: string } | 
+/**  The last check or install failed. The reason is in the log. */
+{ kind: "failed" };
+
+export type UpdateStatus = {
+	currentVersion: string,
+	/**  RFC 3339, when the last check finished. */
+	checkedAt: string | null,
+	phase: UpdatePhase,
+};
+
+/**  The update status changed: a check started or ended, or a download moved. */
+export type UpdateStatusChanged = {
+	status: UpdateStatus,
+};
+
+/**  How Lynx looks for new versions of itself. */
+export type UpdatesConfig = {
+	/**  Look for a new version when Lynx starts and every few hours. Checking by hand always works. */
+	checkAutomatically: boolean,
 };
 
 /**  Plan limits in the footer: whether they show, which plans, how a share reads, and when a bar warns. */

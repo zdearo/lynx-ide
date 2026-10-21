@@ -32,6 +32,16 @@ export function NotificationsSettings() {
           save({ ...config, notifications: { ...notifications, onNeedsYou } })
         }
       />
+      <SwitchSetting
+        id="notifications-update"
+        label={copy.settings.notifications.update.label}
+        hint={copy.settings.notifications.update.hint}
+        checked={notifications.onUpdate}
+        disabled={disabled}
+        onCommit={(onUpdate) =>
+          save({ ...config, notifications: { ...notifications, onUpdate } })
+        }
+      />
     </>
   );
 }

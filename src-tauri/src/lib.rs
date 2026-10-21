@@ -13,6 +13,7 @@ mod ipc;
 mod persistence;
 mod pull_request;
 mod terminal;
+mod updates;
 mod usage;
 mod watching;
 mod workspace;
@@ -61,6 +62,11 @@ pub fn run() {
         .setup(move |app| {
             builder.mount_events(app);
 
+            // Desktop only. Checks run from Rust, so the webview gets no updater permission.
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
             let user_home = app.path().home_dir()?;
             let executable = app_image_environment::launch_executable(std::env::current_exe().ok());
             let hook_targets = HookTargets::from_environment(&user_home, executable.as_deref());
@@ -78,6 +84,12 @@ pub fn run() {
             ));
             start_config_watcher(Arc::clone(&config), app.handle().clone());
             app.manage(Arc::clone(&config));
+
+            let updates = Arc::new(updates::update_service::UpdateService::new(
+                app.handle().clone(),
+            ));
+            Arc::clone(&updates).start_schedule(Arc::clone(&config));
+            app.manage(updates);
 
             let database_file = app.path().app_data_dir()?.join("app.db");
             let worktrees_config = Arc::clone(&config);

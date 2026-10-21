@@ -1,12 +1,7 @@
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
-
 import type { AgentStatusChanged } from "@/bindings";
 import { useConfigStore } from "@/config/config-store";
 import { agentNotification } from "@/notifications/agent-notification";
+import { sendSystemNotice } from "@/notifications/system-notification";
 import { TERMINAL_PRESETS } from "@/terminal/agent-presets";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
@@ -20,11 +15,6 @@ function placeOf(worktreePath: string): string {
     if (worktree) return `${repo.name} · ${worktreeLabel(worktree).text}`;
   }
   return worktreePath;
-}
-
-async function allowed(): Promise<boolean> {
-  if (await isPermissionGranted()) return true;
-  return (await requestPermission()) === "granted";
 }
 
 /**
@@ -53,9 +43,5 @@ export async function notifyAgentStatus(
   });
   if (!notification) return;
 
-  try {
-    if (await allowed()) sendNotification(notification);
-  } catch {
-    // A notification is a courtesy: a system that refuses it must not break the status update.
-  }
+  await sendSystemNotice(notification);
 }

@@ -35,9 +35,12 @@ async function openConfigFile() {
 export function SettingsDialog() {
   const open = useNavigationStore((state) => state.settingsOpen);
   const closeSettings = useNavigationStore((state) => state.closeSettings);
+  const settingsSection = useNavigationStore((state) => state.settingsSection);
   const configPath = useConfigStore((state) => state.snapshot?.path);
   const contentRef = useRef<HTMLDivElement>(null);
-  const [sectionId, setSectionId] = useState(SETTINGS_SECTIONS[0].id);
+  const [sectionId, setSectionId] = useState(
+    settingsSection ?? SETTINGS_SECTIONS[0].id,
+  );
   const section =
     SETTINGS_SECTIONS.find((candidate) => candidate.id === sectionId) ??
     SETTINGS_SECTIONS[0];

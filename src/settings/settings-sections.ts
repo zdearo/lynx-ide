@@ -6,12 +6,14 @@ import { GlobeGlyph18 } from "@/components/icons/GlobeGlyph18";
 import { FolderGlyph18 } from "@/components/icons/FolderGlyph18";
 import type { IconComponent } from "@/components/icons/icon-component";
 import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
+import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 import { TerminalGlyph18 } from "@/components/icons/TerminalGlyph18";
 import { AgentsSettings } from "@/settings/AgentsSettings";
 import { BrowserSettings } from "@/settings/BrowserSettings";
 import { GitSettings } from "@/settings/GitSettings";
 import { NotificationsSettings } from "@/settings/NotificationsSettings";
 import { TerminalSettings } from "@/settings/TerminalSettings";
+import { UpdatesSettings } from "@/settings/UpdatesSettings";
 import { WorktreesSettings } from "@/settings/WorktreesSettings";
 import { copy } from "@/ui-copy";
 
@@ -59,5 +61,11 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     label: copy.settings.notifications.title,
     icon: BellGlyph18,
     panel: NotificationsSettings,
+  },
+  {
+    id: "updates",
+    label: copy.settings.updates.title,
+    icon: RefreshGlyph18,
+    panel: UpdatesSettings,
   },
 ];

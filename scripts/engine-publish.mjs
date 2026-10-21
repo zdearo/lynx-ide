@@ -104,6 +104,16 @@ export function plan(manifest, manifestFile) {
   };
 }
 
+/**
+ * What is still to send. A version already published keeps its archive, so only the files around it
+ * go up again: the versioned manifest and the pointer.
+ */
+export function pendingUploads(uploads, archive, published) {
+  return published
+    ? uploads.filter((entry) => entry.name !== archive)
+    : uploads;
+}
+
 function sha256File(path) {
   return new Promise((resolve, reject) => {
     const hash = createHash("sha256");
@@ -114,8 +124,8 @@ function sha256File(path) {
   });
 }
 
-// A version already published is never replaced: the app may have downloaded it, and a cache may
-// still hold it. A new build needs a new CEF or protocol version.
+// A version already published keeps its archive: the app may have downloaded it, and a cache may
+// still hold it. Only a new CEF or protocol version is a new archive.
 async function alreadyPublished(url) {
   const response = await fetch(url, { method: "HEAD" });
   return response.ok;
@@ -186,16 +196,19 @@ async function main(argv) {
     );
     return;
   }
-  if (
-    await alreadyPublished(
-      `${ENGINE_BASE}/${manifest.version}/${manifest.archive}`,
-    )
-  ) {
-    throw new Error(
-      `engine ${manifest.version} is already published; a new build needs a new CEF or protocol version`,
+  const published = await alreadyPublished(
+    `${ENGINE_BASE}/${manifest.version}/${manifest.archive}`,
+  );
+  if (published) {
+    console.log(
+      `engine ${manifest.version} is already published: only the pointer moves`,
     );
   }
-  upload(uploads, args.package, args.out);
+  upload(
+    pendingUploads(uploads, manifest.archive, published),
+    args.package,
+    args.out,
+  );
   console.log(`published engine ${manifest.version} for ${manifest.platform}`);
 }
 

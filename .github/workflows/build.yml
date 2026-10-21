@@ -3,8 +3,9 @@ name: Build
 # Two jobs per platform, side by side. `verify` checks the frontend and the backend and runs the Rust
 # tests: the terminal code has Windows-only paths that nothing else here compiles. `package` builds the
 # installers, signed for the updater. `publish` releases the update when the version in the config is
-# newer than the stable channel. That happens on every push to main, so a release is a version bump
-# merged to main: nothing is launched by hand. A v* tag and a manual run with `publish` ask for it too.
+# newer than the stable channel, on every push to main: a release is a version bump merged to main. A push
+# that changes the browser engine rebuilds and publishes it first (`engine`), and `publish` refuses a
+# release whose engine does not speak the app's protocol. A v* tag and a manual run with `publish` ask too.
 on:
   workflow_dispatch:
     inputs:
@@ -133,9 +134,56 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
+  # Finds out whether this push changed what the browser engine is made of. Only a push to main can:
+  # tags and manual runs release the app and leave the engine as it is.
+  changes:
+    name: Find what changed
+    runs-on: ubuntu-22.04
+    outputs:
+      engine: ${{ steps.paths.outputs.engine }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the engine's inputs
+        id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          engine=false
+          if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
+            if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              engine=true
+            elif git diff --name-only "$BEFORE" "$SHA" -- \
+                src-tauri/crates/browser-host src-tauri/crates/browser-protocol \
+                scripts/browser-engine.mjs scripts/engine-publish.mjs \
+                src-tauri/Cargo.lock .github/workflows/browser-engine.yml | grep -q .; then
+              engine=true
+            fi
+          fi
+          echo "engine=$engine" >> "$GITHUB_OUTPUT"
+          echo "the browser engine is rebuilt: $engine"
+
+  # Builds and publishes the browser engine before the app, when its inputs changed. So the app
+  # released after it finds an engine that speaks its protocol.
+  engine:
+    name: Browser engine
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    uses: ./.github/workflows/browser-engine.yml
+    with:
+      publish: true
+    secrets: inherit
+
   publish:
     name: Publish the update
-    needs: package
+    needs: [package, engine]
+    # Also runs when the engine was not needed, but never after a failed package or engine build.
+    if: always() && needs.package.result == 'success' && (needs.engine.result == 'success' || needs.engine.result == 'skipped')
     runs-on: ubuntu-22.04
     # One publish at a time, so two runs cannot promote over each other.
     concurrency:
@@ -207,6 +255,21 @@ jobs:
           # Only a release must be newer than the channel; a check run just shows the manifest builds.
           if [ "$MODE" = publish ] && [ -f current.json ]; then args+=(--current current.json); fi
           bun scripts/release-manifest.mjs "${args[@]}"
+
+      # The app speaks one protocol, and so does the engine it runs. A release whose engine is another
+      # protocol would leave every user with an app that cannot open the browser, so it is refused.
+      - name: Check that the engine speaks this app's protocol
+        if: steps.decide.outputs.mode == 'publish'
+        run: |
+          app=$(grep -oE 'PROTOCOL_VERSION: u32 = [0-9]+' src-tauri/crates/browser-protocol/src/message.rs | grep -oE '[0-9]+$')
+          for platform in linux-x64 windows-x64; do
+            engine=$(curl -fsS "https://downloads.zdearo.dev/engine/browser-engine-manifest-$platform.json" | jq -r .protocol)
+            if [ "$engine" != "$app" ]; then
+              echo "the $platform engine speaks protocol $engine, but this app speaks $app: publish the engine first"
+              exit 1
+            fi
+          done
+          echo "the engines speak protocol $app, like this app"
 
       - name: Install the upload tool
         if: steps.decide.outputs.mode == 'publish'

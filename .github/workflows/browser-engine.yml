@@ -1,12 +1,18 @@
 name: Browser engine
 
 # Builds the package Lynx downloads for its browser, one per platform: the host program and the CEF
-# runtime, with a manifest holding its version, protocol and SHA-256. The engine has its own version,
-# so it is not tied to the app's releases: run it by hand. Without `publish` it only builds and checks
-# the package, as an artifact. With `publish`, the package goes to engine/ in the release bucket, where
-# the app looks for it.
+# runtime, with a manifest holding its version, protocol and SHA-256. The engine has its own version.
+# `build.yml` calls it on a push to main that changes what the engine is made of, with `publish` set,
+# and a manual run can do the same. Without `publish` it only builds and checks the package, as an
+# artifact. With `publish`, a version not yet published goes to engine/ in the release bucket.
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the engine to the update server
+        type: boolean
+        default: false
+  workflow_call:
     inputs:
       publish:
         description: Publish the engine to the update server
@@ -29,7 +35,7 @@ jobs:
             os: windows-latest
     runs-on: ${{ matrix.os }}
     env:
-      PUBLISH: ${{ github.event.inputs.publish == 'true' }}
+      PUBLISH: ${{ inputs.publish }}
     steps:
       - uses: actions/checkout@v4
 

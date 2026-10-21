@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  pendingUploads,
   plan,
   readManifest,
   uploadArgs,
@@ -132,5 +133,22 @@ describe("uploadArgs", () => {
     const args = uploadArgs(pointer, "engine-package", "engine-out");
     const file = args[args.indexOf("--file") + 1];
     expect(file.endsWith(join("engine-out", MANIFEST))).toBe(true);
+  });
+});
+
+describe("pendingUploads", () => {
+  it("sends everything for a version that is new", () => {
+    const { uploads } = plan(manifestFor(), MANIFEST);
+    expect(pendingUploads(uploads, ARCHIVE, false)).toEqual(uploads);
+  });
+
+  it("keeps the archive of a published version and still moves the pointer", () => {
+    const { uploads } = plan(manifestFor(), MANIFEST);
+    const pending = pendingUploads(uploads, ARCHIVE, true);
+    expect(pending.map((entry) => entry.key)).toEqual([
+      `engine/154.0.34-p2/${MANIFEST}`,
+      `engine/${MANIFEST}`,
+    ]);
+    expect(pending[1].from).toBe("out");
   });
 });

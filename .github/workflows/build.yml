@@ -158,10 +158,11 @@ jobs:
           if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
             if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
               engine=true
+            # Not src-tauri/Cargo.lock or Cargo.toml: a version bump changes them, and must not rebuild the engine.
             elif git diff --name-only "$BEFORE" "$SHA" -- \
                 src-tauri/crates/browser-host src-tauri/crates/browser-protocol \
                 scripts/browser-engine.mjs scripts/engine-publish.mjs \
-                src-tauri/Cargo.lock .github/workflows/browser-engine.yml | grep -q .; then
+                .github/workflows/browser-engine.yml | grep -q .; then
               engine=true
             fi
           fi

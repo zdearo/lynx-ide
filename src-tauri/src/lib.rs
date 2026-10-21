@@ -61,6 +61,11 @@ pub fn run() {
         .setup(move |app| {
             builder.mount_events(app);
 
+            // Desktop only. Checks run from Rust, so the webview gets no updater permission.
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
             let user_home = app.path().home_dir()?;
             let executable = app_image_environment::launch_executable(std::env::current_exe().ok());
             let hook_targets = HookTargets::from_environment(&user_home, executable.as_deref());

@@ -13,11 +13,12 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKER = join(ROOT, "services", "update-worker");
+const WRANGLER = join(WORKER, "node_modules", "wrangler", "bin", "wrangler.js");
 
 export const BUCKET = "lynx-releases-prod";
 export const ENGINE_BASE = "https://downloads.zdearo.dev/engine";
@@ -120,29 +121,32 @@ async function alreadyPublished(url) {
   return response.ok;
 }
 
+/**
+ * The wrangler arguments that put one file in the bucket. The file path is absolute, because
+ * wrangler runs from the Worker's folder, not from where this script was started.
+ */
+export function uploadArgs(entry, packageDir, outDir) {
+  const file = resolve(entry.from === "out" ? outDir : packageDir, entry.name);
+  return [
+    "r2",
+    "object",
+    "put",
+    `${BUCKET}/${entry.key}`,
+    "--file",
+    file,
+    "--content-type",
+    entry.contentType,
+    "--remote",
+  ];
+}
+
 function upload(uploads, packageDir, outDir) {
-  const wrangler = join(
-    WORKER,
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "wrangler.cmd" : "wrangler",
-  );
   for (const entry of uploads) {
-    const file = join(entry.from === "out" ? outDir : packageDir, entry.name);
+    // Run by bun itself: no shell, and no .cmd shim to find on Windows.
     const result = spawnSync(
-      wrangler,
-      [
-        "r2",
-        "object",
-        "put",
-        `${BUCKET}/${entry.key}`,
-        "--file",
-        file,
-        "--content-type",
-        entry.contentType,
-        "--remote",
-      ],
-      { cwd: WORKER, stdio: "inherit", shell: process.platform === "win32" },
+      process.execPath,
+      [WRANGLER, ...uploadArgs(entry, packageDir, outDir)],
+      { cwd: WORKER, stdio: "inherit" },
     );
     if (result.status !== 0) throw new Error(`upload of ${entry.key} failed`);
   }

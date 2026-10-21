@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { plan, readManifest, verifyArchive } from "./engine-publish.mjs";
+import {
+  plan,
+  readManifest,
+  uploadArgs,
+  verifyArchive,
+} from "./engine-publish.mjs";
 
 const ARCHIVE = "lynx-browser-engine-linux-x64-154.0.34-p2.tar.gz";
 const MANIFEST = "browser-engine-manifest-linux-x64.json";
@@ -103,5 +108,29 @@ describe("plan", () => {
       `engine/${MANIFEST}`,
     ]);
     expect(uploads[2].from).toBe("out");
+  });
+});
+
+describe("uploadArgs", () => {
+  it("puts a package file in the bucket from an absolute path", () => {
+    const [entry] = plan(manifestFor(), MANIFEST).uploads;
+    const args = uploadArgs(entry, "engine-package", "engine-out");
+    expect(args.slice(0, 4)).toEqual([
+      "r2",
+      "object",
+      "put",
+      `lynx-releases-prod/engine/154.0.34-p2/${ARCHIVE}`,
+    ]);
+    const file = args[args.indexOf("--file") + 1];
+    expect(isAbsolute(file)).toBe(true);
+    expect(file.endsWith(join("engine-package", ARCHIVE))).toBe(true);
+    expect(args).toContain("--remote");
+  });
+
+  it("takes the pointer from the output folder, not the package", () => {
+    const pointer = plan(manifestFor(), MANIFEST).uploads[2];
+    const args = uploadArgs(pointer, "engine-package", "engine-out");
+    const file = args[args.indexOf("--file") + 1];
+    expect(file.endsWith(join("engine-out", MANIFEST))).toBe(true);
   });
 });

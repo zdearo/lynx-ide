@@ -49,6 +49,10 @@ function withAgents(agents: AppConfig["agents"]) {
         commitMessageStyle: "conventional",
         commitMessageInstructions: null,
       },
+      orchestration: {
+        enabled: false,
+        releaseFinishedWorkers: true,
+      },
     },
     issues: [],
     path: "/home/dev/.lynx/config.json",

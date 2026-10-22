@@ -40,18 +40,25 @@ mod tests {
 
     use serde_json::{Value, json};
 
+    use crate::agents::activity::AgentStatus;
     use crate::agents::harness::HarnessId;
     use crate::agents::hook_hub::ToolHandler;
-    use crate::config::app_config::LaunchMode;
-    use crate::orchestration::service::{Orchestration, Reading, WorkerHost};
+    use crate::config::app_config::OrchestrationConfig;
+    use crate::orchestration::service::{Orchestration, WorkerHost};
     use crate::persistence::AppDatabase;
 
     use super::ToolRouter;
 
-    /// No project, no terminals: every orchestration call is refused for lack of a project.
+    /// Orchestration on, no project, no terminals: every call is refused for lack of a project.
     struct Nothing;
 
     impl WorkerHost for Nothing {
+        fn settings(&self) -> OrchestrationConfig {
+            OrchestrationConfig {
+                enabled: true,
+                ..OrchestrationConfig::default()
+            }
+        }
         fn worktree_of(&self, _session: &str) -> Option<String> {
             None
         }
@@ -61,7 +68,7 @@ mod tests {
         fn prompt_file(&self, _text: &str) -> Result<String, String> {
             Err("no files".to_owned())
         }
-        fn launch_line(&self, _harness: HarnessId, _mode: LaunchMode) -> String {
+        fn launch_line(&self, _harness: HarnessId) -> String {
             String::new()
         }
         fn start(&self, _worktree: &str, _command: &str) -> Result<String, String> {
@@ -70,7 +77,10 @@ mod tests {
         fn running(&self, _session: &str) -> bool {
             false
         }
-        fn reading(&self, _session: &str) -> Result<Reading, String> {
+        fn status(&self, _session: &str) -> Option<AgentStatus> {
+            None
+        }
+        fn output(&self, _session: &str) -> Result<String, String> {
             Err("no terminals".to_owned())
         }
         fn stop(&self, _session: &str) {}

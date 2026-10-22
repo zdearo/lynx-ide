@@ -433,6 +433,7 @@ const DEFAULT_CONFIG: AppConfig = {
     commitMessageStyle: "conventional",
     commitMessageInstructions: null,
   },
+  orchestration: { enabled: false, releaseFinishedWorkers: true },
 };
 
 /** The same rules as the Rust validation, close enough for the interface to react to them. */
@@ -1820,6 +1821,16 @@ export function installMockTauri(scenario: string): void {
       /** Replaces what the plan limits footer reports, for the e2e to show each state. */
       setPlanUsage(usages: PlanUsage[]) {
         mockPlanUsage = usages;
+      },
+      /** An agent made a worktree in the backend, and the screen is told so it reads the project again. */
+      worktreeMadeByAgent(repoName: string, name: string) {
+        const repo = repos.find((r) => r.name === repoName);
+        if (!repo) return;
+        worktrees[repo.id] = [
+          ...(worktrees[repo.id] ?? []),
+          worktree(repo.path, name, name, "origin/main"),
+        ];
+        void emit("worktree-created", { repoId: repo.id });
       },
       /** Pretends the remote has this many commits the branch lacks. */
       setBehind(count: number) {

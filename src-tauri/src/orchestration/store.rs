@@ -6,10 +6,9 @@ use rusqlite::{OptionalExtension, Row, params};
 use crate::agents::harness::{harness_name, harness_named};
 use crate::persistence::{AppDatabase, DatabaseError};
 
-use super::model::{Budget, Dispatch, DispatchState, Run, RunState, Task, TaskState};
+use super::model::{Dispatch, DispatchState, Message, MessageKind, Run, Task, TaskState};
 
-const RUN_COLUMNS: &str =
-    "id, coordinator_session, worktree_path, title, state, budget, created_at";
+const RUN_COLUMNS: &str = "id, coordinator_session, worktree_path, title, created_at";
 const TASK_COLUMNS: &str = "id, run_id, spec, depends_on, state, created_at";
 const DISPATCH_COLUMNS: &str =
     "id, run_id, task_id, session_id, worktree_path, harness, state, started_at";
@@ -22,7 +21,7 @@ fn corrupt(what: &str) -> DatabaseError {
     )))
 }
 
-type RunRow = (String, String, String, String, String, Option<String>, i64);
+type RunRow = (String, String, String, String, i64);
 
 fn run_row(row: &Row<'_>) -> rusqlite::Result<RunRow> {
     Ok((
@@ -31,25 +30,17 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<RunRow> {
         row.get(2)?,
         row.get(3)?,
         row.get(4)?,
-        row.get(5)?,
-        row.get(6)?,
     ))
 }
 
 fn run_from(
-    (id, coordinator_session, worktree_path, title, state, budget, created_at): RunRow,
+    (id, coordinator_session, worktree_path, title, created_at): RunRow,
 ) -> Result<Run, DatabaseError> {
-    let budget = match budget {
-        Some(text) => Some(serde_json::from_str::<Budget>(&text).map_err(|_| corrupt("budget"))?),
-        None => None,
-    };
     Ok(Run {
         id,
         coordinator_session,
         worktree_path,
         title,
-        state: RunState::parse(&state).ok_or_else(|| corrupt("run state"))?,
-        budget,
         created_at,
     })
 }
@@ -106,36 +97,18 @@ fn dispatch_from(
 
 impl AppDatabase {
     pub fn insert_run(&self, run: &Run) -> Result<(), DatabaseError> {
-        let budget = match &run.budget {
-            Some(budget) => Some(serde_json::to_string(budget).map_err(|_| corrupt("budget"))?),
-            None => None,
-        };
         self.lock().execute(
-            "INSERT INTO orchestration_runs (id, coordinator_session, worktree_path, title, state, budget, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO orchestration_runs (id, coordinator_session, worktree_path, title, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 run.id,
                 run.coordinator_session,
                 run.worktree_path,
                 run.title,
-                run.state.as_str(),
-                budget,
                 run.created_at,
             ],
         )?;
         Ok(())
-    }
-
-    pub fn run(&self, id: &str) -> Result<Option<Run>, DatabaseError> {
-        let row = self
-            .lock()
-            .query_row(
-                &format!("SELECT {RUN_COLUMNS} FROM orchestration_runs WHERE id = ?1"),
-                [id],
-                run_row,
-            )
-            .optional()?;
-        row.map(run_from).transpose()
     }
 
     /// The newest run the coordinator session started, if it started any.
@@ -152,22 +125,6 @@ impl AppDatabase {
             )
             .optional()?;
         row.map(run_from).transpose()
-    }
-
-    /// Approves a run that is waiting. Returns false when it was not waiting, so a second approval
-    /// cannot replace the first budget.
-    pub fn approve_run(&self, id: &str, budget: &Budget) -> Result<bool, DatabaseError> {
-        let text = serde_json::to_string(budget).map_err(|_| corrupt("budget"))?;
-        let changed = self.lock().execute(
-            "UPDATE orchestration_runs SET state = ?2, budget = ?3 WHERE id = ?1 AND state = ?4",
-            params![
-                id,
-                RunState::Approved.as_str(),
-                text,
-                RunState::AwaitingApproval.as_str()
-            ],
-        )?;
-        Ok(changed == 1)
     }
 
     pub fn insert_task(&self, task: &Task) -> Result<(), DatabaseError> {
@@ -274,5 +231,77 @@ impl AppDatabase {
             params![id, state.as_str()],
         )?;
         Ok(())
+    }
+}
+
+impl AppDatabase {
+    pub fn insert_message(&self, message: &Message) -> Result<(), DatabaseError> {
+        self.lock().execute(
+            "INSERT INTO orchestration_messages (id, run_id, dispatch_id, task_id, kind, body, unread, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+            params![
+                message.id,
+                message.run_id,
+                message.dispatch_id,
+                message.task_id,
+                message.kind.as_str(),
+                message.body,
+                message.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The messages nobody has read yet, oldest first. Reading them marks them read, in one step,
+    /// so a message reaches the coordinator once.
+    pub fn take_unread_messages(&self, run_id: &str) -> Result<Vec<Message>, DatabaseError> {
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        let messages = {
+            let mut statement = transaction.prepare(
+                "SELECT id, run_id, dispatch_id, task_id, kind, body, created_at
+                 FROM orchestration_messages WHERE run_id = ?1 AND unread = 1 ORDER BY rowid",
+            )?;
+            let rows = statement.query_map([run_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            })?;
+            rows.map(|row| {
+                let (id, run_id, dispatch_id, task_id, kind, body, created_at) = row?;
+                Ok(Message {
+                    id,
+                    run_id,
+                    dispatch_id,
+                    task_id,
+                    kind: MessageKind::parse(&kind).ok_or_else(|| corrupt("message kind"))?,
+                    body,
+                    created_at,
+                })
+            })
+            .collect::<Result<Vec<_>, DatabaseError>>()?
+        };
+        transaction.execute(
+            "UPDATE orchestration_messages SET unread = 0 WHERE run_id = ?1 AND unread = 1",
+            [run_id],
+        )?;
+        transaction.commit()?;
+        Ok(messages)
+    }
+
+    /// Whether the app already told the coordinator this kind of thing about a worker.
+    pub fn has_message(&self, dispatch_id: &str, kind: MessageKind) -> Result<bool, DatabaseError> {
+        let found: i64 = self.lock().query_row(
+            "SELECT COUNT(*) FROM orchestration_messages WHERE dispatch_id = ?1 AND kind = ?2",
+            params![dispatch_id, kind.as_str()],
+            |row| row.get(0),
+        )?;
+        Ok(found > 0)
     }
 }

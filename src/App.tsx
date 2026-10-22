@@ -116,6 +116,13 @@ function App() {
       applyWorktreeChange(payload);
     });
 
+    // An agent made a worktree: the sidebar lists it only once the screen reads the project again.
+    const unlistenWorktreeCreated = events.worktreeCreated.listen(
+      ({ payload }) => {
+        void useWorkspaceStore.getState().refreshWorktrees(payload.repoId);
+      },
+    );
+
     // The config file is meant to be edited by hand, so changes can arrive at any time.
     const unlistenBrowser = events.browserStateChanged.listen(({ payload }) => {
       // A tab in its own window reports to that window. The main view only hears about the one it
@@ -182,6 +189,7 @@ function App() {
       void unlistenCreated.then((unlisten) => unlisten());
       void unlistenAgentStatus.then((unlisten) => unlisten());
       void unlistenWorktree.then((unlisten) => unlisten());
+      void unlistenWorktreeCreated.then((unlisten) => unlisten());
       void unlistenConfig.then((unlisten) => unlisten());
       void unlistenUpdate.then((unlisten) => unlisten());
       void unlistenBrowser.then((unlisten) => unlisten());

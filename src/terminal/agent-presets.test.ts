@@ -54,6 +54,10 @@ const config: AppConfig = {
     commitMessageStyle: "conventional",
     commitMessageInstructions: null,
   },
+  orchestration: {
+    enabled: false,
+    releaseFinishedWorkers: true,
+  },
 };
 
 describe("yoloFlag", () => {

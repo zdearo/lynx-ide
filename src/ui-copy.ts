@@ -304,6 +304,19 @@ export const copy = {
           "e.g. Write the subject in Portuguese, in the imperative mood.",
       },
     },
+    orchestration: {
+      title: "Orchestration",
+      intro:
+        "Before a coordinator starts workers, it asks which agent and model they use, and picks each worker's worktree.",
+      enabled: {
+        label: "Coordinate agents",
+        hint: "A coordinator agent splits work into tasks and starts a worker for each one. While this is off, the orchestration tools refuse every call.",
+      },
+      release: {
+        label: "Close finished workers",
+        hint: "When the coordinator has heard a worker's report, the worker's terminal closes. The report stays with the coordinator; what the worker printed does not.",
+      },
+    },
     decrease: "Decrease",
     increase: "Increase",
     file: {

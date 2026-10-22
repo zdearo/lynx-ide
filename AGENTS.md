@@ -113,6 +113,17 @@ Configuração de Git (`config.git`, aba Git das configurações, `GitSettings.t
 
 - **Notificações do sistema** (`src/notifications/`): o plugin oficial `tauri-plugin-notification` (permissões `notification:*` em `capabilities/default.json`). `App.tsx` chama `notifyAgentStatus` a cada `agent-status-changed`, antes de o store guardar o status novo, para comparar com o anterior. `agentNotification` (pura, testada) decide: só uma mudança para `done` ou `needsYou`, só se aquele tipo está ligado em `config.notifications`, e só com a janela fora de frente (`document.hasFocus()` falso ou página oculta). Com a janela em frente a sidebar já mostra o que mudou. A permissão do sistema é pedida na primeira notificação, e uma recusa é ignorada em silêncio. O "não lido" do agente já existia: `done` fica até alguém olhar a aba (`markSeen`). Não há ação ao clicar na notificação (o plugin não oferece isso de forma igual nas três plataformas). No mock, `window.Notification` é trocado por uma classe que guarda o que foi enviado (`__lynxMock.notifications()`), como o plugin faz dentro do app.
 
+## Orquestração
+
+`src-tauri/src/orchestration/`: um agente coordenador abre uma run, cria tarefas (com dependências) e inicia um worker por tarefa, cada um num worktree próprio ou no do coordenador. As ferramentas são `lynx_*` e chegam pelo mesmo hub MCP das ferramentas do browser; `router.rs` separa pelo prefixo.
+
+- Configuração em `config.orchestration` (`enabled`, `releaseFinishedWorkers`), aba Orchestration das configurações. Desligada, toda chamada `lynx_*` recusa.
+- O agente, o modelo e o worktree de cada worker vêm do `lynx_worker_start` (`worktree`: `new` ou `current`). As instruções do MCP mandam o coordenador perguntar ao usuário qual agente e modelo usar antes. O OpenCode não recebe modelo na linha de partida.
+- Não há aprovação de orçamento nem limite de workers, de tempo ou de uso: quem decide é o usuário, nas configurações ou na conversa com o coordenador.
+- Regras em `service.rs`, com o `WorkerHost` como fronteira (terminais, worktrees, configuração). `host.rs` implementa a fronteira com o app; `service_tests.rs` testa as regras com um host em memória.
+- Tabelas `orchestration_runs`, `orchestration_tasks`, `orchestration_dispatches` e `orchestration_messages`.
+- Quando o coordenador ouve o relatório (`lynx_check`), o terminal do worker fecha se `releaseFinishedWorkers` estiver ligado. Um worker que espera resposta gera a mensagem `needs_you`, uma vez por espera.
+
 ## Browser
 
 O browser embutido roda o Chromium (CEF) num processo à parte, `lynx-browser-host`, que o app inicia só quando alguém abre o browser (ou um agente o usa). O motor não vem no app: é baixado uma vez, de dentro do app (botão no aviso do browser e na aba **Browser** das configurações), para `~/.lynx/engine/`. Linux x64 e Windows x64 (macOS ainda não).

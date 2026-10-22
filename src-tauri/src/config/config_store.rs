@@ -13,8 +13,8 @@ use crate::agents::harness::{HarnessId, harness_name, supported};
 
 use super::app_config::{
     AppConfig, BrowserConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, GitConfig,
-    LaunchMode, NotificationsConfig, TerminalConfig, UpdatesConfig, UsageConfig, expand_home,
-    parse_config,
+    LaunchMode, NotificationsConfig, OrchestrationConfig, TerminalConfig, UpdatesConfig,
+    UsageConfig, expand_home, parse_config,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -456,6 +456,22 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
             .as_ref()
             .map(|text| json!(text)),
     );
+    let orchestration = &config.orchestration;
+    let orchestration_defaults = OrchestrationConfig::default();
+    put(
+        root,
+        "orchestration",
+        "enabled",
+        (orchestration.enabled != orchestration_defaults.enabled)
+            .then(|| json!(orchestration.enabled)),
+    );
+    put(
+        root,
+        "orchestration",
+        "releaseFinishedWorkers",
+        (orchestration.release_finished_workers != orchestration_defaults.release_finished_workers)
+            .then(|| json!(orchestration.release_finished_workers)),
+    );
     let browser = &config.browser;
     let browser_defaults = BrowserConfig::default();
     put(
@@ -538,8 +554,8 @@ mod tests {
 
     use super::*;
     use crate::config::app_config::{
-        BellStyle, ColorScheme, CommitMessageAgent, CommitMessageStyle, TerminalConfig,
-        UsageDisplay, UsageLayout, WorktreesConfig,
+        BellStyle, ColorScheme, CommitMessageAgent, CommitMessageStyle, OrchestrationConfig,
+        TerminalConfig, UsageDisplay, UsageLayout, WorktreesConfig,
     };
 
     fn setup() -> (ConfigStore, tempfile::TempDir) {
@@ -679,6 +695,27 @@ mod tests {
                 "warnAt": 60,
                 "criticalAt": 85
             } })
+        );
+
+        store.update(AppConfig::default()).expect("reset");
+        assert_eq!(file_json(&store), json!({}));
+    }
+
+    #[test]
+    fn orchestration_settings_are_written_only_when_they_differ_from_defaults() {
+        let (store, _dir) = setup();
+        let set = AppConfig {
+            orchestration: OrchestrationConfig {
+                enabled: true,
+                release_finished_workers: false,
+            },
+            ..AppConfig::default()
+        };
+
+        store.update(set).expect("set");
+        assert_eq!(
+            file_json(&store),
+            json!({ "orchestration": { "enabled": true, "releaseFinishedWorkers": false } })
         );
 
         store.update(AppConfig::default()).expect("reset");

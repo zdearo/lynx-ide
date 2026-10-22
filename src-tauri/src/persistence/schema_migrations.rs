@@ -84,6 +84,21 @@ const MIGRATIONS: &[&str] = &[
          started_at    INTEGER NOT NULL
      );
      CREATE INDEX orchestration_dispatches_session ON orchestration_dispatches (session_id);",
+    // 10: what workers send to their coordinator (reports, and what the app noticed), until it is read
+    "CREATE TABLE orchestration_messages (
+         id          TEXT PRIMARY KEY,
+         run_id      TEXT NOT NULL REFERENCES orchestration_runs (id),
+         dispatch_id TEXT,
+         task_id     TEXT,
+         kind        TEXT NOT NULL,
+         body        TEXT NOT NULL,
+         unread      INTEGER NOT NULL DEFAULT 1,
+         created_at  INTEGER NOT NULL
+     );
+     CREATE INDEX orchestration_messages_unread ON orchestration_messages (run_id, unread);",
+    // Runs keep no approval state or budget: the user's orchestration settings decide instead.
+    "ALTER TABLE orchestration_runs DROP COLUMN state;
+     ALTER TABLE orchestration_runs DROP COLUMN budget;",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -194,5 +209,44 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(version(&connection), before);
+    }
+
+    #[test]
+    fn a_run_stored_with_an_approval_keeps_its_row_without_the_columns_it_lost() {
+        // Before the last migration, each run kept an approval state and a budget; the last one drops both.
+        let mut connection = Connection::open_in_memory().expect("open");
+        for (index, sql) in MIGRATIONS.iter().enumerate().take(MIGRATIONS.len() - 1) {
+            apply(&mut connection, index as u32 + 1, sql).expect("apply");
+        }
+        connection
+            .execute(
+                "INSERT INTO orchestration_runs (id, coordinator_session, worktree_path, title, state, budget, created_at)
+                 VALUES ('run', 'session', '/repo', 'Audit', 'approved', '{}', 0)",
+                [],
+            )
+            .expect("insert");
+
+        migrate(&mut connection).expect("migrate");
+
+        let title: String = connection
+            .query_row(
+                "SELECT title FROM orchestration_runs WHERE id = 'run'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the run is kept");
+        assert_eq!(title, "Audit");
+        let columns = connection
+            .prepare("SELECT name FROM pragma_table_info('orchestration_runs')")
+            .expect("prepare")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("columns");
+        assert!(
+            !columns
+                .iter()
+                .any(|name| name == "state" || name == "budget")
+        );
     }
 }

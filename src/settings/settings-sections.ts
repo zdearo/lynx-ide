@@ -4,6 +4,7 @@ import { BellGlyph18 } from "@/components/icons/BellGlyph18";
 import { CodeBranchGlyph18 } from "@/components/icons/CodeBranchGlyph18";
 import { GlobeGlyph18 } from "@/components/icons/GlobeGlyph18";
 import { FolderGlyph18 } from "@/components/icons/FolderGlyph18";
+import { FolderTreeGlyph18 } from "@/components/icons/FolderTreeGlyph18";
 import type { IconComponent } from "@/components/icons/icon-component";
 import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
 import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
@@ -12,6 +13,7 @@ import { AgentsSettings } from "@/settings/AgentsSettings";
 import { BrowserSettings } from "@/settings/BrowserSettings";
 import { GitSettings } from "@/settings/GitSettings";
 import { NotificationsSettings } from "@/settings/NotificationsSettings";
+import { OrchestrationSettings } from "@/settings/OrchestrationSettings";
 import { TerminalSettings } from "@/settings/TerminalSettings";
 import { UpdatesSettings } from "@/settings/UpdatesSettings";
 import { WorktreesSettings } from "@/settings/WorktreesSettings";
@@ -49,6 +51,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     label: copy.settings.git.title,
     icon: CodeBranchGlyph18,
     panel: GitSettings,
+  },
+  {
+    id: "orchestration",
+    label: copy.settings.orchestration.title,
+    icon: FolderTreeGlyph18,
+    panel: OrchestrationSettings,
   },
   {
     id: "browser",

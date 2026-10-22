@@ -160,7 +160,6 @@ pub fn run() {
                     Arc::clone(&config),
                 )),
             ));
-            app.manage(Arc::clone(&orchestration));
             hook_hub.set_tool_handler(Arc::new(orchestration::router::ToolRouter::new(
                 Arc::new(browser::AgentToolBridge::new(
                     app.handle().clone(),

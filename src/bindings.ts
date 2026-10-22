@@ -91,8 +91,6 @@ export const commands = {
 	forgetResumableSession: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("forget_resumable_session", { id })),
 	/**  The line that starts an agent, with the launch mode and the arguments Settings hold now. */
 	agentLaunchLine: (harness: HarnessId) => __TAURI_INVOKE<string>("agent_launch_line", { harness }),
-	/**  The user approves a run's budget. Workers can start only after this. */
-	approveRun: (runId: string, budget: Budget) => typedError<null, IpcError>(__TAURI_INVOKE("approve_run", { runId, budget })),
 	listResumableSessions: (worktreePath: string) => typedError<ResumableSession[], IpcError>(__TAURI_INVOKE("list_resumable_sessions", { worktreePath })),
 	/**  Chooses what closing the app does with the daemon's sessions, before the window closes. */
 	prepareQuit: (keepSessions: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("prepare_quit", { keepSessions })),
@@ -269,6 +267,7 @@ export const events = {
 	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
 	updateStatusChanged: makeEvent<UpdateStatusChanged>("update-status-changed"),
 	worktreeChanged: makeEvent<WorktreeChanged>("worktree-changed"),
+	worktreeCreated: makeEvent<WorktreeCreated>("worktree-created"),
 };
 
 /* Types */
@@ -318,6 +317,7 @@ export type AppConfig = {
 	worktrees: WorktreesConfig,
 	agents: AgentsConfig,
 	git: GitConfig,
+	orchestration: OrchestrationConfig,
 	notifications: NotificationsConfig,
 	browser: BrowserConfig,
 	usage: UsageConfig,
@@ -436,18 +436,6 @@ export type BrowserThumbnail = {
 export type BrowserThumbnailChanged = {
 	page: number,
 	png: string,
-};
-
-/**  What the user approves once for a run. The coordinator can use less of it, never more. */
-export type Budget = {
-	/**  Workers running at the same time. */
-	maxConcurrent: number,
-	/**  Workers the run may start in all. */
-	maxTotal: number,
-	/**  The agents a worker may run. */
-	harnesses: HarnessId[],
-	/**  YOLO for the workers, only when the user approved it here. */
-	launchMode: LaunchMode,
 };
 
 export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "typeChanged" | "untracked" | "conflicted";
@@ -760,6 +748,13 @@ export type NotificationsConfig = {
 	onUpdate: boolean,
 };
 
+/**  Orchestration: a coordinator agent starts workers for its tasks. Off until the user turns it on. */
+export type OrchestrationConfig = {
+	enabled: boolean,
+	/**  Close a worker's terminal once it has reported, so the sidebar keeps only live work. */
+	releaseFinishedWorkers: boolean,
+};
+
 export type PageOwner = 
 /**  A project's worktree: the pages its own terminals and agents open. */
 { kind: "workspace"; worktreePath: string } | 
@@ -1050,6 +1045,11 @@ export type WorktreeChanged = {
 	everything: boolean,
 	/**  Git's own state moved: the index or `HEAD` was written (a stage, a commit, a checkout). */
 	git: boolean,
+};
+
+/**  A repository got a worktree the screen did not make itself, so the screen reads its list again. */
+export type WorktreeCreated = {
+	repoId: string,
 };
 
 export type WorktreeInfo = {

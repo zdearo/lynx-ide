@@ -1,35 +1,9 @@
-//! The states of a run, its tasks and its workers, and the rules that decide when one may move.
+//! The states of tasks and workers, and the rules that decide when a task may start.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::agents::harness::HarnessId;
-use crate::config::app_config::LaunchMode;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub enum RunState {
-    /// Created by the coordinator; no worker starts until the user approves the budget.
-    AwaitingApproval,
-    Approved,
-}
-
-impl RunState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::AwaitingApproval => "awaiting_approval",
-            Self::Approved => "approved",
-        }
-    }
-
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "awaiting_approval" => Some(Self::AwaitingApproval),
-            "approved" => Some(Self::Approved),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +11,7 @@ pub enum TaskState {
     Pending,
     Running,
     Done,
+    Failed,
     Cancelled,
 }
 
@@ -46,6 +21,7 @@ impl TaskState {
             Self::Pending => "pending",
             Self::Running => "running",
             Self::Done => "done",
+            Self::Failed => "failed",
             Self::Cancelled => "cancelled",
         }
     }
@@ -55,8 +31,40 @@ impl TaskState {
             "pending" => Some(Self::Pending),
             "running" => Some(Self::Running),
             "done" => Some(Self::Done),
+            "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
             _ => None,
+        }
+    }
+}
+
+/// How a worker says its task ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Done,
+    Failed,
+}
+
+impl Outcome {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "done" => Some(Self::Done),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+
+    pub fn task_state(self) -> TaskState {
+        match self {
+            Self::Done => TaskState::Done,
+            Self::Failed => TaskState::Failed,
+        }
+    }
+
+    pub fn message_kind(self) -> MessageKind {
+        match self {
+            Self::Done => MessageKind::Done,
+            Self::Failed => MessageKind::Failed,
         }
     }
 }
@@ -85,58 +93,60 @@ impl DispatchState {
     }
 }
 
-/// What the user approves once for a run. The coordinator can use less of it, never more.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+/// What reaches the coordinator from its workers, or what the app noticed about them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct Budget {
-    /// Workers running at the same time.
-    pub max_concurrent: u32,
-    /// Workers the run may start in all.
-    pub max_total: u32,
-    /// The agents a worker may run.
-    pub harnesses: Vec<HarnessId>,
-    /// YOLO for the workers, only when the user approved it here.
-    pub launch_mode: LaunchMode,
+pub enum MessageKind {
+    Done,
+    Failed,
+    /// The worker ended, or finished its turn, without reporting.
+    NoReport,
+    /// The worker is waiting for an answer; the user gives it in the worker's terminal.
+    NeedsYou,
 }
 
-/// A run's budget must leave room for at least one worker, and name the agents it allows.
-pub fn budget_is_valid(budget: &Budget) -> Result<(), &'static str> {
-    if budget.max_concurrent == 0 || budget.max_total == 0 {
-        return Err("the budget must allow at least one worker");
+impl MessageKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::Failed => "failed",
+            Self::NoReport => "no_report",
+            Self::NeedsYou => "needs_you",
+        }
     }
-    if budget.max_concurrent > budget.max_total {
-        return Err("workers at the same time cannot be more than workers in all");
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "done" => Some(Self::Done),
+            "failed" => Some(Self::Failed),
+            "no_report" => Some(Self::NoReport),
+            "needs_you" => Some(Self::NeedsYou),
+            _ => None,
+        }
     }
-    if budget.harnesses.is_empty() {
-        return Err("the budget must allow at least one agent");
-    }
-    Ok(())
 }
 
-/// Why a worker may not start under a budget, given what the run already has running and started.
-#[derive(Debug, PartialEq, Eq)]
-pub enum BudgetRefusal {
-    AgentNotAllowed,
-    TooManyRunning,
-    TooManyStarted,
+/// Where a worker works: in a worktree of its own, or in the coordinator's, with its files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerWorktree {
+    New,
+    Current,
 }
 
-pub fn budget_allows(
-    budget: &Budget,
-    running: u32,
-    started: u32,
-    harness: HarnessId,
-) -> Result<(), BudgetRefusal> {
-    if !budget.harnesses.contains(&harness) {
-        return Err(BudgetRefusal::AgentNotAllowed);
+impl WorkerWorktree {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "new" => Some(Self::New),
+            "current" => Some(Self::Current),
+            _ => None,
+        }
     }
-    if running >= budget.max_concurrent {
-        return Err(BudgetRefusal::TooManyRunning);
-    }
-    if started >= budget.max_total {
-        return Err(BudgetRefusal::TooManyStarted);
-    }
-    Ok(())
+}
+
+/// Whether an agent reports through the Lynx tools. OMP has no MCP entry, so its end is read from
+/// its status instead.
+pub fn reports_through_tools(harness: HarnessId) -> bool {
+    !matches!(harness, HarnessId::Omp)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,8 +157,6 @@ pub struct Run {
     /// The worktree the coordinator works in; the workers' worktrees come from its repository.
     pub worktree_path: String,
     pub title: String,
-    pub state: RunState,
-    pub budget: Option<Budget>,
     pub created_at: i64,
 }
 
@@ -176,6 +184,18 @@ pub struct Dispatch {
     pub started_at: i64,
 }
 
+/// A message for the coordinator: a worker's report, or what the app noticed about a worker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    pub id: String,
+    pub run_id: String,
+    pub dispatch_id: Option<String>,
+    pub task_id: Option<String>,
+    pub kind: MessageKind,
+    pub body: String,
+    pub created_at: i64,
+}
+
 /// Whether a task may start now: it is pending, and every task it depends on is done.
 pub fn task_is_ready(task: &Task, tasks: &[Task]) -> bool {
     task.state == TaskState::Pending
@@ -190,15 +210,6 @@ pub fn task_is_ready(task: &Task, tasks: &[Task]) -> bool {
 mod tests {
     use super::*;
 
-    fn budget() -> Budget {
-        Budget {
-            max_concurrent: 2,
-            max_total: 3,
-            harnesses: vec![HarnessId::Claude],
-            launch_mode: LaunchMode::Manual,
-        }
-    }
-
     fn task(id: &str, state: TaskState, depends_on: &[&str]) -> Task {
         Task {
             id: id.to_owned(),
@@ -208,50 +219,6 @@ mod tests {
             state,
             created_at: 0,
         }
-    }
-
-    #[test]
-    fn a_budget_needs_room_for_a_worker_and_an_agent() {
-        assert!(budget_is_valid(&budget()).is_ok());
-        assert!(
-            budget_is_valid(&Budget {
-                max_total: 0,
-                ..budget()
-            })
-            .is_err()
-        );
-        assert!(
-            budget_is_valid(&Budget {
-                max_concurrent: 4,
-                ..budget()
-            })
-            .is_err()
-        );
-        assert!(
-            budget_is_valid(&Budget {
-                harnesses: vec![],
-                ..budget()
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn a_worker_waits_for_its_slot_its_total_and_its_agent() {
-        let b = budget();
-        assert_eq!(budget_allows(&b, 0, 0, HarnessId::Claude), Ok(()));
-        assert_eq!(
-            budget_allows(&b, 0, 0, HarnessId::Codex),
-            Err(BudgetRefusal::AgentNotAllowed)
-        );
-        assert_eq!(
-            budget_allows(&b, 2, 2, HarnessId::Claude),
-            Err(BudgetRefusal::TooManyRunning)
-        );
-        assert_eq!(
-            budget_allows(&b, 0, 3, HarnessId::Claude),
-            Err(BudgetRefusal::TooManyStarted)
-        );
     }
 
     #[test]
@@ -273,14 +240,21 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_task_does_not_unblock_the_tasks_that_depend_on_it() {
+        let tasks = [
+            task("a", TaskState::Failed, &[]),
+            task("b", TaskState::Pending, &["a"]),
+        ];
+        assert!(!task_is_ready(&tasks[1], &tasks));
+    }
+
+    #[test]
     fn states_round_trip_through_their_stored_text() {
-        for state in [RunState::AwaitingApproval, RunState::Approved] {
-            assert_eq!(RunState::parse(state.as_str()), Some(state));
-        }
         for state in [
             TaskState::Pending,
             TaskState::Running,
             TaskState::Done,
+            TaskState::Failed,
             TaskState::Cancelled,
         ] {
             assert_eq!(TaskState::parse(state.as_str()), Some(state));
@@ -288,5 +262,29 @@ mod tests {
         for state in [DispatchState::Running, DispatchState::Stopped] {
             assert_eq!(DispatchState::parse(state.as_str()), Some(state));
         }
+        for kind in [
+            MessageKind::Done,
+            MessageKind::Failed,
+            MessageKind::NoReport,
+            MessageKind::NeedsYou,
+        ] {
+            assert_eq!(MessageKind::parse(kind.as_str()), Some(kind));
+        }
+    }
+
+    #[test]
+    fn a_worker_is_placed_in_a_new_worktree_or_the_current_one() {
+        assert_eq!(WorkerWorktree::parse("new"), Some(WorkerWorktree::New));
+        assert_eq!(
+            WorkerWorktree::parse("current"),
+            Some(WorkerWorktree::Current)
+        );
+        assert_eq!(WorkerWorktree::parse("elsewhere"), None);
+    }
+
+    #[test]
+    fn omp_does_not_report_through_the_tools() {
+        assert!(reports_through_tools(HarnessId::Claude));
+        assert!(!reports_through_tools(HarnessId::Omp));
     }
 }

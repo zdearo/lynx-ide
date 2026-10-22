@@ -154,6 +154,24 @@ pub struct GitConfig {
     pub commit_message_instructions: Option<String>,
 }
 
+/// Orchestration: a coordinator agent starts workers for its tasks. Off until the user turns it on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestrationConfig {
+    pub enabled: bool,
+    /// Close a worker's terminal once it has reported, so the sidebar keeps only live work.
+    pub release_finished_workers: bool,
+}
+
+impl Default for OrchestrationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            release_finished_workers: true,
+        }
+    }
+}
+
 /// When Lynx sends a system notification, while the window is not in front.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -264,6 +282,7 @@ pub struct AppConfig {
     pub worktrees: WorktreesConfig,
     pub agents: AgentsConfig,
     pub git: GitConfig,
+    pub orchestration: OrchestrationConfig,
     pub notifications: NotificationsConfig,
     pub browser: BrowserConfig,
     pub usage: UsageConfig,
@@ -487,6 +506,11 @@ impl AppConfig {
             "git.commitMessageInstructions" => {
                 self.git.commit_message_instructions = defaults.git.commit_message_instructions;
             }
+            "orchestration.enabled" => self.orchestration.enabled = defaults.orchestration.enabled,
+            "orchestration.releaseFinishedWorkers" => {
+                self.orchestration.release_finished_workers =
+                    defaults.orchestration.release_finished_workers;
+            }
             key => {
                 if let Some(harness) = key
                     .strip_prefix("agents.launchArguments.")
@@ -604,6 +628,19 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
             commit_message_style(git, &mut issues).unwrap_or_default();
         config.git.commit_message_instructions =
             optional_text(git, "commitMessageInstructions", "git", &mut issues);
+    }
+    if let Some(orchestration) = section(root, "orchestration", &mut issues) {
+        if let Some(value) = flag(orchestration, "enabled", "orchestration", &mut issues) {
+            config.orchestration.enabled = value;
+        }
+        if let Some(value) = flag(
+            orchestration,
+            "releaseFinishedWorkers",
+            "orchestration",
+            &mut issues,
+        ) {
+            config.orchestration.release_finished_workers = value;
+        }
     }
 
     finish(config.normalized(), issues, home)
@@ -1495,5 +1532,33 @@ mod tests {
 
         assert_eq!(keys(&issues), ["usage.thresholds"]);
         assert_eq!((config.usage.warn_at, config.usage.critical_at), (75, 90));
+    }
+
+    #[test]
+    fn orchestration_is_off_and_takes_the_defaults_until_the_user_sets_it() {
+        let (config, issues) = parse(json!({}));
+        assert!(issues.is_empty());
+        assert_eq!(config.orchestration, OrchestrationConfig::default());
+        assert!(!config.orchestration.enabled);
+        assert!(config.orchestration.release_finished_workers);
+    }
+
+    #[test]
+    fn reads_the_orchestration_settings() {
+        let (config, issues) = parse(json!({
+            "orchestration": { "enabled": true, "releaseFinishedWorkers": false }
+        }));
+        assert!(issues.is_empty());
+        assert!(config.orchestration.enabled);
+        assert!(!config.orchestration.release_finished_workers);
+    }
+
+    #[test]
+    fn the_agent_worktree_and_model_are_chosen_per_worker_so_old_keys_are_not_read() {
+        let (config, issues) = parse(json!({
+            "orchestration": { "defaultAgent": "codex", "workerWorktree": "current" }
+        }));
+        assert!(issues.is_empty());
+        assert_eq!(config.orchestration, OrchestrationConfig::default());
     }
 }

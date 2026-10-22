@@ -2873,6 +2873,48 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 });
 
+// An agent makes a worktree while the screen is open: the sidebar lists it without a reload.
+await session("?mock=full", 1200, 760, async (p) => {
+  await p.evaluate(() =>
+    window.__lynxMock.worktreeMadeByAgent("lynx-ide", "lynx-task-1a2b3c4d"),
+  );
+  await p.waitForTimeout(400);
+  check(
+    "a worktree an agent made shows in the sidebar without a reload",
+    (await p.getByRole("button", { name: /lynx-task-1a2b3c4d/ }).count()) >= 1,
+  );
+});
+
+// The Orchestration tab: off until the user turns it on; the coordinator, not Settings, picks the agent and worktree.
+await session("?mock=full", 1200, 760, async (p) => {
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  await p.getByRole("tab", { name: "Orchestration", exact: true }).click();
+  await p.waitForTimeout(300);
+
+  check(
+    "the Orchestration tab starts off, and finished workers close by default",
+    (await p
+      .getByRole("switch", { name: "Coordinate agents" })
+      .getAttribute("aria-checked")) === "false" &&
+      (await p
+        .getByRole("switch", { name: "Close finished workers" })
+        .getAttribute("aria-checked")) === "true",
+  );
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the Orchestration tab",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+});
+
 // The Git tab: which agent writes commit messages, the style it follows, and the instructions box.
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();

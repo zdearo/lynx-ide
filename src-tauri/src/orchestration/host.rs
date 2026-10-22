@@ -4,17 +4,20 @@
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
+use tauri_specta::Event;
 
+use crate::agents::activity::AgentStatus;
 use crate::agents::agent_prompt_file;
 use crate::agents::harness::HarnessId;
 use crate::agents::launch_line::launch_line;
 use crate::browser::{PageOwner, SessionOwners};
 use crate::config::ConfigStore;
-use crate::config::app_config::LaunchMode;
+use crate::config::app_config::OrchestrationConfig;
 use crate::terminal::terminal_manager::TerminalManager;
+use crate::workspace::workspace_events::WorktreeCreated;
 use crate::workspace::workspace_service::WorkspaceService;
 
-use super::service::{Reading, WorkerHost};
+use super::service::WorkerHost;
 
 /// Workers are terminals of the app, in worktrees of the app's projects.
 pub struct AppWorkers {
@@ -38,6 +41,10 @@ impl AppWorkers {
 }
 
 impl WorkerHost for AppWorkers {
+    fn settings(&self) -> OrchestrationConfig {
+        self.config.config().orchestration
+    }
+
     fn worktree_of(&self, session: &str) -> Option<String> {
         match self.owners.get(session)? {
             PageOwner::Workspace { worktree_path } => Some(worktree_path),
@@ -50,10 +57,21 @@ impl WorkerHost for AppWorkers {
         let repo = workspace
             .repo_id_of_worktree(from)
             .ok_or_else(|| "Lynx does not know the project this agent works in".to_owned())?;
-        workspace
+        let worktree = workspace
             .create_worktree(&repo, name, None)
-            .map(|worktree| worktree.path)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        // The screen reads a project's worktrees when told to, so one made here is missing until then.
+        let told = WorktreeCreated {
+            repo_id: repo.clone(),
+        }
+        .emit(&self.app);
+        if let Err(error) = told {
+            eprintln!(
+                "lynx: could not tell the screen that {repo} has worktree {}: {error}",
+                worktree.path
+            );
+        }
+        Ok(worktree.path)
     }
 
     fn prompt_file(&self, text: &str) -> Result<String, String> {
@@ -62,8 +80,13 @@ impl WorkerHost for AppWorkers {
             .map_err(|error| error.to_string())
     }
 
-    fn launch_line(&self, harness: HarnessId, mode: LaunchMode) -> String {
-        launch_line(harness, mode, &self.config.config().agents.launch_arguments)
+    fn launch_line(&self, harness: HarnessId) -> String {
+        let config = self.config.config();
+        launch_line(
+            harness,
+            config.agents.launch_mode,
+            &config.agents.launch_arguments,
+        )
     }
 
     fn start(&self, worktree: &str, command: &str) -> Result<String, String> {
@@ -79,17 +102,18 @@ impl WorkerHost for AppWorkers {
             .is_ok_and(|info| info.running)
     }
 
-    fn reading(&self, session: &str) -> Result<Reading, String> {
-        let terminals = self.terminals();
-        let info = terminals.info(session).map_err(|error| error.to_string())?;
-        let snapshot = terminals
+    fn status(&self, session: &str) -> Option<AgentStatus> {
+        self.terminals()
+            .info(session)
+            .ok()
+            .and_then(|info| info.agent_status)
+    }
+
+    fn output(&self, session: &str) -> Result<String, String> {
+        self.terminals()
             .snapshot(session)
-            .map_err(|error| error.to_string())?;
-        Ok(Reading {
-            output: visible_text(&snapshot.data),
-            running: info.running,
-            status: info.agent_status,
-        })
+            .map(|snapshot| visible_text(&snapshot.data))
+            .map_err(|error| error.to_string())
     }
 
     fn stop(&self, session: &str) {

@@ -14,7 +14,6 @@ use crate::changes::changes_commands as changes;
 use crate::config::config_commands as config;
 use crate::config::config_events::ConfigChanged;
 use crate::files::files_commands as files;
-use crate::orchestration::commands as orchestration;
 use crate::pull_request::pull_request_commands as pull_request;
 use crate::terminal::terminal_commands as terminal;
 use crate::terminal::terminal_events::{
@@ -26,6 +25,7 @@ use crate::usage::usage_commands as usage;
 use crate::watching::watch_commands as watching;
 use crate::watching::worktree_events::WorktreeChanged;
 use crate::workspace::workspace_commands as workspace;
+use crate::workspace::workspace_events::WorktreeCreated;
 
 pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
@@ -78,7 +78,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             terminal::hibernate_terminal,
             terminal::forget_resumable_session,
             agents::agent_launch_line,
-            orchestration::approve_run,
             terminal::list_resumable_sessions,
             terminal::prepare_quit,
             terminal::terminal_snapshot,
@@ -144,6 +143,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             AgentStatusChanged,
             ConfigChanged,
             WorktreeChanged,
+            WorktreeCreated,
             BrowserStateChanged,
             BrowserPagesChanged,
             BrowserThumbnailChanged,

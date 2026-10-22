@@ -261,9 +261,14 @@ fn a_worker_starts_in_its_own_worktree_with_its_task() {
         prompts[0].contains("lynx_report"),
         "a worker that reports through the tools is told how"
     );
+    // The instruction is quoted the way the platform's shell takes it.
+    let instruction = quote_for_shell(
+        "Read /tmp/lynx-prompts/task.md and follow the instructions in it.",
+        cfg!(windows),
+    );
     assert_eq!(
         setup.host.started_commands()[0].1,
-        "claude 'Read /tmp/lynx-prompts/task.md and follow the instructions in it.'"
+        format!("claude {instruction}")
     );
 }
 
@@ -316,12 +321,9 @@ fn a_worker_starts_the_agent_and_the_model_the_coordinator_names() {
 
     assert_eq!(codex.harness, HarnessId::Codex);
     let commands = setup.host.started_commands();
-    assert!(commands[0].1.starts_with("codex --model o3 'Read "));
-    assert!(
-        commands[1]
-            .1
-            .starts_with("claude --model claude-opus-5-5 'Read ")
-    );
+    assert!(commands[0].1.starts_with("codex --model o3 "));
+    assert!(commands[0].1.contains("Read /tmp/lynx-prompts/task.md"));
+    assert!(commands[1].1.starts_with("claude --model claude-opus-5-5 "));
 }
 
 #[test]

@@ -43,8 +43,6 @@ pub enum HookInstallError {
     NoExecutable,
     #[error("{path} is not a config file Lynx can read, so it was left unchanged")]
     InvalidConfig { path: String },
-    #[error("{path} has no agent file to add the hooks to")]
-    NoAgentFiles { path: String },
     #[error("`{command}` failed: {detail}")]
     Command { command: String, detail: String },
     #[error("could not update {path}: {source}")]

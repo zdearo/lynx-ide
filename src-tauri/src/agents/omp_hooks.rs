@@ -1,11 +1,12 @@
-//! Pi and OMP status: an extension file in each agent's own folder. Both load every extension
-//! there when they start, and the extension hands each session event that matters to Lynx's relay.
+//! OMP status: an extension file in OMP's own folder. OMP loads every extension there when it
+//! starts, and the extension hands each session event that matters to Lynx's relay.
 
 use std::path::{Path, PathBuf};
 
 use super::plugin_file::PluginFileTarget;
 
 const FILE_NAME: &str = "lynx-agent-status.ts";
+const HARNESS: &str = "omp";
 
 /// The events the extension forwards. Tool output and other events would cost a process each.
 const FORWARDED_EVENTS: &[&str] = &[
@@ -64,13 +65,12 @@ fn marker(harness: &str) -> String {
     format!("// Installed by Lynx: {harness} status extension.")
 }
 
-/// The extension for one agent, written into its extensions folder. Pi and OMP keep separate
-/// folders, so each agent gets the same file name in its own.
-pub fn target(harness: &str, agent_dir: PathBuf, executable: Option<&Path>) -> PluginFileTarget {
+/// The extension, written into OMP's extensions folder.
+pub fn target(agent_dir: PathBuf, executable: Option<&Path>) -> PluginFileTarget {
     PluginFileTarget::new(
         agent_dir.join("extensions").join(FILE_NAME),
-        marker(harness),
-        executable.map(|executable| extension_source(executable, harness)),
+        marker(HARNESS),
+        executable.map(|executable| extension_source(executable, HARNESS)),
         FORWARDED_EVENTS,
     )
 }
@@ -92,22 +92,9 @@ mod tests {
     }
 
     #[test]
-    fn each_agent_gets_the_extension_in_its_own_folder() {
-        let pi = target(
-            "pi",
-            PathBuf::from("/home/me/.pi/agent"),
-            Some(Path::new(EXE)),
-        );
-        let omp = target(
-            "omp",
-            PathBuf::from("/home/me/.omp/agent"),
-            Some(Path::new(EXE)),
-        );
+    fn the_extension_goes_in_omps_own_folder() {
+        let omp = target(PathBuf::from("/home/me/.omp/agent"), Some(Path::new(EXE)));
         // Compared by path component, because Windows writes the separators as backslashes.
-        assert!(
-            Path::new(&pi.status().config_path)
-                .ends_with(".pi/agent/extensions/lynx-agent-status.ts")
-        );
         assert!(
             Path::new(&omp.status().config_path)
                 .ends_with(".omp/agent/extensions/lynx-agent-status.ts")
@@ -120,7 +107,7 @@ mod tests {
         let extensions = dir.path().join("extensions");
         std::fs::create_dir_all(&extensions).expect("extensions dir");
         std::fs::write(extensions.join("other.ts"), "// someone else\n").expect("write");
-        let target = target("pi", dir.path().to_path_buf(), Some(Path::new(EXE)));
+        let target = target(dir.path().to_path_buf(), Some(Path::new(EXE)));
         assert_eq!(target.status().state, HookInstallState::NotInstalled);
 
         target.install().expect("install");

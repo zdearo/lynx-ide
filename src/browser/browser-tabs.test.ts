@@ -58,7 +58,7 @@ describe("agentName", () => {
   });
 
   it("falls back to the generic name for anything else", () => {
-    expect(agentName("grok")).toBe(copy.browser.agentNames.unknown);
+    expect(agentName("cursor")).toBe(copy.browser.agentNames.unknown);
     expect(agentName("toString")).toBe(copy.browser.agentNames.unknown);
   });
 });

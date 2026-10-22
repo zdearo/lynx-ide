@@ -31,11 +31,13 @@ fn setup() -> (TerminalManager, Arc<RecordingSink>, tempfile::TempDir) {
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         HookHub::disabled(),
         SessionOwners::default(),
+        None,
+        None,
     );
     (manager, sink, tempfile::tempdir().expect("temp dir"))
 }
 
-fn is_running(pid: &str) -> bool {
+pub(super) fn is_running(pid: &str) -> bool {
     #[cfg(target_os = "linux")]
     {
         // A zombie has already exited; it only waits to be reaped.
@@ -56,7 +58,7 @@ fn is_running(pid: &str) -> bool {
     }
 }
 
-fn read_pid(file: &Path) -> String {
+pub(super) fn read_pid(file: &Path) -> String {
     let deadline = Instant::now() + WAIT;
     loop {
         if let Ok(pid) = fs::read_to_string(file)
@@ -69,7 +71,7 @@ fn read_pid(file: &Path) -> String {
     }
 }
 
-fn wait_until_stopped(pid: &str, within: Duration) {
+pub(super) fn wait_until_stopped(pid: &str, within: Duration) {
     let deadline = Instant::now() + within;
     while is_running(pid) {
         assert!(Instant::now() < deadline, "process {pid} is still running");
@@ -332,6 +334,8 @@ fn a_session_belongs_to_its_worktree_until_it_is_closed() {
         Arc::new(RecordingSink::default()) as Arc<dyn TerminalEventSink>,
         HookHub::disabled(),
         owners.clone(),
+        None,
+        None,
     );
     let dir = tempfile::tempdir().expect("temp dir");
     let info = manager
@@ -389,6 +393,8 @@ fn a_shell_becomes_the_harness_that_reports_from_it_and_back(
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         hub.clone(),
         SessionOwners::default(),
+        None,
+        None,
     );
     let dir = tempfile::tempdir().expect("temp dir");
     let info = manager
@@ -445,6 +451,8 @@ fn an_agent_typed_by_hand_in_a_shell_is_followed_until_it_exits() {
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         hub.clone(),
         SessionOwners::default(),
+        None,
+        None,
     );
     let dir = tempfile::tempdir().expect("temp dir");
     let bin = fake_cli(dir.path(), "claude");
@@ -463,15 +471,6 @@ fn an_agent_typed_by_hand_in_a_shell_is_followed_until_it_exits() {
     sink.wait_for_state(&info.id, None, None);
 
     manager.close(&info.id).expect("close");
-}
-
-#[test]
-fn a_shell_that_runs_grok_becomes_an_agent_and_back_when_it_ends() {
-    a_shell_becomes_the_harness_that_reports_from_it_and_back(
-        HarnessId::Grok,
-        r#"{"hook_event_name":"SessionStart"}"#,
-        r#"{"hook_event_name":"SessionEnd"}"#,
-    );
 }
 
 #[test]
@@ -498,5 +497,63 @@ fn a_shell_that_runs_opencode_becomes_an_agent_and_back_when_it_ends() {
         HarnessId::Opencode,
         r#"{"type":"session.created"}"#,
         r#"{"type":"session.deleted"}"#,
+    );
+}
+
+/// An agent that names its conversation in its first hook can be resumed once it has ended.
+#[test]
+fn an_agent_that_names_its_conversation_can_be_resumed_after_it_ends() {
+    let sink = Arc::new(RecordingSink::default());
+    let hub = HookHub::start();
+    let shell = Arc::new(|| Shell {
+        program: "/bin/sh".to_owned(),
+        args: Vec::new(),
+    });
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = Arc::new(
+        crate::persistence::AppDatabase::open(&dir.path().join("app.db")).expect("database"),
+    );
+    let manager = TerminalManager::new(
+        shell,
+        Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+        hub.clone(),
+        SessionOwners::default(),
+        None,
+        Some(Arc::clone(&database)),
+    );
+    let worktree = dir.path().join("work");
+    std::fs::create_dir_all(&worktree).expect("worktree");
+    let info = manager
+        .create(&path_of(&dir), None, 80, 24)
+        .expect("create");
+    let reply = post_hook(
+        &hub,
+        &info.id,
+        "claude",
+        r#"{"hook_event_name":"SessionStart","source":"startup","session_id":"conversation-7"}"#,
+    );
+    assert_eq!(reply, "HTTP/1.1 204 No Content");
+    let deadline = std::time::Instant::now() + WAIT;
+    while database
+        .terminal_session(&info.id)
+        .expect("read")
+        .and_then(|record| record.resume_id)
+        .is_none()
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the name was never recorded"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    manager.close(&info.id).expect("close");
+    sink.wait_for_exit(&info.id);
+
+    let resumable = manager.resumable(&path_of(&dir));
+    assert_eq!(resumable.len(), 1, "the ended agent can be resumed");
+    assert_eq!(
+        resumable[0].resume_arguments,
+        ["--resume", "conversation-7"]
     );
 }

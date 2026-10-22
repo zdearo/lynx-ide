@@ -29,8 +29,8 @@ describe("visiblePresets", () => {
         preset.harness ? [preset.harness] : [],
       ),
     );
-    expect(every.size).toBe(12);
-    expect(visiblePresets(every).map((preset) => preset.id)).toHaveLength(13);
+    expect(every.size).toBe(4);
+    expect(visiblePresets(every).map((preset) => preset.id)).toHaveLength(5);
   });
 });
 
@@ -89,16 +89,6 @@ describe("launchCommand", () => {
     );
   });
 
-  it("starts an agent without a known YOLO flag as it is in YOLO mode", () => {
-    expect(launchCommand(preset("pi"), {}, "yolo")).toBe("pi");
-  });
-
-  it("keeps Kiro's flags after its chat subcommand", () => {
-    expect(launchCommand(preset("kiro"), {}, "yolo")).toBe(
-      "kiro-cli chat --trust-all-tools",
-    );
-  });
-
   it("gives a plain shell no command, whatever is set", () => {
     expect(
       launchCommand(preset("shell"), { claude: "--model opus" }, "yolo"),
@@ -110,7 +100,6 @@ describe("yoloFlag", () => {
   it("names the flag of each agent that has one", () => {
     expect(yoloFlag("claude")).toBe("--dangerously-skip-permissions");
     expect(yoloFlag("omp")).toBe("--auto-approve");
-    expect(yoloFlag("pi")).toBeNull();
   });
 });
 

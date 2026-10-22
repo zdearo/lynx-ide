@@ -1,5 +1,5 @@
 //! The event a hook payload stands for, for each harness. Claude, Codex and OpenCode have their own
-//! modules, since their payloads need more than a name; the rest are read here by event name.
+//! modules, since their payloads need more than a name; OMP is read here by event name.
 
 use serde_json::Value;
 
@@ -15,86 +15,34 @@ pub const EVENT_KEY: &str = "hook_event_name";
 
 pub fn event_for(harness: HarnessId, payload: &Value) -> Option<HookEvent> {
     match harness {
-        // Qwen and Droid write their hooks in Claude's format.
-        HarnessId::Claude | HarnessId::Qwen | HarnessId::Droid => {
-            claude_hooks::event_from_payload(payload)
-        }
+        HarnessId::Claude => claude_hooks::event_from_payload(payload),
         HarnessId::Codex => codex_hooks::event_from_payload(payload),
         HarnessId::Opencode => opencode_hooks::event_from_payload(payload),
-        HarnessId::Grok => grok_event(payload),
-        HarnessId::Antigravity => antigravity_event(payload),
-        HarnessId::Cursor => cursor_event(payload),
-        HarnessId::Copilot => copilot_event(payload),
-        HarnessId::Kiro => kiro_event(payload),
-        HarnessId::Pi | HarnessId::Omp => pi_event(payload),
+        HarnessId::Omp => omp_event(payload),
     }
+}
+
+/// The agent's name for its own conversation, when a hook carries it. It is typed into a shell to
+/// resume the conversation later, so only plain names pass.
+pub fn resume_id_of(harness: HarnessId, payload: &Value) -> Option<String> {
+    let id = match harness {
+        HarnessId::Claude | HarnessId::Codex => payload.get("session_id")?.as_str()?,
+        HarnessId::Opencode => payload.pointer("/properties/info/id")?.as_str()?,
+        HarnessId::Omp => return None,
+    };
+    let plain = !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    plain.then(|| id.to_owned())
 }
 
 fn event_name(payload: &Value) -> Option<&str> {
     payload.get(EVENT_KEY)?.as_str()
 }
 
-fn grok_event(payload: &Value) -> Option<HookEvent> {
-    match event_name(payload)? {
-        "SessionStart" => Some(HookEvent::Started),
-        "PreToolUse"
-            if payload.get("tool_name").and_then(Value::as_str) == Some("ask_user_question") =>
-        {
-            Some(HookEvent::NeedsYou)
-        }
-        "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => {
-            Some(HookEvent::Working)
-        }
-        "Stop" | "StopCancelled" | "StopFailure" => Some(HookEvent::Finished),
-        "SessionEnd" => Some(HookEvent::Ended),
-        _ => None,
-    }
-}
-
-fn antigravity_event(payload: &Value) -> Option<HookEvent> {
-    match event_name(payload)? {
-        "PreInvocation" | "PreToolUse" | "PostToolUse" => Some(HookEvent::Working),
-        "Stop" => Some(HookEvent::Finished),
-        _ => None,
-    }
-}
-
-fn cursor_event(payload: &Value) -> Option<HookEvent> {
-    match event_name(payload)? {
-        "beforeSubmitPrompt"
-        | "preToolUse"
-        | "postToolUse"
-        | "postToolUseFailure"
-        | "beforeShellExecution"
-        | "beforeMCPExecution" => Some(HookEvent::Working),
-        "stop" => Some(HookEvent::Finished),
-        _ => None,
-    }
-}
-
-fn copilot_event(payload: &Value) -> Option<HookEvent> {
-    match event_name(payload)? {
-        "SessionStart" => Some(HookEvent::Started),
-        "SessionEnd" => Some(HookEvent::Ended),
-        "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => {
-            Some(HookEvent::Working)
-        }
-        "PermissionRequest" => Some(HookEvent::NeedsYou),
-        "Stop" | "ErrorOccurred" => Some(HookEvent::Finished),
-        _ => None,
-    }
-}
-
-fn kiro_event(payload: &Value) -> Option<HookEvent> {
-    match event_name(payload)? {
-        "agentSpawn" => Some(HookEvent::Started),
-        "userPromptSubmit" | "preToolUse" | "postToolUse" => Some(HookEvent::Working),
-        "stop" => Some(HookEvent::Finished),
-        _ => None,
-    }
-}
-
-fn pi_event(payload: &Value) -> Option<HookEvent> {
+fn omp_event(payload: &Value) -> Option<HookEvent> {
     match event_name(payload)? {
         "session_start" => Some(HookEvent::Started),
         "agent_start" | "tool_call" | "tool_execution_start" | "tool_approval_resolved" => {
@@ -118,96 +66,38 @@ mod tests {
     }
 
     #[test]
-    fn grok_reports_a_question_as_needing_the_user() {
-        let question = json!({ EVENT_KEY: "PreToolUse", "tool_name": "ask_user_question" });
+    fn omp_reports_the_extension_events() {
         assert_eq!(
-            event_for(HarnessId::Grok, &question),
+            event_for(HarnessId::Omp, &named("tool_approval_requested")),
             Some(HookEvent::NeedsYou)
         );
         assert_eq!(
-            event_for(HarnessId::Grok, &named("StopFailure")),
-            Some(HookEvent::Finished)
-        );
-        assert_eq!(
-            event_for(HarnessId::Grok, &named("SessionEnd")),
+            event_for(HarnessId::Omp, &named("session_shutdown")),
             Some(HookEvent::Ended)
         );
-    }
-
-    #[test]
-    fn antigravity_work_is_tool_and_invocation_work_and_post_invocation_is_ignored() {
         assert_eq!(
-            event_for(HarnessId::Antigravity, &named("PreInvocation")),
-            Some(HookEvent::Working)
-        );
-        assert_eq!(
-            event_for(HarnessId::Antigravity, &named("Stop")),
-            Some(HookEvent::Finished)
-        );
-        assert_eq!(
-            event_for(HarnessId::Antigravity, &named("PostInvocation")),
+            event_for(HarnessId::Omp, &named("tool_execution_end")),
             None
         );
     }
 
     #[test]
-    fn cursor_and_copilot_map_their_own_event_names() {
+    fn a_resume_name_comes_from_the_hooks_that_carry_it_and_must_be_plain() {
+        let claude = json!({ "session_id": "abc-123_x", "hook_event_name": "SessionStart" });
         assert_eq!(
-            event_for(HarnessId::Cursor, &named("beforeShellExecution")),
-            Some(HookEvent::Working)
+            resume_id_of(HarnessId::Claude, &claude).as_deref(),
+            Some("abc-123_x")
         );
         assert_eq!(
-            event_for(HarnessId::Cursor, &named("stop")),
-            Some(HookEvent::Finished)
+            resume_id_of(HarnessId::Claude, &json!({ "session_id": "a; rm -rf ~" })),
+            None,
+            "a name that is not plain is never typed into a shell"
         );
+        let opencode = json!({ "properties": { "info": { "id": "ses_42" } } });
         assert_eq!(
-            event_for(HarnessId::Copilot, &named("PermissionRequest")),
-            Some(HookEvent::NeedsYou)
+            resume_id_of(HarnessId::Opencode, &opencode).as_deref(),
+            Some("ses_42")
         );
-        assert_eq!(
-            event_for(HarnessId::Copilot, &named("ErrorOccurred")),
-            Some(HookEvent::Finished)
-        );
-    }
-
-    #[test]
-    fn kiro_starts_and_finishes_a_session_but_has_no_end_event() {
-        assert_eq!(
-            event_for(HarnessId::Kiro, &named("agentSpawn")),
-            Some(HookEvent::Started)
-        );
-        assert_eq!(
-            event_for(HarnessId::Kiro, &named("preToolUse")),
-            Some(HookEvent::Working)
-        );
-        assert_eq!(
-            event_for(HarnessId::Kiro, &named("stop")),
-            Some(HookEvent::Finished)
-        );
-    }
-
-    #[test]
-    fn pi_and_omp_share_the_extension_events() {
-        for harness in [HarnessId::Pi, HarnessId::Omp] {
-            assert_eq!(
-                event_for(harness, &named("tool_approval_requested")),
-                Some(HookEvent::NeedsYou)
-            );
-            assert_eq!(
-                event_for(harness, &named("session_shutdown")),
-                Some(HookEvent::Ended)
-            );
-            assert_eq!(event_for(harness, &named("tool_execution_end")), None);
-        }
-    }
-
-    #[test]
-    fn qwen_and_droid_read_claude_style_payloads() {
-        let start = json!({ EVENT_KEY: "SessionStart", "source": "startup" });
-        assert_eq!(event_for(HarnessId::Qwen, &start), Some(HookEvent::Started));
-        assert_eq!(
-            event_for(HarnessId::Droid, &named("PermissionRequest")),
-            Some(HookEvent::NeedsYou)
-        );
+        assert_eq!(resume_id_of(HarnessId::Omp, &claude), None);
     }
 }

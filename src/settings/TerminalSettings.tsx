@@ -188,6 +188,14 @@ export function TerminalSettings() {
           disabled={disabled}
           onCommit={(copyOnSelect) => update({ copyOnSelect })}
         />
+        <SwitchSetting
+          id="terminal-pty-daemon"
+          label={copy.settings.terminal.ptyDaemon.label}
+          hint={copy.settings.terminal.ptyDaemon.hint}
+          checked={terminal.ptyDaemon}
+          disabled={disabled}
+          onCommit={(ptyDaemon) => update({ ptyDaemon })}
+        />
         <ChoiceSetting
           id="terminal-bell"
           label={copy.settings.terminal.bell.label}

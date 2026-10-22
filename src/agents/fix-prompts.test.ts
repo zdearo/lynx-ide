@@ -61,7 +61,7 @@ describe("pickFixAgent", () => {
     preset("claude"),
     preset("codex"),
     preset("opencode"),
-    preset("cursor"),
+    preset("omp"),
   ];
 
   it("takes the configured agent when it is on, else the first of the three", () => {
@@ -73,9 +73,7 @@ describe("pickFixAgent", () => {
   });
 
   it("offers nothing when none of the three is on, even if another agent is", () => {
-    expect(
-      pickFixAgent([preset("cursor"), preset("shell")], "auto"),
-    ).toBeNull();
+    expect(pickFixAgent([preset("omp"), preset("shell")], "auto")).toBeNull();
   });
 });
 

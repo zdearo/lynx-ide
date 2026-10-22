@@ -23,8 +23,6 @@ const UNRESOLVED_NOTE: &str =
 
 const FORMAT: JsonHookFormat = JsonHookFormat {
     root_key: "hooks",
-    version: None,
-    event_argument: false,
     handler: claude_handler,
 };
 

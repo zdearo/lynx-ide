@@ -41,6 +41,19 @@ const MIGRATIONS: &[&str] = &[
          path    TEXT NOT NULL,
          PRIMARY KEY (root_id, path)
      );",
+    // 8: the terminal sessions the app knows, so they can be reattached or resumed after a restart
+    "CREATE TABLE terminal_sessions (
+         id            TEXT PRIMARY KEY,
+         worktree_path TEXT NOT NULL,
+         harness       TEXT,
+         command       TEXT,
+         shell         TEXT NOT NULL,
+         resume_id     TEXT,
+         started_at    INTEGER NOT NULL,
+         ended_at      INTEGER,
+         exit_code     INTEGER
+     );
+     CREATE INDEX terminal_sessions_worktree ON terminal_sessions (worktree_path);",
 ];
 
 #[derive(Debug, thiserror::Error)]

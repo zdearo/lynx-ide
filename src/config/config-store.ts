@@ -17,6 +17,7 @@ export const DEFAULT_TERMINAL_CONFIG: TerminalConfig = {
   shell: null,
   scrollback: 5000,
   copyOnSelect: false,
+  ptyDaemon: false,
   bell: "visual",
   macOptionIsMeta: false,
   closeOnExit: false,

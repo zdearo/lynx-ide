@@ -76,6 +76,10 @@ export const copy = {
         label: "Copy selection on release",
         hint: "Copies text to the clipboard as soon as the mouse is released over it.",
       },
+      ptyDaemon: {
+        label: "Run terminals in a separate process (experimental)",
+        hint: "Terminals run in a background process instead of inside Lynx. Closing Lynx still ends them for now; keeping them is the next step.",
+      },
       bell: {
         label: "Bell",
         hint: "What happens when a program rings the terminal bell.",
@@ -131,14 +135,6 @@ export const copy = {
         claude: { name: "Claude Code" },
         codex: { name: "Codex" },
         opencode: { name: "OpenCode" },
-        antigravity: { name: "Antigravity" },
-        cursor: { name: "Cursor" },
-        copilot: { name: "GitHub Copilot" },
-        grok: { name: "Grok" },
-        droid: { name: "Droid" },
-        kiro: { name: "Kiro" },
-        qwen: { name: "Qwen Code" },
-        pi: { name: "Pi" },
         omp: { name: "OMP" },
       },
       hooks: {
@@ -1101,8 +1097,31 @@ export const copy = {
     },
   },
 
+  quit: {
+    title: "Close Lynx?",
+    body: (sessions: number) =>
+      sessions === 1
+        ? "One terminal is still running in the background."
+        : `${sessions} terminals are still running in the background.`,
+    keep: "Keep them running",
+    end: "End them",
+    cancel: "Cancel",
+  },
+  resumable: {
+    ended: "Ended",
+    resume: "Resume this agent",
+    failed: "Could not resume the agent.",
+  },
   statusBar: {
     label: "Status bar",
+    daemon: {
+      idle: "Terminal process: starts with the first terminal",
+      connected: (sessions: number) =>
+        sessions === 1
+          ? "Terminal process: 1 session"
+          : `Terminal process: ${sessions} sessions`,
+      degraded: "Terminal process unavailable: terminals run inside Lynx",
+    },
     lsp: {
       none: "No language server running",
       running: (list: string) => `Language servers: ${list}`,

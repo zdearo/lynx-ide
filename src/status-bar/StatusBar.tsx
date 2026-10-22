@@ -1,4 +1,5 @@
 import { copy } from "@/ui-copy";
+import { DaemonStatusSegment } from "@/status-bar/DaemonStatusSegment";
 import { LspStatusSegment } from "@/status-bar/LspStatusSegment";
 import { PlanUsageSegments } from "@/usage/PlanUsageSegments";
 
@@ -10,7 +11,10 @@ export function StatusBar() {
       className="flex h-6 shrink-0 items-center justify-between gap-3 border-t border-sidebar-border bg-sidebar px-3 text-meta text-muted-foreground"
     >
       <PlanUsageSegments />
-      <LspStatusSegment />
+      <div className="flex min-w-0 items-center gap-3">
+        <DaemonStatusSegment />
+        <LspStatusSegment />
+      </div>
     </footer>
   );
 }

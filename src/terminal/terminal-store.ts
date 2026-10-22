@@ -7,6 +7,7 @@ import {
   type TerminalInfo,
 } from "@/bindings";
 import { unwrap } from "@/lib/ipc-result";
+import { useResumableStore } from "@/workspace/resumable-store";
 
 // The real size is sent as soon as the view fits itself.
 const INITIAL_COLS = 120;
@@ -115,6 +116,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         s.id === id ? { ...s, running: false, exitCode, agentStatus: null } : s,
       ),
     }));
+    // The backend records the end before it reports it, so the list read now includes it.
+    const worktreePath = get().sessions.find((s) => s.id === id)?.worktreePath;
+    if (worktreePath) void useResumableStore.getState().refresh(worktreePath);
   },
 
   setAgentState(id, harness, status) {

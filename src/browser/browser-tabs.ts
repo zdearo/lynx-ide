@@ -6,14 +6,6 @@ const HARNESS_IDS: Record<HarnessId, true> = {
   claude: true,
   codex: true,
   opencode: true,
-  antigravity: true,
-  cursor: true,
-  copilot: true,
-  grok: true,
-  droid: true,
-  kiro: true,
-  qwen: true,
-  pi: true,
   omp: true,
 };
 

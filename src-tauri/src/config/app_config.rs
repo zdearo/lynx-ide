@@ -61,6 +61,8 @@ pub struct TerminalConfig {
     pub scrollback: u32,
     /// Copies a selection to the clipboard as soon as the mouse is released.
     pub copy_on_select: bool,
+    /// Runs terminals in the PTY daemon, which keeps them when the app closes. Off, they end with it.
+    pub pty_daemon: bool,
     pub bell: BellStyle,
     /// macOS only: the Option key sends Meta, which Emacs and readline shortcuts expect.
     pub mac_option_is_meta: bool,
@@ -82,6 +84,7 @@ impl Default for TerminalConfig {
             shell: None,
             scrollback: DEFAULT_SCROLLBACK,
             copy_on_select: false,
+            pty_daemon: false,
             bell: BellStyle::default(),
             mac_option_is_meta: false,
             close_on_exit: false,
@@ -441,6 +444,7 @@ impl AppConfig {
             "terminal.copyOnSelect" => {
                 self.terminal.copy_on_select = defaults.terminal.copy_on_select
             }
+            "terminal.ptyDaemon" => self.terminal.pty_daemon = defaults.terminal.pty_daemon,
             "terminal.bell" => self.terminal.bell = defaults.terminal.bell,
             "terminal.macOptionIsMeta" => {
                 self.terminal.mac_option_is_meta = defaults.terminal.mac_option_is_meta;
@@ -518,6 +522,9 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
         }
         if let Some(value) = flag(terminal, "copyOnSelect", "terminal", &mut issues) {
             config.terminal.copy_on_select = value;
+        }
+        if let Some(value) = flag(terminal, "ptyDaemon", "terminal", &mut issues) {
+            config.terminal.pty_daemon = value;
         }
         if let Some(bell) = bell_style(terminal, &mut issues) {
             config.terminal.bell = bell;

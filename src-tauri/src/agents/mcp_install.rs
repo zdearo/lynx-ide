@@ -498,18 +498,6 @@ mod tests {
     }
 
     #[test]
-    fn an_agent_without_mcp_support_here_is_left_alone() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let targets = targets(dir.path());
-
-        targets.install(HarnessId::Cursor).expect("nothing to do");
-        targets.remove(HarnessId::Cursor).expect("nothing to do");
-
-        assert!(!McpTargets::supports(HarnessId::Cursor));
-        assert!(McpTargets::supports(HarnessId::Claude));
-    }
-
-    #[test]
     fn without_the_app_executable_nothing_can_be_installed() {
         let dir = tempfile::tempdir().expect("temp dir");
         let targets = McpTargets::new(

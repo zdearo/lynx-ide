@@ -4,7 +4,10 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use lynx_pty_daemon::utf8_stream_decoder::Utf8StreamDecoder;
+use portable_pty::{
+    ChildKiller, CommandBuilder, ExitStatus, MasterPty, PtySize, native_pty_system,
+};
 use serde::Serialize;
 use specta::Type;
 
@@ -19,15 +22,13 @@ use super::scrollback_buffer::ScrollbackBuffer;
 use super::shell_resolution::Shell;
 use super::terminal_error::TerminalError;
 use super::terminal_events::TerminalEventSink;
-use super::utf8_stream_decoder::Utf8StreamDecoder;
+#[cfg(unix)]
+use lynx_pty_daemon::process_group::hang_up_and_reap;
 
 const READ_BUFFER_BYTES: usize = 16 * 1024;
 const SCROLLBACK_BYTES: usize = 1024 * 1024;
 /// How long the exit notice waits for the reader to drain the last output.
 const OUTPUT_DRAIN_GRACE: Duration = Duration::from_secs(1);
-/// Time a hung-up process gets to exit before it is killed outright.
-#[cfg(unix)]
-const HANGUP_GRACE: Duration = Duration::from_secs(3);
 
 pub struct SpawnRequest<'a> {
     pub cwd: &'a Path,
@@ -81,8 +82,9 @@ pub struct TerminalSession {
     // Only the Unix hangup reads it; on Windows the foreground is found from it at attach time.
     #[cfg_attr(not(unix), allow(dead_code))]
     shell_pid: Option<u32>,
-    #[cfg(not(unix))]
-    killer: Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    /// The daemon runs the process: ending it is a request to the daemon, not signals from here.
+    daemon_owned: bool,
 }
 
 struct PtyHandles {
@@ -122,6 +124,35 @@ impl SessionShared {
     }
 }
 
+/// The process a session runs and the pieces it talks through: a local PTY, or the same reached
+/// through the PTY daemon.
+pub struct PtyProcess {
+    pub master: Box<dyn MasterPty + Send>,
+    pub reader: Box<dyn Read + Send>,
+    pub writer: Box<dyn Write + Send>,
+    pub killer: Box<dyn ChildKiller + Send + Sync>,
+    pub wait: Box<dyn FnOnce() -> std::io::Result<ExitStatus> + Send>,
+    pub shell_pid: Option<u32>,
+    pub daemon_owned: bool,
+}
+
+/// Variables every session gets; the request's own variables are set after these and win.
+pub const SESSION_VARIABLES: [(&str, &str); 2] =
+    [("COLORTERM", "truecolor"), ("TERM_PROGRAM", "lynx-ide")];
+
+/// Refuses a request that could not start, before anything is started.
+pub fn check_request(request: &SpawnRequest<'_>) -> Result<(), TerminalError> {
+    if request.cols == 0 || request.rows == 0 {
+        return Err(TerminalError::InvalidSize);
+    }
+    if !request.cwd.is_dir() {
+        return Err(TerminalError::InvalidWorkingDirectory(
+            request.cwd.display().to_string(),
+        ));
+    }
+    Ok(())
+}
+
 impl TerminalSession {
     pub fn spawn(
         id: String,
@@ -129,55 +160,29 @@ impl TerminalSession {
         sink: Arc<dyn TerminalEventSink>,
         monitor: MonitorLink,
     ) -> Result<Self, TerminalError> {
-        if request.cols == 0 || request.rows == 0 {
-            return Err(TerminalError::InvalidSize);
-        }
-        if !request.cwd.is_dir() {
-            return Err(TerminalError::InvalidWorkingDirectory(
-                request.cwd.display().to_string(),
-            ));
-        }
+        check_request(request)?;
+        let process = local_pty(request)?;
+        Self::start(id, request, sink, monitor, process)
+    }
 
-        let spawn_error = |error: &dyn std::fmt::Display| TerminalError::Spawn(error.to_string());
-
-        let pair = native_pty_system()
-            .openpty(PtySize {
-                rows: request.rows,
-                cols: request.cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| spawn_error(&e))?;
-
-        let mut command = CommandBuilder::new(&request.shell.program);
-        command.args(&request.shell.args);
-        command.cwd(request.cwd);
-        // Before the session's own variables, so an explicit request still wins.
-        app_image_environment::clean_terminal(&mut command);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-        command.env("TERM_PROGRAM", "lynx-ide");
-        for (key, value) in request.env {
-            command.env(key, value);
-        }
-
-        let mut child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|e| spawn_error(&e))?;
-        // Only the child keeps the slave side; otherwise reads never see EOF.
-        drop(pair.slave);
-
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| spawn_error(&e))?;
-        let mut writer = pair.master.take_writer().map_err(|e| spawn_error(&e))?;
-
-        let shell_pid = child.process_id();
-        #[cfg(not(unix))]
-        let killer = Mutex::new(child.clone_killer());
-
+    /// Runs the session on a process that is already started: its command is typed into it, and
+    /// its output and exit are followed from here on.
+    pub fn start(
+        id: String,
+        request: &SpawnRequest<'_>,
+        sink: Arc<dyn TerminalEventSink>,
+        monitor: MonitorLink,
+        process: PtyProcess,
+    ) -> Result<Self, TerminalError> {
+        let PtyProcess {
+            master,
+            reader,
+            mut writer,
+            killer,
+            wait,
+            shell_pid,
+            daemon_owned,
+        } = process;
         if let Some(command) = request.command {
             // `\r` is what Enter sends, and works for line editors in raw mode too.
             writer.write_all(format!("{command}\r").as_bytes())?;
@@ -194,10 +199,7 @@ impl TerminalSession {
             reader_done_signal: Condvar::new(),
         });
 
-        let pty = Arc::new(Mutex::new(PtyHandles {
-            writer,
-            master: pair.master,
-        }));
+        let pty = Arc::new(Mutex::new(PtyHandles { writer, master }));
         attach_foreground(&monitor, &pty, shell_pid);
         spawn_reader(
             &id,
@@ -206,7 +208,7 @@ impl TerminalSession {
             Arc::clone(&sink),
             monitor.input.clone(),
         )?;
-        spawn_waiter(&id, move || child.wait(), Arc::clone(&shared), sink)?;
+        spawn_waiter(&id, wait, Arc::clone(&shared), sink)?;
 
         Ok(Self {
             id,
@@ -218,9 +220,13 @@ impl TerminalSession {
             monitor,
             pty,
             shell_pid,
-            #[cfg(not(unix))]
-            killer,
+            killer: Mutex::new(killer),
+            daemon_owned,
         })
+    }
+
+    pub fn daemon_owned(&self) -> bool {
+        self.daemon_owned
     }
 
     pub fn info(&self) -> TerminalInfo {
@@ -297,65 +303,79 @@ impl TerminalSession {
         if SessionShared::lock(&self.shared.exit).is_some() {
             return;
         }
-        #[cfg(unix)]
-        {
-            let mut groups = Vec::new();
-            // Interactive shells give each foreground job its own process group.
-            if let Some(foreground) = SessionShared::lock(&self.pty).master.process_group_leader() {
-                groups.push(foreground);
-            }
-            if let Some(pid) = self.shell_pid.and_then(|pid| i32::try_from(pid).ok()) {
-                groups.push(pid);
-            }
-            signal_groups(&groups, nix::sys::signal::Signal::SIGHUP);
-
-            // A failed spawn only loses the SIGKILL fallback, so there is nothing to report.
-            let _ = std::thread::Builder::new()
-                .name(format!("pty-reaper-{}", self.id))
-                .spawn(move || escalate_to_kill(&groups));
-        }
-        #[cfg(not(unix))]
-        {
+        if self.daemon_owned {
             let _ = SessionShared::lock(&self.killer).kill();
+        } else {
+            self.hang_up_local();
         }
     }
-}
 
-/// Watches the hung-up groups and kills what is left once the grace period ends.
-/// It looks at the groups, not at the shell: a foreground program can outlive a
-/// shell that exited on SIGHUP.
-#[cfg(unix)]
-fn escalate_to_kill(groups: &[i32]) {
-    let deadline = std::time::Instant::now() + HANGUP_GRACE;
-    while std::time::Instant::now() < deadline {
-        if !groups.iter().copied().any(group_exists) {
-            return;
+    #[cfg(unix)]
+    fn hang_up_local(&self) {
+        let mut groups = Vec::new();
+        // Interactive shells give each foreground job its own process group.
+        if let Some(foreground) = SessionShared::lock(&self.pty).master.process_group_leader() {
+            groups.push(foreground);
         }
-        std::thread::sleep(Duration::from_millis(50));
+        if let Some(pid) = self.shell_pid.and_then(|pid| i32::try_from(pid).ok()) {
+            groups.push(pid);
+        }
+        hang_up_and_reap(groups);
     }
-    let survivors: Vec<i32> = groups
-        .iter()
-        .copied()
-        .filter(|group| group_exists(*group))
-        .collect();
-    signal_groups(&survivors, nix::sys::signal::Signal::SIGKILL);
+
+    #[cfg(not(unix))]
+    fn hang_up_local(&self) {
+        let _ = SessionShared::lock(&self.killer).kill();
+    }
 }
 
-#[cfg(unix)]
-fn group_exists(group: i32) -> bool {
-    // Signal 0 only checks; EPERM still means the group exists.
-    !matches!(
-        nix::sys::signal::killpg(nix::unistd::Pid::from_raw(group), None),
-        Err(nix::errno::Errno::ESRCH)
-    )
-}
+/// A local PTY running the request's shell, as a session holds it.
+fn local_pty(request: &SpawnRequest<'_>) -> Result<PtyProcess, TerminalError> {
+    let spawn_error = |error: &dyn std::fmt::Display| TerminalError::Spawn(error.to_string());
 
-#[cfg(unix)]
-fn signal_groups(groups: &[i32], signal: nix::sys::signal::Signal) {
-    for group in groups {
-        // The group may already be gone, which is exactly the outcome we want.
-        let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(*group), signal);
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: request.rows,
+            cols: request.cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| spawn_error(&e))?;
+
+    let mut command = CommandBuilder::new(&request.shell.program);
+    command.args(&request.shell.args);
+    command.cwd(request.cwd);
+    // Before the session's own variables, so an explicit request still wins.
+    app_image_environment::clean_terminal(&mut command);
+    command.env("TERM", "xterm-256color");
+    for (key, value) in SESSION_VARIABLES {
+        command.env(key, value);
     }
+    for (key, value) in request.env {
+        command.env(key, value);
+    }
+
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|e| spawn_error(&e))?;
+    // Only the child keeps the slave side; otherwise reads never see EOF.
+    drop(pair.slave);
+
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| spawn_error(&e))?;
+    let writer = pair.master.take_writer().map_err(|e| spawn_error(&e))?;
+    Ok(PtyProcess {
+        shell_pid: child.process_id(),
+        killer: child.clone_killer(),
+        master: pair.master,
+        reader,
+        writer,
+        wait: Box::new(move || child.wait()),
+        daemon_owned: false,
+    })
 }
 
 /// Lets the monitor read this terminal's foreground, through the handle the session writes with.

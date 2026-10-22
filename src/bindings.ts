@@ -79,6 +79,10 @@ export const commands = {
 	moveRepo: (repoId: string, folderId: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("move_repo", { repoId, folderId })),
 	createTerminal: (worktreePath: string, command: string | null, cols: number, rows: number) => typedError<TerminalInfo, IpcError>(__TAURI_INVOKE("create_terminal", { worktreePath, command, cols, rows })),
 	listTerminals: () => typedError<TerminalInfo[], IpcError>(__TAURI_INVOKE("list_terminals")),
+	ptyDaemonStatus: () => typedError<DaemonStatus, IpcError>(__TAURI_INVOKE("pty_daemon_status")),
+	listResumableSessions: (worktreePath: string) => typedError<ResumableSession[], IpcError>(__TAURI_INVOKE("list_resumable_sessions", { worktreePath })),
+	/**  Chooses what closing the app does with the daemon's sessions, before the window closes. */
+	prepareQuit: (keepSessions: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("prepare_quit", { keepSessions })),
 	terminalSnapshot: (id: string) => typedError<TerminalSnapshot, IpcError>(__TAURI_INVOKE("terminal_snapshot", { id })),
 	writeTerminal: (id: string, data: string) => typedError<null, IpcError>(__TAURI_INVOKE("write_terminal", { id, data })),
 	resizeTerminal: (id: string, cols: number, rows: number) => typedError<null, IpcError>(__TAURI_INVOKE("resize_terminal", { id, cols, rows })),
@@ -519,6 +523,19 @@ export type CreatedPullRequest = {
 	url: string,
 };
 
+export type DaemonState = 
+/**  No session has asked for the daemon yet. */
+"idle" | "connected" | 
+/**  A session asked for the daemon and could not get it; the daemon is not answering now. */
+"degraded";
+
+export type DaemonStatus = {
+	enabled: boolean,
+	state: DaemonState,
+	/**  Running sessions that the daemon holds. */
+	sessions: number,
+};
+
 /**  What a file's diff compares. Every source gives the two texts the interface shows side by side. */
 export type DiffSource = 
 /**  HEAD against the working tree: everything the file changed since the last commit. */
@@ -645,7 +662,7 @@ export type GitHubAccount = {
 	organizations: string[],
 };
 
-export type HarnessId = "claude" | "codex" | "opencode" | "antigravity" | "cursor" | "copilot" | "grok" | "droid" | "kiro" | "qwen" | "pi" | "omp";
+export type HarnessId = "claude" | "codex" | "opencode" | "omp";
 
 export type HookInstallState = "notInstalled" | "partial" | "installed" | "error";
 
@@ -834,6 +851,16 @@ export type RepoRefs = {
 
 export type RepoVisibility = "private" | "public";
 
+/**  An ended agent session that can be resumed in its worktree. */
+export type ResumableSession = {
+	id: string,
+	harness: HarnessId,
+	/**  The arguments that resume the conversation, after the agent's own command. */
+	resumeArguments: string[],
+	/**  Unix seconds when the session ended. `u32` because the contract has no 64-bit integers. */
+	endedAt: number | null,
+};
+
 export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
 
 export type ReviewSummary = {
@@ -866,6 +893,8 @@ export type TerminalConfig = {
 	scrollback: number,
 	/**  Copies a selection to the clipboard as soon as the mouse is released. */
 	copyOnSelect: boolean,
+	/**  Runs terminals in the PTY daemon, which keeps them when the app closes. Off, they end with it. */
+	ptyDaemon: boolean,
 	bell: BellStyle,
 	/**  macOS only: the Option key sends Meta, which Emacs and readline shortcuts expect. */
 	macOptionIsMeta: boolean,

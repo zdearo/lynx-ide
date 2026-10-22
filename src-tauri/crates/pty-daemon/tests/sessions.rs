@@ -79,7 +79,13 @@ fn start(idle: Duration) -> Daemon {
     let path = dir.path().to_owned();
     let (sender, done) = mpsc::channel();
     let thread = std::thread::spawn(move || {
-        let _ = sender.send(serve(&path, &Options { idle }));
+        let _ = sender.send(serve(
+            &path,
+            &Options {
+                idle,
+                prepare: |_| {},
+            },
+        ));
     });
     Daemon {
         dir,
@@ -103,15 +109,17 @@ fn create(client: &mut Client, cwd: &Path) -> String {
     let (program, args) = shell();
     client
         .send(&Request::Create {
+            id: String::new(),
             cwd: cwd.to_string_lossy().into_owned(),
             program,
             args,
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
         .expect("send");
     match client.next(WAIT) {
-        Some(Message::Created { id }) => id,
+        Some(Message::Created { id, .. }) => id,
         other => panic!("expected Created, got {other:?}"),
     }
 }
@@ -190,6 +198,7 @@ fn a_second_daemon_in_the_same_folder_is_refused() {
         daemon.dir.path(),
         &Options {
             idle: Duration::from_secs(1),
+            prepare: |_| {},
         },
     );
 
@@ -219,12 +228,212 @@ fn bad_requests_get_an_error_not_a_crash() {
     let (program, args) = shell();
     client
         .send(&Request::Create {
+            id: String::new(),
             cwd: "/definitely/not/here".to_owned(),
             program,
             args,
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
         .expect("send");
     assert!(matches!(client.next(WAIT), Some(Message::Error { .. })));
+}
+
+/// A client that asks for output and never reads it must not stop the session, or the next client.
+#[cfg(unix)]
+#[test]
+fn a_client_that_stops_reading_does_not_hold_the_session() {
+    use lynx_pty_daemon::client::write_request;
+
+    let daemon = start(Duration::from_secs(30));
+    let mut owner = connect(daemon.dir.path());
+    // More than a socket buffer holds, so a blocked client would stall the session; then a marker.
+    let command = "yes | head -c 4000000; echo finished-$((2+3))";
+    let args = vec!["-c".to_owned(), command.to_owned()];
+    owner
+        .send(&Request::Create {
+            id: String::new(),
+            cwd: daemon.dir.path().to_string_lossy().into_owned(),
+            program: "/bin/sh".to_owned(),
+            args,
+            env: Vec::new(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("send");
+    let Some(Message::Created { id, .. }) = owner.next(WAIT) else {
+        panic!("the session was not created");
+    };
+
+    // Attaches, then never reads: its writer thread blocks, its queue fills, and it is dropped.
+    let mut stuck = lynx_pty_daemon::client::connect(daemon.dir.path()).expect("connect");
+    write_request(&mut stuck, &Request::Attach { id: id.clone() }).expect("attach");
+
+    let mut late = connect(daemon.dir.path());
+    late.send(&Request::Attach { id: id.clone() })
+        .expect("send");
+    // Reads come in small pieces, so the marker can straddle two of them. Its end is kept
+    // apart, and the output is ASCII, so cutting it by bytes is safe.
+    let mut tail = String::new();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        match late.next(deadline.saturating_duration_since(Instant::now())) {
+            Some(Message::Snapshot { data, .. } | Message::Output { data, .. }) => {
+                tail.push_str(&data);
+                if tail.len() > 64 {
+                    tail = tail.split_off(tail.len() - 64);
+                }
+                if tail.contains("finished-5") {
+                    break;
+                }
+            }
+            Some(_) => {}
+            None => panic!("the session stopped before it finished"),
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn killing_a_session_ends_its_process() {
+    let daemon = start(Duration::from_secs(30));
+    let mut client = connect(daemon.dir.path());
+    let id = create(&mut client, daemon.dir.path());
+    client
+        .send(&Request::Attach { id: id.clone() })
+        .expect("send");
+    let (line, marker) = echo("alive");
+    write(&mut client, &id, &line);
+    read_until(&client, &marker, &mut String::new());
+
+    client
+        .send(&Request::Kill { id: id.clone() })
+        .expect("send");
+
+    let deadline = Instant::now() + WAIT;
+    loop {
+        match client.next(deadline.saturating_duration_since(Instant::now())) {
+            Some(Message::Exit { id: exited, .. }) if exited == id => break,
+            Some(_) => {}
+            None => panic!("the killed session never reported its exit"),
+        }
+    }
+}
+
+/// A daemon answers only a connection that shows its token; anything else gets one refusal.
+#[test]
+fn a_connection_without_the_token_is_refused_and_sees_no_session() {
+    use lynx_browser_protocol::transport::Connection;
+    use lynx_pty_daemon::client::write_request;
+
+    let daemon = start(Duration::from_secs(30));
+    let mut owner = connect(daemon.dir.path());
+    let id = create(&mut owner, daemon.dir.path());
+    let address = std::fs::read_to_string(daemon.dir.path().join("address")).expect("address");
+
+    let mut stranger = Connection::connect(&address).expect("connect");
+    write_request(&mut stranger, &Request::List).expect("send");
+    let refusal = read_message(&mut stranger);
+    assert!(matches!(refusal, Message::Error { .. }), "got {refusal:?}");
+
+    let mut wrong = Connection::connect(&address).expect("connect");
+    write_request(
+        &mut wrong,
+        &Request::Hello {
+            token: "not the token".to_owned(),
+        },
+    )
+    .expect("send");
+    assert!(matches!(read_message(&mut wrong), Message::Error { .. }));
+    assert!(
+        owner.send(&Request::Attach { id }).is_ok(),
+        "the owner is unaffected"
+    );
+}
+
+fn read_message(connection: &mut lynx_browser_protocol::transport::Connection) -> Message {
+    use std::io::BufRead;
+    let mut line = String::new();
+    std::io::BufReader::new(connection)
+        .read_line(&mut line)
+        .expect("a line");
+    serde_json::from_str(&line).expect("a message")
+}
+
+/// The folder and the token are the only ways in, so both belong to the owner alone.
+#[cfg(unix)]
+#[test]
+fn the_folder_socket_and_token_are_private_to_their_owner() {
+    use std::os::unix::fs::PermissionsExt;
+    let daemon = start(Duration::from_secs(30));
+    let _client = connect(daemon.dir.path());
+    let mode = |name: &str| {
+        std::fs::metadata(daemon.dir.path().join(name))
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    assert_eq!(mode("."), 0o700);
+    assert_eq!(mode("token"), 0o600);
+    assert_eq!(mode("link.sock"), 0o600);
+}
+
+/// A client picks the id, and a later connection reattaches to that session by it.
+#[cfg(unix)]
+#[test]
+fn a_session_can_be_reattached_by_the_id_its_client_chose() {
+    let daemon = start(Duration::from_secs(30));
+    let mut first = connect(daemon.dir.path());
+    let (program, args) = shell();
+    first
+        .send(&Request::Create {
+            id: "chosen-by-the-app".to_owned(),
+            cwd: daemon.dir.path().to_string_lossy().into_owned(),
+            program,
+            args,
+            env: Vec::new(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("send");
+    assert!(
+        matches!(first.next(WAIT), Some(Message::Created { ref id, .. }) if id == "chosen-by-the-app")
+    );
+    first
+        .send(&Request::Attach {
+            id: "chosen-by-the-app".to_owned(),
+        })
+        .expect("send");
+    let (line, marker) = echo("kept");
+    write(&mut first, "chosen-by-the-app", &line);
+    read_until(&first, &marker, &mut String::new());
+    drop(first);
+
+    let mut later = connect(daemon.dir.path());
+    later
+        .send(&Request::Attach {
+            id: "chosen-by-the-app".to_owned(),
+        })
+        .expect("send");
+    let mut seen = String::new();
+    read_until(&later, &marker, &mut seen);
+}
+
+/// Shutdown ends every session and the daemon leaves, so its program can be replaced.
+#[cfg(unix)]
+#[test]
+fn shutdown_ends_every_session_and_the_daemon_leaves() {
+    let daemon = start(Duration::from_secs(30));
+    let mut client = connect(daemon.dir.path());
+    let id = create(&mut client, daemon.dir.path());
+    client
+        .send(&Request::Attach { id: id.clone() })
+        .expect("send");
+
+    client.send(&Request::Shutdown).expect("send");
+
+    assert!(matches!(daemon.done.recv_timeout(WAIT), Ok(Ok(()))));
+    assert!(!is_running(daemon.dir.path()));
 }

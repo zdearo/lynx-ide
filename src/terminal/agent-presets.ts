@@ -16,7 +16,7 @@ export interface TerminalPreset {
 }
 
 // The YOLO flags were read from each CLI's --help where it is installed here (Claude Code, Codex,
-// Antigravity, Grok, OpenCode and OMP), and from its documentation otherwise. Pi has none known.
+// OpenCode and OMP).
 export const TERMINAL_PRESETS: readonly TerminalPreset[] = [
   {
     id: "shell",
@@ -49,71 +49,6 @@ export const TERMINAL_PRESETS: readonly TerminalPreset[] = [
     kind: "agent",
     harness: "opencode",
     yolo: "--auto",
-  },
-  {
-    id: "antigravity",
-    label: "Antigravity",
-    command: "agy",
-    kind: "agent",
-    harness: "antigravity",
-    yolo: "--dangerously-skip-permissions",
-  },
-  {
-    id: "cursor",
-    label: "Cursor",
-    command: "cursor-agent",
-    kind: "agent",
-    harness: "cursor",
-    yolo: "--force",
-  },
-  {
-    id: "copilot",
-    label: "GitHub Copilot",
-    command: "copilot",
-    kind: "agent",
-    harness: "copilot",
-    yolo: "--yolo",
-  },
-  {
-    id: "grok",
-    label: "Grok",
-    command: "grok",
-    kind: "agent",
-    harness: "grok",
-    yolo: "--always-approve",
-  },
-  {
-    id: "droid",
-    label: "Droid",
-    command: "droid",
-    kind: "agent",
-    harness: "droid",
-    yolo: "--skip-permissions-unsafe",
-  },
-  {
-    // Kiro's flags go after the `chat` subcommand, which starts the interactive session.
-    id: "kiro",
-    label: "Kiro",
-    command: "kiro-cli chat",
-    kind: "agent",
-    harness: "kiro",
-    yolo: "--trust-all-tools",
-  },
-  {
-    id: "qwen",
-    label: "Qwen Code",
-    command: "qwen",
-    kind: "agent",
-    harness: "qwen",
-    yolo: "--yolo",
-  },
-  {
-    id: "pi",
-    label: "Pi",
-    command: "pi",
-    kind: "agent",
-    harness: "pi",
-    yolo: null,
   },
   {
     id: "omp",

@@ -38,13 +38,13 @@ pub async fn install_update(
     Ok(service.install().await.map_err(AppError::from)?)
 }
 
-/// Restarts Lynx so the installed version runs. Open terminals and agents close with it.
+/// Restarts Lynx so the installed version runs. Terminals inside the app close with it; the
+/// daemon's keep running, and the new version rejoins them.
 #[tauri::command]
 #[specta::specta]
 pub fn restart_to_update(app: AppHandle) {
-    // The new version must not find this one's sessions, so they end before it starts.
     let terminals = app.state::<TerminalManager>();
-    terminals.set_keep_on_exit(false);
+    terminals.set_keep_on_exit(true);
     terminals.quit();
     // An AppImage runs from a mount that is gone once the app exits, so the new version starts from
     // the file itself, with the AppImage's own variables left out.

@@ -808,6 +808,7 @@ export function installMockTauri(scenario: string): void {
       command,
       shell: "zsh",
       running,
+      hibernated: false,
       exitCode: running ? null : 0,
       startedAt: Math.floor(Date.now() / 1000) - startedSecondsAgo,
       harness: harnessOf(command),
@@ -1571,6 +1572,12 @@ export function installMockTauri(scenario: string): void {
           return structuredClone(sessions);
         case "pty_daemon_status":
           return { enabled: false, state: "idle", sessions: 0 };
+        case "pty_daemon_memory":
+          return null;
+        case "hibernate_terminal":
+          return null;
+        case "forget_resumable_session":
+          return null;
         case "list_resumable_sessions":
           return [];
         case "prepare_quit":

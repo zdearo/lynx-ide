@@ -1,5 +1,11 @@
 import { useEffect, type KeyboardEvent } from "react";
 import { useEditorStore } from "@/editor/editor-store";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
 import { SidebarLeftGlyph18 } from "@/components/icons/SidebarLeftGlyph18";
 import { SidebarRightGlyph18 } from "@/components/icons/SidebarRightGlyph18";
@@ -12,7 +18,10 @@ import { shortcutLabel } from "@/platform-shortcuts";
 import { NewTerminalMenu } from "@/terminal/NewTerminalMenu";
 import { PresetIcon } from "@/terminal/PresetIcon";
 import { tabTitles } from "@/terminal/terminal-tab-title";
-import { requestCloseTerminal } from "@/terminal/terminal-actions";
+import {
+  requestCloseTerminal,
+  sleepTerminal,
+} from "@/terminal/terminal-actions";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
 import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
@@ -105,59 +114,79 @@ export function TerminalTabs({
           return (
             // A tablist owns only tabs, so the close "x" lives inside the tab: a mouse
             // target here, and Delete (or the shortcut) for the keyboard.
-            <button
-              key={session.id}
-              type="button"
-              role="tab"
-              id={`tab-${session.id}`}
-              aria-selected={active}
-              aria-keyshortcuts="Delete"
-              tabIndex={session.id === activeId ? 0 : -1}
-              onClick={(event) => {
-                if (
-                  event.target instanceof Element &&
-                  event.target.closest("[data-close]")
-                ) {
-                  requestCloseTerminal(session.id);
-                } else if (path) {
-                  useBrowserStore.getState().setOpen(false);
-                  setActive(path, session.id);
-                  useEditorStore.getState().show(path, null);
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Delete") {
-                  event.preventDefault();
-                  requestCloseTerminal(session.id);
-                }
-              }}
-              className={cn(
-                "group/tab flex h-full max-w-48 shrink-0 items-center gap-1.5 border-r border-border pr-1 pl-3 text-ui [&_svg]:size-3.5",
-                active
-                  ? "bg-background text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <PresetIcon harness={session.harness} />
-              <span className="truncate">{titles.get(session.id)}</span>
-              {!session.running && (
-                <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
-                  {copy.terminal.exited(session.exitCode)}
-                </span>
-              )}
-              <span
-                data-close
-                aria-hidden
-                title={copy.terminal.close}
-                className={cn(
-                  "grid size-5 shrink-0 place-items-center rounded-md hover:bg-muted",
-                  !active &&
-                    "opacity-0 group-focus-visible/tab:opacity-100 group-hover/tab:opacity-100",
-                )}
-              >
-                <XmarkGlyph18 />
-              </span>
-            </button>
+            <ContextMenu key={session.id}>
+              <ContextMenuTrigger asChild>
+                <button
+                  type="button"
+                  role="tab"
+                  id={`tab-${session.id}`}
+                  aria-selected={active}
+                  aria-keyshortcuts="Delete"
+                  tabIndex={session.id === activeId ? 0 : -1}
+                  onClick={(event) => {
+                    if (
+                      event.target instanceof Element &&
+                      event.target.closest("[data-close]")
+                    ) {
+                      requestCloseTerminal(session.id);
+                    } else if (path) {
+                      useBrowserStore.getState().setOpen(false);
+                      setActive(path, session.id);
+                      useEditorStore.getState().show(path, null);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Delete") {
+                      event.preventDefault();
+                      requestCloseTerminal(session.id);
+                    }
+                  }}
+                  className={cn(
+                    "group/tab flex h-full max-w-48 shrink-0 items-center gap-1.5 border-r border-border pr-1 pl-3 text-ui [&_svg]:size-3.5",
+                    active
+                      ? "bg-background text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <PresetIcon harness={session.harness} />
+                  <span className="truncate">{titles.get(session.id)}</span>
+                  {!session.running && (
+                    <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
+                      {copy.terminal.exited(session.exitCode)}
+                    </span>
+                  )}
+                  {session.hibernated && (
+                    <span className="shrink-0 text-meta text-muted-foreground">
+                      {copy.terminal.sleeping}
+                    </span>
+                  )}
+                  <span
+                    data-close
+                    aria-hidden
+                    title={copy.terminal.close}
+                    className={cn(
+                      "grid size-5 shrink-0 place-items-center rounded-md hover:bg-muted",
+                      !active &&
+                        "opacity-0 group-focus-visible/tab:opacity-100 group-hover/tab:opacity-100",
+                    )}
+                  >
+                    <XmarkGlyph18 />
+                  </span>
+                </button>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="min-w-44">
+                <ContextMenuItem
+                  disabled={
+                    !session.running ||
+                    session.hibernated ||
+                    session.agentStatus === "working"
+                  }
+                  onSelect={() => void sleepTerminal(session.id)}
+                >
+                  {copy.terminal.sleep}
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
           );
         })}
       </div>

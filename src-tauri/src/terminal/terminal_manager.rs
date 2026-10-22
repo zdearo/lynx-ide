@@ -1,13 +1,19 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use specta::Type;
 
-use crate::agents::agent_monitor;
+use lynx_pty_daemon::message::PendingEvent;
+
+use lynx_pty_daemon::message::Request;
+
+use crate::agents::activity::AgentStatus;
+use crate::agents::agent_monitor::{self, AgentInput};
 use crate::agents::harness::{
     HarnessId, harness_for_command, harness_name, harness_named, resume_arguments,
 };
@@ -118,7 +124,14 @@ impl TerminalManager {
             }
         };
         self.inner.hooks.register(&id, monitor.input.clone());
-        let env = self.inner.hooks.session_env(&id);
+        let mut env = self.inner.hooks.session_env(&id);
+        if let Some(daemon) = &self.inner.daemon {
+            // A hook that finds the app closed leaves its event with this folder's daemon.
+            env.push((
+                lynx_pty_daemon::client::DIR_ENV.to_owned(),
+                daemon.dir().to_string_lossy().into_owned(),
+            ));
+        }
 
         let request = SpawnRequest {
             cwd: Path::new(worktree_path),
@@ -163,6 +176,7 @@ impl TerminalManager {
     /// the ones it lost are recorded as ended, and the daemon's sessions the app does not know are
     /// ended. Called once, before the screen opens.
     pub fn restore(&self) {
+        self.retire_outdated_daemon();
         let Some(database) = self.inner.database.as_ref() else {
             return;
         };
@@ -183,11 +197,62 @@ impl TerminalManager {
                 self.record_ended(&record.id);
             }
         }
-        let known: Vec<String> = open.iter().map(|record| record.id.clone()).collect();
+        let known: Vec<String> = open
+            .iter()
+            .map(|record| record.id.clone())
+            .chain(self.adopt_outside_sessions())
+            .collect();
         let unknown: Vec<String> = live.into_iter().filter(|id| !known.contains(id)).collect();
         if let (Some(daemon), false) = (self.inner.daemon.as_ref(), unknown.is_empty()) {
             daemon.end_sessions(&unknown);
         }
+    }
+
+    /// A daemon of another version cannot answer the questions this one asks. It keeps its sessions;
+    /// once it holds none, it is replaced by one of this version.
+    fn retire_outdated_daemon(&self) {
+        let Some(daemon) = self.inner.daemon.as_ref() else {
+            return;
+        };
+        if !daemon.runs_this_version() && daemon.live_sessions().is_some_and(|ids| ids.is_empty()) {
+            daemon.shut_down();
+        }
+    }
+
+    /// Shows the sessions a command line started while the app was closed: each gets a record and
+    /// is joined like any other. Returns the ids shown.
+    fn adopt_outside_sessions(&self) -> Vec<String> {
+        let (Some(daemon), Some(database)) =
+            (self.inner.daemon.as_ref(), self.inner.database.as_ref())
+        else {
+            return Vec::new();
+        };
+        let mut shown = Vec::new();
+        for session in daemon.outside_sessions().unwrap_or_default() {
+            let record = TerminalSessionRecord {
+                id: session.id.clone(),
+                worktree_path: session.cwd,
+                harness: None,
+                command: None,
+                shell: session.program,
+                resume_id: None,
+                started_at: now_seconds(),
+                ended_at: None,
+                exit_code: None,
+            };
+            let _ = database.insert_terminal_session(&record);
+            match self.reattach(&record) {
+                Ok(()) => {
+                    daemon.adopt(&record.id);
+                    shown.push(record.id);
+                }
+                Err(error) => {
+                    eprintln!("lynx: could not show session {}: {error}", record.id);
+                    self.record_ended(&record.id);
+                }
+            }
+        }
+        shown
     }
 
     /// Joins a session the daemon runs, as the app had it, with its agent's state from the record.
@@ -200,6 +265,10 @@ impl TerminalManager {
         let monitor = agent_monitor::start(&record.id, harness, Arc::clone(&self.inner.sink))
             .map_err(|error| error.to_string())?;
         self.inner.hooks.register(&record.id, monitor.input.clone());
+        // Events the daemon kept while no window was open reach the agent state first, in order.
+        for event in daemon.take_events(&record.id) {
+            deliver_stored(&monitor.input, &event);
+        }
         self.inner.owners.set(
             &record.id,
             PageOwner::Workspace {
@@ -251,6 +320,24 @@ impl TerminalManager {
                 })
             })
             .collect()
+    }
+
+    /// Takes an ended agent conversation off the resumable list. The conversation stays in the agent.
+    pub fn forget_resumable(&self, id: &str) -> Result<(), TerminalError> {
+        let database =
+            self.inner.database.as_ref().ok_or_else(|| {
+                TerminalError::Refused("the session list is unavailable".to_owned())
+            })?;
+        let forgotten = database
+            .forget_resumable_session(id)
+            .map_err(|error| TerminalError::Refused(error.to_string()))?;
+        if forgotten {
+            Ok(())
+        } else {
+            Err(TerminalError::Refused(
+                "only an ended agent session can be removed from the list".to_owned(),
+            ))
+        }
     }
 
     /// Chooses what closing the app does with the daemon's sessions: left running, or ended.
@@ -336,6 +423,13 @@ impl TerminalManager {
         }
     }
 
+    /// Memory the daemon's sessions hold, in MiB. Measured when asked: nothing samples in between.
+    pub fn daemon_memory_mib(&self) -> Option<u32> {
+        let sessions = self.inner.daemon.as_ref()?.usage()?;
+        let kib: u64 = sessions.iter().map(|session| session.memory_kib).sum();
+        Some(u32::try_from(kib / 1024).unwrap_or(u32::MAX))
+    }
+
     pub fn list(&self) -> Vec<TerminalInfo> {
         self.sessions()
             .values()
@@ -348,7 +442,44 @@ impl TerminalManager {
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), TerminalError> {
-        self.session(id)?.write(data)
+        let session = self.session(id)?;
+        session.write(data)?;
+        // The daemon runs a frozen session again on input, so it is no longer frozen.
+        session.set_hibernated(false);
+        Ok(())
+    }
+
+    /// Freezes a session of the daemon the user is not using, so it takes no CPU. Refused while its
+    /// agent works or a browser tool runs for it: a frozen program could not finish that work.
+    pub fn hibernate(&self, id: &str) -> Result<(), TerminalError> {
+        let session = self.session(id)?;
+        if !session.info().running {
+            return Err(TerminalError::NotRunning);
+        }
+        if !session.daemon_owned() {
+            return Err(TerminalError::Refused(
+                "only a terminal in the background process can sleep".to_owned(),
+            ));
+        }
+        if session.info().agent_status == Some(AgentStatus::Working) {
+            return Err(TerminalError::Refused(
+                "the agent is working in this terminal".to_owned(),
+            ));
+        }
+        if self.inner.hooks.tool_running(id) {
+            return Err(TerminalError::Refused(
+                "a browser tool is running for this terminal".to_owned(),
+            ));
+        }
+        let daemon =
+            self.inner.daemon.as_ref().ok_or_else(|| {
+                TerminalError::Refused("the background process is off".to_owned())
+            })?;
+        daemon
+            .command(&Request::Hibernate { id: id.to_owned() })
+            .map_err(TerminalError::Refused)?;
+        session.set_hibernated(true);
+        Ok(())
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
@@ -391,6 +522,17 @@ impl TerminalManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Hands a stored event to the session's monitor, as the hook hub does for a live one.
+fn deliver_stored(input: &Sender<AgentInput>, event: &PendingEvent) {
+    let (Some(harness), Ok(payload)) = (
+        harness_named(&event.harness),
+        serde_json::from_str(&event.payload),
+    ) else {
+        return;
+    };
+    let _ = input.send(AgentInput::Hook { harness, payload });
 }
 
 fn now_seconds() -> i64 {

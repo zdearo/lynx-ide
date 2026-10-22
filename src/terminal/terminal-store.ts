@@ -36,6 +36,10 @@ interface TerminalState {
     status: AgentStatus | null,
   ) => void;
   markSeen: (id: string) => void;
+  /** Freezes a terminal the user is not using. The backend refuses, with the reason, when it cannot. */
+  hibernate: (id: string) => Promise<void>;
+  /** The terminal got input, so the daemon has run it again. */
+  woken: (id: string) => void;
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -127,6 +131,28 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         s.id === id ? { ...s, harness, agentStatus: status } : s,
       ),
     }));
+  },
+
+  async hibernate(id) {
+    await unwrap(commands.hibernateTerminal(id));
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id ? { ...s, hibernated: true } : s,
+      ),
+    }));
+  },
+
+  woken(id) {
+    // Returns the same state when nothing changes, so typing does not redraw the tabs.
+    set((state) =>
+      state.sessions.some((s) => s.id === id && s.hibernated)
+        ? {
+            sessions: state.sessions.map((s) =>
+              s.id === id ? { ...s, hibernated: false } : s,
+            ),
+          }
+        : state,
+    );
   },
 
   markSeen(id) {

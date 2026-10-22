@@ -921,6 +921,20 @@ impl AppDatabase {
         let rows = statement.query_map([worktree_path], terminal_session_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+
+    /// Takes an ended agent conversation off the resumable list: every ended record of it. The
+    /// conversation itself stays in the agent. Returns whether `id` was such a record.
+    pub fn forget_resumable_session(&self, id: &str) -> Result<bool, DatabaseError> {
+        let deleted = self.lock().execute(
+            "DELETE FROM terminal_sessions
+             WHERE ended_at IS NOT NULL AND (harness, resume_id) IN (
+               SELECT harness, resume_id FROM terminal_sessions
+               WHERE id = ?1 AND ended_at IS NOT NULL AND resume_id IS NOT NULL
+             )",
+            params![id],
+        )?;
+        Ok(deleted > 0)
+    }
 }
 
 #[cfg(test)]
@@ -1037,5 +1051,50 @@ mod terminal_session_tests {
             .expect("list");
         assert_eq!(offered.len(), 1);
         assert_eq!(offered[0].id, "second");
+    }
+
+    #[test]
+    fn a_conversation_taken_off_the_list_stays_off_and_a_running_one_is_kept() {
+        let database = database();
+        database
+            .insert_terminal_session(&record("old", Some("claude")))
+            .expect("insert");
+        database
+            .set_terminal_resume_id("old", "conv")
+            .expect("resume id");
+        database.end_terminal_session("old", None).expect("end");
+        let mut newer = record("new", Some("claude"));
+        newer.started_at = 20;
+        database.insert_terminal_session(&newer).expect("insert");
+        database
+            .set_terminal_resume_id("new", "conv")
+            .expect("resume id");
+        database.end_terminal_session("new", None).expect("end");
+        database
+            .insert_terminal_session(&record("live", Some("claude")))
+            .expect("insert");
+        database
+            .set_terminal_resume_id("live", "other")
+            .expect("resume id");
+
+        assert!(database.forget_resumable_session("new").expect("forget"));
+
+        assert!(
+            database
+                .resumable_terminal_sessions("/work/a")
+                .expect("list")
+                .is_empty()
+        );
+        assert!(database.terminal_session("old").expect("read").is_none());
+        assert!(
+            database.terminal_session("live").expect("read").is_some(),
+            "a running session is not removed"
+        );
+        assert!(!database.forget_resumable_session("live").expect("forget"));
+        assert!(
+            !database
+                .forget_resumable_session("missing")
+                .expect("forget")
+        );
     }
 }

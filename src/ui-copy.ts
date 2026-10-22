@@ -225,6 +225,8 @@ export const copy = {
       restartTitle: "Restart Lynx now?",
       restartBody:
         "Open terminals and agents will close. Files you saved stay as they are.",
+      restartBodyDaemon:
+        "Terminals in the background process keep running and come back when Lynx opens. Other open terminals and agents will close. Files you saved stay as they are.",
       restartConfirm: "Restart",
       cancel: "Cancel",
       checkFailed: "Could not check for updates",
@@ -1005,6 +1007,9 @@ export const copy = {
     exited: (code: number | null) =>
       code === null ? "exited" : `exited ${code}`,
     createFailed: "Could not start the terminal",
+    sleep: "Sleep terminal",
+    sleeping: "sleeping",
+    sleepFailed: "Could not put the terminal to sleep",
     closeDialog: {
       title: "Close this terminal?",
       body: "Whatever is running in it will be stopped.",
@@ -1111,6 +1116,8 @@ export const copy = {
     ended: "Ended",
     resume: "Resume this agent",
     failed: "Could not resume the agent.",
+    remove: "Remove from the list",
+    removeFailed: "Could not remove it from the list.",
   },
   statusBar: {
     label: "Status bar",
@@ -1121,6 +1128,7 @@ export const copy = {
           ? "Terminal process: 1 session"
           : `Terminal process: ${sessions} sessions`,
       degraded: "Terminal process unavailable: terminals run inside Lynx",
+      memory: (mib: number) => `Terminals hold about ${mib} MB of memory`,
     },
     lsp: {
       none: "No language server running",

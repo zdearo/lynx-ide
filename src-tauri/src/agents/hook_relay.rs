@@ -4,8 +4,11 @@
 use std::env;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+use std::path::Path;
 use std::time::Duration;
 
+use lynx_pty_daemon::client::{Client, DIR_ENV};
+use lynx_pty_daemon::message::{Message, Request};
 use serde_json::{Value, json};
 
 use super::harness::harness_named;
@@ -31,14 +34,40 @@ pub fn run_if_requested(arguments: &[String]) -> Option<i32> {
         .read_to_string(&mut raw);
     let name = arguments.get(2).map_or("", String::as_str);
     let event = arguments.get(3).map(String::as_str);
-    if let (Some(_), Some(payload)) = (harness_named(name), relay_payload(&raw, event))
-        && let Some(target) = Target::from_env()
-    {
-        forward(&target, name, payload);
+    if let (Some(_), Some(payload)) = (harness_named(name), relay_payload(&raw, event)) {
+        relay(name, &payload);
     }
     // The harness reads stdout as the hook's answer. Lynx only watches, so it always carries on.
     println!("{{}}");
     Some(0)
+}
+
+/// Sends the event to the app when it is open. When it is not, the daemon that keeps the session
+/// holds the event, and the app takes it when it opens.
+fn relay(harness: &str, payload: &Value) {
+    if Target::from_env().is_some_and(|target| forward(&target, harness, payload)) {
+        return;
+    }
+    let (Ok(session), Some(folder)) = (env::var(SESSION_ENV), env::var_os(DIR_ENV)) else {
+        return;
+    };
+    deliver_to_daemon(Path::new(&folder), &session, harness, payload);
+}
+
+/// Leaves the event with the daemon in `folder`. False when no daemon answers there.
+pub fn deliver_to_daemon(folder: &Path, session: &str, harness: &str, payload: &Value) -> bool {
+    let Ok(mut client) = Client::connect(folder) else {
+        return false;
+    };
+    let request = Request::Event {
+        session: session.to_owned(),
+        harness: harness.to_owned(),
+        payload: payload.to_string(),
+    };
+    if client.send(&request).is_err() {
+        return false;
+    }
+    matches!(client.next(TIMEOUT), Some(Message::Ok))
 }
 
 /// The payload the app receives: the harness's JSON, with the event from the command's argument
@@ -74,9 +103,9 @@ impl Target {
     }
 }
 
-/// Sends the event to the app. A hook must never break the agent, so every failure is dropped
-/// without a word: the event is lost, but the agent carries on.
-fn forward(target: &Target, harness: &str, payload: Value) {
+/// Sends the event to the app, and returns whether the app took it. A hook must never break the
+/// agent, so a failure is not reported: the caller falls back to the daemon.
+fn forward(target: &Target, harness: &str, payload: &Value) -> bool {
     let body = json!({
         "sessionId": target.session,
         "harness": harness,
@@ -85,7 +114,7 @@ fn forward(target: &Target, harness: &str, payload: Value) {
     .to_string();
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, target.address.port));
     let Ok(mut stream) = TcpStream::connect_timeout(&address, TIMEOUT) else {
-        return;
+        return false;
     };
     let _ = stream.set_write_timeout(Some(TIMEOUT));
     let request = format!(
@@ -93,7 +122,13 @@ fn forward(target: &Target, harness: &str, payload: Value) {
         token = target.address.token,
         length = body.len(),
     );
-    let _ = stream.write_all(request.as_bytes());
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let _ = stream.set_read_timeout(Some(TIMEOUT));
+    let mut reply = [0u8; 16];
+    let read = stream.read(&mut reply).unwrap_or(0);
+    reply[..read].starts_with(b"HTTP/1.1 2")
 }
 
 #[cfg(test)]
@@ -126,11 +161,11 @@ mod tests {
             },
         };
 
-        forward(
+        assert!(forward(
             &target,
             "claude",
-            json!({ "hook_event_name": "UserPromptSubmit" }),
-        );
+            &json!({ "hook_event_name": "UserPromptSubmit" }),
+        ));
 
         match inbox.recv_timeout(Duration::from_secs(2)) {
             Ok(AgentInput::Hook { harness, payload }) => {
@@ -156,7 +191,11 @@ mod tests {
             address: hub_address::read(&file).expect("address"),
         };
 
-        forward(&target, "claude", json!({ "hook_event_name": "Stop" }));
+        assert!(forward(
+            &target,
+            "claude",
+            &json!({ "hook_event_name": "Stop" }),
+        ));
 
         assert!(matches!(
             inbox.recv_timeout(Duration::from_secs(2)),
@@ -174,7 +213,11 @@ mod tests {
                 token: "t".to_owned(),
             },
         };
-        forward(&target, "claude", json!({ "hook_event_name": "Stop" }));
+        assert!(!forward(
+            &target,
+            "claude",
+            &json!({ "hook_event_name": "Stop" }),
+        ));
     }
 
     #[test]

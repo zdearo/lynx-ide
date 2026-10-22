@@ -50,6 +50,14 @@ pub fn run() {
     if let Some(code) = agents::hook_relay::run_if_requested(&arguments)
         .or_else(|| agents::mcp_server::run_if_requested(&arguments))
         .or_else(|| terminal::daemon_host::run_if_requested(&arguments))
+        .or_else(|| {
+            let folder = daemon_dir(&lynx_home(std::env::home_dir()?));
+            terminal::daemon_host::start_outside_if_requested(
+                &arguments,
+                &folder,
+                std::env::current_exe().ok(),
+            )
+        })
     {
         std::process::exit(code);
     }

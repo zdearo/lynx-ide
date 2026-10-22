@@ -126,7 +126,11 @@ export function UpdatesSettings() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{text.restartTitle}</AlertDialogTitle>
-            <AlertDialogDescription>{text.restartBody}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {config.terminal.ptyDaemon
+                ? text.restartBodyDaemon
+                : text.restartBody}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{text.cancel}</AlertDialogCancel>

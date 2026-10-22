@@ -28,6 +28,39 @@ pub async fn pty_daemon_status(
     Ok(manager.daemon_status())
 }
 
+/// The memory the daemon's sessions hold, in MiB; None when the daemon is off or does not answer.
+#[tauri::command]
+#[specta::specta]
+pub async fn pty_daemon_memory(
+    manager: State<'_, TerminalManager>,
+) -> Result<Option<u32>, IpcError> {
+    let manager = manager.inner().clone();
+    run_blocking(move || Ok(manager.daemon_memory_mib())).await
+}
+
+/// Freezes a terminal of the background process that the user is not using. Refused, with the
+/// reason as the message, while it cannot sleep.
+#[tauri::command]
+#[specta::specta]
+pub async fn hibernate_terminal(
+    manager: State<'_, TerminalManager>,
+    id: String,
+) -> Result<(), IpcError> {
+    let manager = manager.inner().clone();
+    run_blocking(move || Ok(manager.hibernate(&id)?)).await
+}
+
+/// Takes an ended agent conversation off the resumable list. The agent keeps the conversation.
+#[tauri::command]
+#[specta::specta]
+pub async fn forget_resumable_session(
+    manager: State<'_, TerminalManager>,
+    id: String,
+) -> Result<(), IpcError> {
+    let manager = manager.inner().clone();
+    run_blocking(move || Ok(manager.forget_resumable(&id)?)).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn list_resumable_sessions(

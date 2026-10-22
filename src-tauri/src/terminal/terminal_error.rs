@@ -12,4 +12,7 @@ pub enum TerminalError {
     Spawn(String),
     #[error("terminal I/O failed: {0}")]
     Io(#[from] std::io::Error),
+    /// The session cannot do what was asked, and the message says why.
+    #[error("{0}")]
+    Refused(String),
 }

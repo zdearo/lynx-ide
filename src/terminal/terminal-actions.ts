@@ -39,6 +39,16 @@ export async function startTerminal(
   }
 }
 
+export async function sleepTerminal(id: string): Promise<void> {
+  try {
+    await useTerminalStore.getState().hibernate(id);
+  } catch (error) {
+    toast.error(copy.terminal.sleepFailed, {
+      description: errorMessage(error),
+    });
+  }
+}
+
 export async function startShellInSelectedWorktree(): Promise<void> {
   const path = useWorkspaceStore.getState().selectedWorktreePath;
   if (path) await startTerminal(path, null);

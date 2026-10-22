@@ -80,6 +80,15 @@ export const commands = {
 	createTerminal: (worktreePath: string, command: string | null, cols: number, rows: number) => typedError<TerminalInfo, IpcError>(__TAURI_INVOKE("create_terminal", { worktreePath, command, cols, rows })),
 	listTerminals: () => typedError<TerminalInfo[], IpcError>(__TAURI_INVOKE("list_terminals")),
 	ptyDaemonStatus: () => typedError<DaemonStatus, IpcError>(__TAURI_INVOKE("pty_daemon_status")),
+	/**  The memory the daemon's sessions hold, in MiB; None when the daemon is off or does not answer. */
+	ptyDaemonMemory: () => typedError<number | null, IpcError>(__TAURI_INVOKE("pty_daemon_memory")),
+	/**
+	 *  Freezes a terminal of the background process that the user is not using. Refused, with the
+	 *  reason as the message, while it cannot sleep.
+	 */
+	hibernateTerminal: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("hibernate_terminal", { id })),
+	/**  Takes an ended agent conversation off the resumable list. The agent keeps the conversation. */
+	forgetResumableSession: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("forget_resumable_session", { id })),
 	listResumableSessions: (worktreePath: string) => typedError<ResumableSession[], IpcError>(__TAURI_INVOKE("list_resumable_sessions", { worktreePath })),
 	/**  Chooses what closing the app does with the daemon's sessions, before the window closes. */
 	prepareQuit: (keepSessions: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("prepare_quit", { keepSessions })),
@@ -234,7 +243,10 @@ export const commands = {
 	checkForUpdates: () => typedError<UpdateStatus, IpcError>(__TAURI_INVOKE("check_for_updates")),
 	/**  Downloads and installs the version the last check found. */
 	installUpdate: () => typedError<UpdateStatus, IpcError>(__TAURI_INVOKE("install_update")),
-	/**  Restarts Lynx so the installed version runs. Open terminals and agents close with it. */
+	/**
+	 *  Restarts Lynx so the installed version runs. Terminals inside the app close with it; the
+	 *  daemon's keep running, and the new version rejoins them.
+	 */
 	restartToUpdate: () => __TAURI_INVOKE<void>("restart_to_update"),
 };
 
@@ -919,6 +931,8 @@ export type TerminalInfo = {
 	command: string | null,
 	shell: string,
 	running: boolean,
+	/**  The daemon froze the session to save CPU. Typing into it runs it again. */
+	hibernated: boolean,
 	exitCode: number | null,
 	/**  Unix seconds when the session started. `u32` because the contract has no 64-bit integers. */
 	startedAt: number,

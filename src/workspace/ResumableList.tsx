@@ -5,7 +5,9 @@ import type { ResumableSession } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
+import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { useConfigStore } from "@/config/config-store";
+import { errorMessage } from "@/lib/error-message";
 import { copy } from "@/ui-copy";
 import { TERMINAL_PRESETS } from "@/terminal/agent-presets";
 import { startTerminal } from "@/terminal/terminal-actions";
@@ -17,6 +19,7 @@ export function ResumableList({ worktreePath }: { worktreePath: string }) {
   const items = useResumableStore((state) => state.byWorktree[worktreePath]);
   const refresh = useResumableStore((state) => state.refresh);
   const forget = useResumableStore((state) => state.forget);
+  const remove = useResumableStore((state) => state.remove);
 
   useEffect(() => {
     void refresh(worktreePath);
@@ -45,6 +48,14 @@ export function ResumableList({ worktreePath }: { worktreePath: string }) {
     void startTerminal(worktreePath, command).then(() => refresh(worktreePath));
   };
 
+  const take = (item: ResumableSession) => {
+    remove(worktreePath, item.id).catch((error: unknown) => {
+      toast.error(copy.resumable.removeFailed, {
+        description: errorMessage(error),
+      });
+    });
+  };
+
   return (
     <div className="pr-1.5 pb-1.5 pl-7">
       <ul className="grid grid-cols-1 gap-1">
@@ -68,6 +79,12 @@ export function ResumableList({ worktreePath }: { worktreePath: string }) {
               onClick={() => resume(item)}
             >
               <RefreshGlyph18 aria-hidden className="size-3" />
+            </TooltipIconButton>
+            <TooltipIconButton
+              label={copy.resumable.remove}
+              onClick={() => take(item)}
+            >
+              <XmarkGlyph18 aria-hidden className="size-3" />
             </TooltipIconButton>
           </li>
         ))}

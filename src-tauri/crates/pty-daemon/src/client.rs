@@ -11,6 +11,10 @@ use lynx_browser_protocol::transport::Connection;
 use crate::message::{Message, Request};
 use crate::server::{ADDRESS_FILE, TOKEN_FILE};
 
+/// The variable a session's process gets with the folder of the daemon that runs it, so an agent's
+/// hook can leave its event there when the app is closed.
+pub const DIR_ENV: &str = "LYNX_PTY_DAEMON_DIR";
+
 /// Writes one request as a JSON line.
 pub fn write_request(writer: &mut impl Write, request: &Request) -> io::Result<()> {
     writeln!(writer, "{}", serde_json::to_string(request)?)?;

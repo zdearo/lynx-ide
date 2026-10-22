@@ -47,6 +47,8 @@ struct Routes {
     token: String,
     sessions: Mutex<HashMap<String, Sender<AgentInput>>>,
     tools: Mutex<Option<Arc<dyn ToolHandler>>>,
+    /// Browser tool calls running per session, so a session in the middle of one is not frozen.
+    tools_running: Mutex<HashMap<String, u32>>,
     /// Set once the address is published, so sessions can be told where to read it.
     address_file: Mutex<Option<PathBuf>>,
 }
@@ -90,6 +92,7 @@ impl HookHub {
             token: uuid::Uuid::new_v4().to_string(),
             sessions: Mutex::new(HashMap::new()),
             tools: Mutex::new(None),
+            tools_running: Mutex::new(HashMap::new()),
             address_file: Mutex::new(None),
         });
         let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -114,9 +117,19 @@ impl HookHub {
                 token: String::new(),
                 sessions: Mutex::new(HashMap::new()),
                 tools: Mutex::new(None),
+                tools_running: Mutex::new(HashMap::new()),
                 address_file: Mutex::new(None),
             }),
         }
+    }
+
+    /// Whether a browser tool is running for the session right now.
+    pub fn tool_running(&self, session_id: &str) -> bool {
+        self.routes
+            .tools_running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(session_id)
     }
 
     /// The variables a session's shell gets. Empty when the listener is off.
@@ -322,6 +335,19 @@ fn route_hook(body: &[u8], routes: &Routes) -> &'static str {
 }
 
 /// A tool call from a session's MCP process. Only a session that is open in Lynx may call.
+/// Adds or removes one running tool call for the session; a count, since calls can overlap.
+fn count_tool(routes: &Routes, session_id: &str, change: i32) {
+    let mut running = routes
+        .tools_running
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let count = running.entry(session_id.to_owned()).or_insert(0);
+    *count = count.saturating_add_signed(change);
+    if *count == 0 {
+        running.remove(session_id);
+    }
+}
+
 fn route_tool(body: &[u8], routes: &Routes) -> Reply {
     let Ok(call) = serde_json::from_slice::<ToolCall>(body) else {
         return Reply::status("400 Bad Request");
@@ -343,12 +369,14 @@ fn route_tool(body: &[u8], routes: &Routes) -> Reply {
         return Reply::status("503 Service Unavailable");
     };
     // The lock is released: a tool can take many seconds, and other sessions keep reporting.
+    count_tool(routes, &call.session_id, 1);
     let result = handler.call(
         &call.session_id,
         call.agent.as_deref().unwrap_or_default(),
         &call.tool,
         call.arguments,
     );
+    count_tool(routes, &call.session_id, -1);
     Reply {
         status: "200 OK",
         body: Some(result.to_string()),
@@ -587,5 +615,26 @@ mod tests {
         let (status, _) = post_tool(port, &token, r#"{"sessionId":"s1","tool":"t"}"#);
 
         assert_eq!(status, "HTTP/1.1 503 Service Unavailable");
+    }
+}
+
+#[cfg(test)]
+mod tool_count_tests {
+    use super::*;
+
+    /// A session counts as busy while any of its tool calls runs, however they overlap.
+    #[test]
+    fn a_session_is_busy_until_its_last_tool_call_ends() {
+        let hub = HookHub::start();
+        assert!(!hub.tool_running("s1"));
+
+        count_tool(&hub.routes, "s1", 1);
+        count_tool(&hub.routes, "s1", 1);
+        count_tool(&hub.routes, "s1", -1);
+        assert!(hub.tool_running("s1"));
+
+        count_tool(&hub.routes, "s1", -1);
+        assert!(!hub.tool_running("s1"));
+        assert!(!hub.tool_running("other"));
     }
 }

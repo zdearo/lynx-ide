@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -49,6 +50,8 @@ pub struct TerminalInfo {
     pub command: Option<String>,
     pub shell: String,
     pub running: bool,
+    /// The daemon froze the session to save CPU. Typing into it runs it again.
+    pub hibernated: bool,
     pub exit_code: Option<i32>,
     /// Unix seconds when the session started. `u32` because the contract has no 64-bit integers.
     pub started_at: u32,
@@ -85,6 +88,8 @@ pub struct TerminalSession {
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     /// The daemon runs the process: ending it is a request to the daemon, not signals from here.
     daemon_owned: bool,
+    /// The daemon froze the session; typing into it runs it again.
+    hibernated: AtomicBool,
 }
 
 struct PtyHandles {
@@ -222,11 +227,20 @@ impl TerminalSession {
             shell_pid,
             killer: Mutex::new(killer),
             daemon_owned,
+            hibernated: AtomicBool::new(false),
         })
     }
 
     pub fn daemon_owned(&self) -> bool {
         self.daemon_owned
+    }
+
+    pub fn hibernated(&self) -> bool {
+        self.hibernated.load(Ordering::SeqCst)
+    }
+
+    pub fn set_hibernated(&self, value: bool) {
+        self.hibernated.store(value, Ordering::SeqCst);
     }
 
     pub fn info(&self) -> TerminalInfo {
@@ -243,6 +257,7 @@ impl TerminalSession {
             command: self.command.clone(),
             shell: self.shell_name.clone(),
             running,
+            hibernated: running && self.hibernated(),
             exit_code: exit.flatten(),
             started_at: self.started_at,
             harness: slot.harness,

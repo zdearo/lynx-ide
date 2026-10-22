@@ -84,6 +84,7 @@ fn start(idle: Duration) -> Daemon {
             &Options {
                 idle,
                 prepare: |_| {},
+                version: "test",
             },
         ));
     });
@@ -116,6 +117,7 @@ fn create(client: &mut Client, cwd: &Path) -> String {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            outside_app: false,
         })
         .expect("send");
     match client.next(WAIT) {
@@ -199,6 +201,7 @@ fn a_second_daemon_in_the_same_folder_is_refused() {
         &Options {
             idle: Duration::from_secs(1),
             prepare: |_| {},
+            version: "test",
         },
     );
 
@@ -235,6 +238,7 @@ fn bad_requests_get_an_error_not_a_crash() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            outside_app: false,
         })
         .expect("send");
     assert!(matches!(client.next(WAIT), Some(Message::Error { .. })));
@@ -260,6 +264,7 @@ fn a_client_that_stops_reading_does_not_hold_the_session() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            outside_app: false,
         })
         .expect("send");
     let Some(Message::Created { id, .. }) = owner.next(WAIT) else {
@@ -396,6 +401,7 @@ fn a_session_can_be_reattached_by_the_id_its_client_chose() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            outside_app: false,
         })
         .expect("send");
     assert!(
@@ -435,5 +441,248 @@ fn shutdown_ends_every_session_and_the_daemon_leaves() {
     client.send(&Request::Shutdown).expect("send");
 
     assert!(matches!(daemon.done.recv_timeout(WAIT), Ok(Ok(()))));
+    // The lock is released when the daemon returns, but a fork in another test thread can hold a
+    // copy of the lock's descriptor until it execs, so the check gets a moment.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while is_running(daemon.dir.path()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     assert!(!is_running(daemon.dir.path()));
+}
+
+/// Usage tells a session that holds memory from one that does not.
+#[cfg(unix)]
+#[test]
+fn usage_shows_the_memory_a_session_holds() {
+    let daemon = start(Duration::from_secs(30));
+    let mut client = connect(daemon.dir.path());
+    let idle = create(&mut client, daemon.dir.path());
+    let busy = create(&mut client, daemon.dir.path());
+    client
+        .send(&Request::Attach { id: busy.clone() })
+        .expect("send");
+    // The shell keeps about 40 MB in a variable until it exits.
+    write(
+        &mut client,
+        &busy,
+        "x=$(head -c 40000000 /dev/zero | tr '\\0' a); echo held-$((1+1))\r",
+    );
+    read_until(&client, "held-2", &mut String::new());
+
+    client.send(&Request::Usage).expect("send");
+    let sessions = loop {
+        match client.next(WAIT) {
+            Some(Message::Usage { sessions }) => break sessions,
+            Some(_) => {}
+            None => panic!("the daemon did not answer the usage request"),
+        }
+    };
+    let memory = |id: &str| {
+        sessions
+            .iter()
+            .find(|session| session.id == id)
+            .expect("the session is listed")
+            .memory_kib
+    };
+    assert!(
+        memory(&busy) >= memory(&idle) + 20_000,
+        "busy {} KiB, idle {} KiB",
+        memory(&busy),
+        memory(&idle)
+    );
+}
+
+/// Events stored for a session come back once, in order, and leave the daemon when taken.
+#[test]
+fn events_are_kept_for_the_app_and_taken_once() {
+    let daemon = start(Duration::from_secs(30));
+    let mut client = connect(daemon.dir.path());
+    client
+        .send(&Request::Event {
+            session: "conversation".to_owned(),
+            harness: "claude".to_owned(),
+            payload: r#"{"hook_event_name":"Stop"}"#.to_owned(),
+        })
+        .expect("send");
+    assert!(matches!(client.next(WAIT), Some(Message::Ok)));
+    client
+        .send(&Request::Event {
+            session: "conversation".to_owned(),
+            harness: "claude".to_owned(),
+            payload: r#"{"hook_event_name":"SessionEnd"}"#.to_owned(),
+        })
+        .expect("send");
+    assert!(matches!(client.next(WAIT), Some(Message::Ok)));
+
+    client
+        .send(&Request::Take {
+            session: "conversation".to_owned(),
+        })
+        .expect("send");
+    let Some(Message::Events { events }) = client.next(WAIT) else {
+        panic!("the daemon did not return the events");
+    };
+    let payloads: Vec<&str> = events.iter().map(|event| event.payload.as_str()).collect();
+    assert_eq!(
+        payloads,
+        [
+            r#"{"hook_event_name":"Stop"}"#,
+            r#"{"hook_event_name":"SessionEnd"}"#
+        ]
+    );
+
+    client
+        .send(&Request::Take {
+            session: "conversation".to_owned(),
+        })
+        .expect("send");
+    assert!(matches!(client.next(WAIT), Some(Message::Events { events }) if events.is_empty()));
+}
+
+/// A session a command line starts is listed until the app adopts it; a session that ended is
+/// dropped from the list.
+#[cfg(unix)]
+#[test]
+fn a_session_started_outside_the_app_is_listed_until_the_app_takes_it() {
+    let daemon = start(Duration::from_secs(30));
+    let mut client = connect(daemon.dir.path());
+    let (program, args) = shell();
+    client
+        .send(&Request::Create {
+            id: "from-the-command-line".to_owned(),
+            cwd: daemon.dir.path().to_string_lossy().into_owned(),
+            program,
+            args,
+            env: Vec::new(),
+            cols: 80,
+            rows: 24,
+            outside_app: true,
+        })
+        .expect("send");
+    assert!(matches!(client.next(WAIT), Some(Message::Created { .. })));
+
+    client.send(&Request::Outside).expect("send");
+    let Some(Message::Outside { sessions }) = client.next(WAIT) else {
+        panic!("the daemon did not list the outside sessions");
+    };
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        ["from-the-command-line"]
+    );
+
+    client
+        .send(&Request::Adopt {
+            session: "from-the-command-line".to_owned(),
+        })
+        .expect("send");
+    assert!(matches!(client.next(WAIT), Some(Message::Ok)));
+    client.send(&Request::Outside).expect("send");
+    assert!(
+        matches!(client.next(WAIT), Some(Message::Outside { sessions }) if sessions.is_empty())
+    );
+}
+
+/// The next reply that is not output: a session that is attached also streams what it prints.
+#[cfg(unix)]
+fn reply(client: &Client) -> Message {
+    loop {
+        match client.next(WAIT) {
+            Some(Message::Output { .. } | Message::Snapshot { .. }) => {}
+            Some(message) => return message,
+            None => panic!("the daemon did not reply"),
+        }
+    }
+}
+
+/// A frozen session stops using the CPU, and typing into it runs it again.
+#[cfg(unix)]
+#[test]
+fn hibernating_freezes_a_session_and_typing_wakes_it() {
+    let daemon = start(Duration::from_secs(30));
+    let mut client = connect(daemon.dir.path());
+    let id = create(&mut client, daemon.dir.path());
+    client
+        .send(&Request::Attach { id: id.clone() })
+        .expect("send");
+    let pid = match client.next(WAIT) {
+        Some(Message::Snapshot { pid: Some(pid), .. }) => pid,
+        other => panic!("expected a snapshot with the shell's pid, got {other:?}"),
+    };
+
+    client
+        .send(&Request::Hibernate { id: id.clone() })
+        .expect("send");
+    assert!(matches!(reply(&client), Message::Ok));
+    assert!(
+        wait_for_state(pid, 'T', WAIT),
+        "the shell is frozen after hibernating"
+    );
+
+    let (line, marker) = echo("woke");
+    write(&mut client, &id, &line);
+    read_until(&client, &marker, &mut String::new());
+    assert!(
+        !wait_for_state(pid, 'T', Duration::from_millis(500)),
+        "the shell runs again once typed into"
+    );
+}
+
+/// Ending a frozen session does not wait out the hang-up grace: it runs again to take the signal.
+#[cfg(unix)]
+#[test]
+fn killing_a_frozen_session_ends_it_at_once() {
+    let daemon = start(Duration::from_secs(30));
+    let mut client = connect(daemon.dir.path());
+    let id = create(&mut client, daemon.dir.path());
+    client
+        .send(&Request::Attach { id: id.clone() })
+        .expect("send");
+    let pid = match client.next(WAIT) {
+        Some(Message::Snapshot { pid: Some(pid), .. }) => pid,
+        other => panic!("expected a snapshot with the shell's pid, got {other:?}"),
+    };
+    client
+        .send(&Request::Hibernate { id: id.clone() })
+        .expect("send");
+    assert!(matches!(reply(&client), Message::Ok));
+
+    client.send(&Request::Kill { id }).expect("send");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while process_state(pid).is_some() {
+        assert!(
+            Instant::now() < deadline,
+            "the frozen shell did not end within two seconds"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// The state `ps` shows for the process, or None once it is gone.
+#[cfg(unix)]
+fn process_state(pid: u32) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let shown = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!shown.is_empty()).then_some(shown)
+}
+
+/// Whether the process is in the given state (as `ps` shows it) within the time.
+#[cfg(unix)]
+fn wait_for_state(pid: u32, state: char, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    loop {
+        if process_state(pid).is_some_and(|shown| shown.starts_with(state)) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }

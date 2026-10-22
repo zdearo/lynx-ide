@@ -4,8 +4,10 @@
 //! Not here yet: a token, history on disk, reattaching sessions after a daemon restart.
 
 pub mod client;
+pub mod history;
 pub mod message;
 #[cfg(unix)]
 pub mod process_group;
 pub mod server;
+pub mod usage;
 pub mod utf8_stream_decoder;

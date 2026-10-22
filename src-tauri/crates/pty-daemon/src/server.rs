@@ -14,9 +14,12 @@ use lynx_browser_protocol::transport::{Connection, Listener};
 use portable_pty::ChildKiller;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
-use crate::message::{Message, Request};
+use crate::history::History;
+use crate::message::{Message, OutsideSession, Request, SessionUsage};
 #[cfg(unix)]
-use crate::process_group::hang_up_and_reap;
+#[cfg(unix)]
+use crate::process_group::{self, hang_up_and_reap};
+use crate::usage;
 use crate::utf8_stream_decoder::Utf8StreamDecoder;
 
 /// The lock a running daemon holds. Whoever can take it knows no daemon is alive: the system lets
@@ -26,6 +29,7 @@ pub const LOCK_FILE: &str = "daemon.lock";
 pub const ADDRESS_FILE: &str = "address";
 /// The secret a client proves it may use the daemon with. Only the owner of the folder can read it.
 pub const TOKEN_FILE: &str = "token";
+pub const VERSION_FILE: &str = "version";
 const SOCKET_FILE: &str = "link.sock";
 const SCROLLBACK_BYTES: usize = 1024 * 1024;
 const READ_BYTES: usize = 16 * 1024;
@@ -51,6 +55,8 @@ pub struct Options {
     pub idle: Duration,
     /// Applied to each session's command before its variables, as the app does for its own shells.
     pub prepare: fn(&mut CommandBuilder),
+    /// The app's version, written in the folder so the app can tell whether this daemon is its own.
+    pub version: &'static str,
 }
 
 /// Whether a daemon holds the lock in `dir`.
@@ -76,13 +82,15 @@ pub fn serve(dir: &Path, options: &Options) -> Result<(), DaemonError> {
         uuid::Uuid::new_v4().simple()
     );
     write_private(&dir.join(TOKEN_FILE), &token)?;
+    fs::write(dir.join(VERSION_FILE), options.version)?;
     let listener = Listener::bind(dir)?;
     restrict_to_owner(&dir.join(SOCKET_FILE), 0o600)?;
     fs::write(dir.join(ADDRESS_FILE), listener.address())?;
-    let outcome = run(&listener, options, token);
+    let outcome = run(&listener, options, token, History::open(dir).ok());
     // Gone before the lock is released, so a client never follows an address nobody answers.
     let _ = fs::remove_file(dir.join(ADDRESS_FILE));
     let _ = fs::remove_file(dir.join(TOKEN_FILE));
+    let _ = fs::remove_file(dir.join(VERSION_FILE));
     let _ = fs::remove_file(dir.join(SOCKET_FILE));
     outcome
 }
@@ -115,8 +123,13 @@ fn restrict_to_owner(_path: &Path, _mode: u32) -> io::Result<()> {
     Ok(())
 }
 
-fn run(listener: &Listener, options: &Options, token: String) -> Result<(), DaemonError> {
-    let server = Arc::new(Server::new(options.prepare, token));
+fn run(
+    listener: &Listener,
+    options: &Options,
+    token: String,
+    history: Option<History>,
+) -> Result<(), DaemonError> {
+    let server = Arc::new(Server::new(options.prepare, token, history));
     let mut idle_since: Option<Instant> = None;
     loop {
         if server.stopping.load(std::sync::atomic::Ordering::SeqCst) {
@@ -196,6 +209,8 @@ struct Launch<'a> {
 
 struct Server {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// None when the database could not be opened; the sessions still work without it.
+    history: Option<Mutex<History>>,
     next_id: AtomicU32,
     prepare: fn(&mut CommandBuilder),
     token: String,
@@ -204,9 +219,10 @@ struct Server {
 }
 
 impl Server {
-    fn new(prepare: fn(&mut CommandBuilder), token: String) -> Self {
+    fn new(prepare: fn(&mut CommandBuilder), token: String, history: Option<History>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            history: history.map(Mutex::new),
             next_id: AtomicU32::new(0),
             prepare,
             token,
@@ -243,6 +259,53 @@ impl Server {
         Ok((id, pid))
     }
 
+    /// Runs a database call. The database being unavailable is an error for the caller, not a crash.
+    fn with_history<T>(
+        &self,
+        call: impl FnOnce(&History) -> rusqlite::Result<T>,
+    ) -> Result<T, String> {
+        let history = self
+            .history
+            .as_ref()
+            .ok_or_else(|| "the daemon's database is unavailable".to_owned())?;
+        call(&lock(history)).map_err(|error| error.to_string())
+    }
+
+    fn record_outside(&self, id: &str, cwd: &str, program: &str) {
+        // Best effort: a session that is not recorded is still running, just not shown on open.
+        let _ = self.with_history(|history| history.record_outside(id, cwd, program));
+    }
+
+    /// The sessions a command line started that still run. Records of ones that ended are dropped.
+    fn outside(&self) -> Vec<OutsideSession> {
+        let Ok(recorded) = self.with_history(|history| history.outside()) else {
+            return Vec::new();
+        };
+        recorded
+            .into_iter()
+            .filter_map(|session| {
+                let running = self
+                    .session(&session.id)
+                    .is_ok_and(|found| lock(&found.state).exit.is_none());
+                if running {
+                    return Some(session);
+                }
+                let _ = self.with_history(|history| history.forget_outside(&session.id));
+                None
+            })
+            .collect()
+    }
+
+    /// What each running session costs, measured now.
+    fn usage(&self) -> Vec<SessionUsage> {
+        let running: Vec<(String, Option<u32>)> = lock(&self.sessions)
+            .values()
+            .filter(|session| lock(&session.state).exit.is_none())
+            .map(|session| (session.id.clone(), session.pid))
+            .collect();
+        usage::measure(&running)
+    }
+
     /// Ends every session; the serving loop then leaves.
     fn shut_down(&self) {
         let sessions: Vec<Arc<Session>> = lock(&self.sessions).values().cloned().collect();
@@ -269,6 +332,7 @@ impl Server {
                 env,
                 cols,
                 rows,
+                outside_app,
             } => self
                 .create(&Launch {
                     id: &id,
@@ -279,7 +343,28 @@ impl Server {
                     cols,
                     rows,
                 })
+                .inspect(|(id, _)| {
+                    if outside_app {
+                        self.record_outside(id, &cwd, &program);
+                    }
+                })
                 .map(|(id, pid)| Message::Created { id, pid }),
+            Request::Event {
+                session,
+                harness,
+                payload,
+            } => self
+                .with_history(|history| history.push_event(&session, &harness, &payload))
+                .map(|()| Message::Ok),
+            Request::Take { session } => self
+                .with_history(|history| history.take_events(&session))
+                .map(|events| Message::Events { events }),
+            Request::Outside => Ok(Message::Outside {
+                sessions: self.outside(),
+            }),
+            Request::Adopt { session } => self
+                .with_history(|history| history.forget_outside(&session))
+                .map(|()| Message::Ok),
             Request::Write { id, data } => self
                 .session(&id)
                 .and_then(|session| session.write(&data))
@@ -311,6 +396,17 @@ impl Server {
             },
             Request::List => Ok(Message::Sessions {
                 ids: lock(&self.sessions).keys().cloned().collect(),
+            }),
+            Request::Hibernate { id } => self
+                .session(&id)
+                .and_then(|session| session.hibernate())
+                .map(|()| Message::Ok),
+            Request::Wake { id } => self.session(&id).map(|session| {
+                session.resume_in_shell_then_wait();
+                Message::Ok
+            }),
+            Request::Usage => Ok(Message::Usage {
+                sessions: self.usage(),
             }),
         };
         Some(reply.unwrap_or_else(|message| Message::Error { message }))
@@ -380,6 +476,13 @@ struct State {
     flush_scheduled: bool,
     /// Some once the process ended; the inner value is its exit code.
     exit: Option<Option<i32>>,
+    /// The process groups a hibernation froze; empty while the session runs.
+    #[cfg(unix)]
+    frozen: Vec<i32>,
+    /// Whether the shell took the frozen program's terminal back, so it resumes the program with
+    /// `fg` rather than a bare signal.
+    #[cfg(unix)]
+    frozen_through_shell: bool,
     attached: Vec<Sink>,
 }
 
@@ -549,6 +652,7 @@ impl Session {
     }
 
     fn attach(&self, sink: &Sink) {
+        self.resume_in_shell_then_wait();
         let mut state = lock(&self.state);
         let snapshot = Message::Snapshot {
             id: self.id.clone(),
@@ -578,6 +682,8 @@ impl Session {
         if lock(&self.state).exit.is_some() {
             return Err("the session has ended".to_owned());
         }
+        // Typing is the user coming back: a frozen session runs again before it gets the input.
+        self.resume_in_shell_then_wait();
         let mut writer = lock(&self.writer);
         writer
             .write_all(data.as_bytes())
@@ -611,18 +717,114 @@ impl Session {
 
     fn kill(&self) {
         if lock(&self.state).exit.is_none() {
+            // A frozen program cannot act on a hang-up until it runs again.
+            self.thaw(false);
             self.hang_up();
         }
     }
 
+    /// The process groups of the session: the shell's, and the one in the foreground, since
+    /// interactive shells give each job its own group.
     #[cfg(unix)]
-    fn hang_up(&self) {
-        // Interactive shells give each job its own group, so the shell's group alone can miss it.
+    fn groups(&self) -> Vec<i32> {
         let mut groups: Vec<i32> = self.foreground().into_iter().collect();
         if let Some(pid) = self.pid.and_then(|pid| i32::try_from(pid).ok()) {
             groups.push(pid);
         }
-        hang_up_and_reap(groups);
+        groups
+    }
+
+    #[cfg(unix)]
+    fn hang_up(&self) {
+        hang_up_and_reap(self.groups());
+    }
+
+    /// Freezes the session's running program, so it uses no CPU. The shell is left running, so it
+    /// can resume the program later. A session that is already frozen stays so.
+    #[cfg(unix)]
+    fn hibernate(&self) -> Result<(), String> {
+        let shell = self
+            .pid
+            .and_then(|pid| i32::try_from(pid).ok())
+            .ok_or_else(|| "the shell's process is unknown".to_owned())?;
+        let foreground = self.foreground().unwrap_or(shell);
+        let mut state = lock(&self.state);
+        if state.exit.is_some() {
+            return Err("the session has ended".to_owned());
+        }
+        if state.frozen.is_empty() {
+            process_group::stop(&[foreground]);
+            state.frozen = vec![foreground];
+            // The shell sees the program stop and takes the terminal back, a moment later. Only then
+            // can the shell resume the program with `fg`.
+            state.frozen_through_shell =
+                foreground != shell && self.wait_for_shell_to_take_terminal(shell);
+        }
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn hibernate(&self) -> Result<(), String> {
+        Err("hibernating is not available on this platform yet".to_owned())
+    }
+
+    /// Lets a frozen session run again, and waits until the program has the terminal, so input sent
+    /// next reaches the program and not the shell.
+    #[cfg(unix)]
+    fn resume_in_shell_then_wait(&self) {
+        if let Some(job) = self.thaw(true) {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while self.foreground() != Some(job) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn resume_in_shell_then_wait(&self) {}
+
+    /// Lets a frozen session run again. Through the shell when the shell froze the program, so the
+    /// shell gives it the terminal back, and then returns the program's group; a plain resume
+    /// otherwise, and when the session is ending.
+    #[cfg(unix)]
+    fn thaw(&self, through_shell: bool) -> Option<i32> {
+        let (frozen, by_shell) = {
+            let mut state = lock(&self.state);
+            (
+                std::mem::take(&mut state.frozen),
+                std::mem::take(&mut state.frozen_through_shell),
+            )
+        };
+        if frozen.is_empty() {
+            return None;
+        }
+        if through_shell && by_shell {
+            // `fg` is the shell's own job control: it resumes the job and gives it the terminal.
+            let mut writer = lock(&self.writer);
+            let _ = writer.write_all(b"fg\r").and_then(|()| writer.flush());
+            return frozen.first().copied();
+        }
+        process_group::resume(&frozen);
+        None
+    }
+
+    #[cfg(not(unix))]
+    fn thaw(&self, _through_shell: bool) -> Option<i32> {
+        None
+    }
+
+    /// Waits, for up to a second, until the shell has the terminal again, which it takes back when
+    /// a job stops. Returns whether it did.
+    #[cfg(unix)]
+    fn wait_for_shell_to_take_terminal(&self, shell: i32) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while self.foreground() != Some(shell) {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        true
     }
 
     #[cfg(not(unix))]

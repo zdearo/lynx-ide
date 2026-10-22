@@ -80,7 +80,7 @@ impl EnvironmentCleanup {
 }
 
 /// The cleanup for this process, read once: the environment of a running Lynx does not change.
-fn current() -> &'static EnvironmentCleanup {
+pub fn current() -> &'static EnvironmentCleanup {
     static CURRENT: OnceLock<EnvironmentCleanup> = OnceLock::new();
     CURRENT.get_or_init(|| EnvironmentCleanup::from_variables(env::vars_os()))
 }

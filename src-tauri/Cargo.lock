@@ -2687,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "lynx-ide"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2735,8 +2735,10 @@ dependencies = [
  "lynx-browser-protocol",
  "nix 0.31.3",
  "portable-pty",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sysinfo",
  "tempfile",
  "thiserror 2.0.21",
  "uuid",

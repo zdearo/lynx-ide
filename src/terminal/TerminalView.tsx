@@ -31,7 +31,8 @@ interface TerminalViewProps {
 
 interface Mounted {
   terminal: Terminal;
-  fit: FitAddon;
+  /** Fits the screen to its box and tells the process the size, even when it did not change. */
+  refit: () => void;
   /** WebGL is attached only while this terminal is the visible one. */
   webgl: WebglRendererSlot;
   dispose: () => void;
@@ -69,8 +70,13 @@ function mountTerminal(
   const webgl = webglBudget.slotFor(terminal);
 
   // A hidden container measures 0x0 and would collapse the terminal.
+  // The size is always sent: the screen's own resize event only fires when its size changes, and a
+  // process that kept an older size (a session that outlived the window) would stay at it.
   const fitIfVisible = () => {
-    if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit();
+    if (container.clientWidth > 0 && container.clientHeight > 0) {
+      fit.fit();
+      sendSize({ cols: terminal.cols, rows: terminal.rows });
+    }
   };
 
   let disposed = false;
@@ -107,9 +113,8 @@ function mountTerminal(
     .then((snapshot) => {
       if (disposed) return;
       gate.attach(snapshot);
+      // The session was created at a default size, or kept the one of an earlier window.
       fitIfVisible();
-      // The session was created at a default size; tell it the real one.
-      sendSize({ cols: terminal.cols, rows: terminal.rows });
     })
     .catch((error: unknown) => {
       if (disposed) return;
@@ -120,6 +125,7 @@ function mountTerminal(
   const input = terminal.onData((data) => {
     // A dead session rejects input; there is nothing useful to do about it.
     void commands.writeTerminal(terminalId, data);
+    useTerminalStore.getState().woken(terminalId);
   });
   const resize = terminal.onResize(({ cols, rows }) => {
     sendSize({ cols, rows });
@@ -151,7 +157,7 @@ function mountTerminal(
 
   return {
     terminal,
-    fit,
+    refit: fitIfVisible,
     webgl,
     dispose() {
       disposed = true;
@@ -221,13 +227,13 @@ export function TerminalView({
   useEffect(() => {
     const mounted = mountedRef.current;
     if (!mounted) return;
-    const { terminal, fit } = mounted;
+    const { terminal, refit } = mounted;
     terminal.options.fontFamily = terminalFontFamily(settings.fontFamily);
     terminal.options.fontSize = settings.fontSize;
     terminal.options.scrollback = settings.scrollback;
     terminal.options.macOptionIsMeta = settings.macOptionIsMeta;
     terminal.options.theme = resolveTerminalTheme(settings);
-    if (containerRef.current && containerRef.current.clientWidth > 0) fit.fit();
+    refit();
     // Re-applies the whole config: every field here is cheap to set again.
   }, [settings]);
 
@@ -244,7 +250,7 @@ export function TerminalView({
     if (!active) return;
     // Wait a frame so the container is laid out after becoming visible.
     const frame = requestAnimationFrame(() => {
-      mountedRef.current?.fit.fit();
+      mountedRef.current?.refit();
       mountedRef.current?.terminal.focus();
       // The DOM view is usable at once; the GPU renderer follows a task later.
       setTimeout(() => void mountedRef.current?.webgl.show(), 0);

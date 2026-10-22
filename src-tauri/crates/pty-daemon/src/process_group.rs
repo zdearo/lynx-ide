@@ -42,6 +42,16 @@ fn group_exists(group: i32) -> bool {
     )
 }
 
+/// Freezes the groups, so their programs use no CPU until `resume`.
+pub fn stop(groups: &[i32]) {
+    signal_groups(groups, Signal::SIGSTOP);
+}
+
+/// Lets frozen groups run again.
+pub fn resume(groups: &[i32]) {
+    signal_groups(groups, Signal::SIGCONT);
+}
+
 fn signal_groups(groups: &[i32], signal: Signal) {
     for group in groups {
         // The group may already be gone, which is exactly the outcome we want.

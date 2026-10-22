@@ -78,6 +78,7 @@ pub fn spawn(dir: &Path, id: &str, request: &SpawnRequest<'_>) -> Result<PtyProc
             env,
             cols: request.cols,
             rows: request.rows,
+            outside_app: false,
         },
     )
     .map_err(|error| error.to_string())?;

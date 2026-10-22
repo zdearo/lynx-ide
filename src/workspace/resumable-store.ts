@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { commands, type ResumableSession } from "@/bindings";
+import { unwrap } from "@/lib/ipc-result";
 
 interface ResumableState {
   /** Ended agent sessions per worktree that can be resumed, newest first. */
@@ -8,6 +9,8 @@ interface ResumableState {
   refresh: (worktreePath: string) => Promise<void>;
   /** The session is being resumed, so it is no longer offered. */
   forget: (worktreePath: string, id: string) => void;
+  /** Takes the conversation off the list for good. The agent keeps the conversation. */
+  remove: (worktreePath: string, id: string) => Promise<void>;
 }
 
 export const useResumableStore = create<ResumableState>((set) => ({
@@ -35,5 +38,10 @@ export const useResumableStore = create<ResumableState>((set) => ({
         ),
       },
     }));
+  },
+
+  async remove(worktreePath, id) {
+    await unwrap(commands.forgetResumableSession(id));
+    useResumableStore.getState().forget(worktreePath, id);
   },
 }));

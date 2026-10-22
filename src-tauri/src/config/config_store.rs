@@ -295,6 +295,12 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
     put(
         root,
         "terminal",
+        "ptyDaemon",
+        (terminal.pty_daemon != defaults.pty_daemon).then(|| json!(terminal.pty_daemon)),
+    );
+    put(
+        root,
+        "terminal",
         "bell",
         (terminal.bell != defaults.bell).then(|| json!(terminal.bell)),
     );
@@ -606,6 +612,7 @@ mod tests {
         let changed = AppConfig {
             terminal: TerminalConfig {
                 copy_on_select: true,
+                pty_daemon: true,
                 bell: BellStyle::None,
                 confirm_close: true,
                 ..TerminalConfig::default()
@@ -616,7 +623,7 @@ mod tests {
         store.update(changed).expect("set");
         assert_eq!(
             file_json(&store),
-            json!({ "terminal": { "copyOnSelect": true, "bell": "none", "confirmClose": true } })
+            json!({ "terminal": { "copyOnSelect": true, "ptyDaemon": true, "bell": "none", "confirmClose": true } })
         );
 
         store.update(AppConfig::default()).expect("reset");

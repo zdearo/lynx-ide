@@ -222,6 +222,14 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 
   await p.getByRole("button", { name: /^fix\/pty/ }).hover();
+  await p.getByRole("button", { name: /^fix\/pty/ }).click({ button: "right" });
+  await p.waitForTimeout(300);
+  check(
+    "right-clicking a worktree opens its actions menu",
+    (await p.getByRole("menuitem", { name: /Remove worktree/ }).count()) === 1,
+  );
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(200);
   await p.getByRole("button", { name: "Actions for fix/pty" }).click();
   await p.getByRole("menuitem", { name: /Remove worktree/ }).click();
   await p.getByRole("button", { name: "Remove", exact: true }).click();
@@ -555,6 +563,14 @@ await session("?mock=full", 1200, 900, async (p) => {
   }
   check("the tab bar has a new terminal button", launcher !== null);
   await launcher.click();
+  const menuFontSize = await p
+    .getByRole("menuitem", { name: /^Shell/ })
+    .evaluate((el) => getComputedStyle(el).fontSize);
+  check(
+    "the new terminal menu uses the app's text size",
+    menuFontSize === "13px",
+    menuFontSize,
+  );
   await p.getByRole("menuitem", { name: "Claude Code" }).click();
   await p.waitForTimeout(500);
   check(

@@ -78,7 +78,7 @@ export const copy = {
       },
       ptyDaemon: {
         label: "Run terminals in a separate process (experimental)",
-        hint: "Terminals run in a background process instead of inside Lynx. Closing Lynx still ends them for now; keeping them is the next step.",
+        hint: "New terminals run in a background process instead of inside Lynx, so they can survive closing the window. Open terminals keep running where they are.",
       },
       bell: {
         label: "Bell",

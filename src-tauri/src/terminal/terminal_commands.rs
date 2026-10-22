@@ -3,7 +3,8 @@ use tauri::State;
 use crate::blocking_task::run_blocking;
 use crate::error::{AppError, IpcError};
 
-use super::terminal_manager::TerminalManager;
+use super::daemon_host::DaemonStatus;
+use super::terminal_manager::{ResumableSession, TerminalManager};
 use super::terminal_session::{TerminalInfo, TerminalSnapshot};
 
 #[tauri::command]
@@ -17,6 +18,34 @@ pub async fn create_terminal(
 ) -> Result<TerminalInfo, IpcError> {
     let manager = manager.inner().clone();
     run_blocking(move || Ok(manager.create(&worktree_path, command.as_deref(), cols, rows)?)).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn pty_daemon_status(
+    manager: State<'_, TerminalManager>,
+) -> Result<DaemonStatus, IpcError> {
+    Ok(manager.daemon_status())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_resumable_sessions(
+    manager: State<'_, TerminalManager>,
+    worktree_path: String,
+) -> Result<Vec<ResumableSession>, IpcError> {
+    Ok(manager.resumable(&worktree_path))
+}
+
+/// Chooses what closing the app does with the daemon's sessions, before the window closes.
+#[tauri::command]
+#[specta::specta]
+pub async fn prepare_quit(
+    manager: State<'_, TerminalManager>,
+    keep_sessions: bool,
+) -> Result<(), IpcError> {
+    manager.set_keep_on_exit(keep_sessions);
+    Ok(())
 }
 
 #[tauri::command]

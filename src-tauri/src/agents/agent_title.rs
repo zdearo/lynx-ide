@@ -1,6 +1,6 @@
 //! What a harness's terminal title says about its state, for sessions without hooks. Each agent
-//! writes its title its own way: Claude a spinner or a `✳` prefix, OpenCode an `OC |` label, Pi
-//! and OMP a state marker after `π`, and the rest their name with a state word.
+//! writes its title its own way: Claude a spinner or a `✳` prefix, OpenCode an `OC |` label, OMP a
+//! state marker after `π`, and Codex its name with a state word.
 
 use super::harness::HarnessId;
 
@@ -17,7 +17,7 @@ pub enum TitleSignal {
 pub fn signal_of(harness: HarnessId, title: &str) -> Option<TitleSignal> {
     let title = title.trim_start();
     match harness {
-        HarnessId::Pi | HarnessId::Omp => {
+        HarnessId::Omp => {
             if let Some(signal) = pi_marker(title) {
                 return Some(signal);
             }
@@ -48,20 +48,8 @@ pub fn signal_of(harness: HarnessId, title: &str) -> Option<TitleSignal> {
     }
     match harness {
         HarnessId::Codex => named(title, &["codex"]),
-        HarnessId::Antigravity => named(title, &["antigravity", "agy"]),
-        HarnessId::Copilot => named(title, &["copilot"]),
-        HarnessId::Kiro => named(title, &["kiro"]),
-        HarnessId::Qwen => named(title, &["qwen"]),
-        HarnessId::Droid => named(title, &["droid"]),
-        HarnessId::Cursor => named(title, &["cursor"]),
-        // Grok's titles carry a spinner while it works and only their name at rest, and the
-        // spinner is read above. OpenCode and Pi/OMP titles that did not match their own form say
-        // nothing either.
-        HarnessId::Claude
-        | HarnessId::Grok
-        | HarnessId::Opencode
-        | HarnessId::Pi
-        | HarnessId::Omp => None,
+        // OpenCode and OMP titles that did not match their own form say nothing.
+        HarnessId::Claude | HarnessId::Opencode | HarnessId::Omp => None,
     }
 }
 
@@ -81,7 +69,7 @@ fn is_opencode_title(title: &str) -> bool {
         .is_some_and(|task| task.starts_with(char::is_whitespace) && !task.trim().is_empty())
 }
 
-/// Pi and OMP write their state after their brand: `π : label` works, `π > label` is at rest,
+/// OMP writes its state after its brand: `π : label` works, `π > label` is at rest,
 /// `π ! label` needs the user. A braille frame in that place is work too.
 fn pi_marker(title: &str) -> Option<TitleSignal> {
     let after_brand = ["π", "Pi", "OMP"]
@@ -208,72 +196,27 @@ mod tests {
     }
 
     #[test]
-    fn pi_and_omp_write_their_state_after_the_brand() {
-        for harness in [HarnessId::Pi, HarnessId::Omp] {
-            assert_eq!(
-                signal_of(harness, "π : my-project"),
-                Some(TitleSignal::Working)
-            );
-            assert_eq!(
-                signal_of(harness, "π > my-project"),
-                Some(TitleSignal::Rest)
-            );
-            assert_eq!(
-                signal_of(harness, "π ! my-project"),
-                Some(TitleSignal::NeedsYou)
-            );
-            assert_eq!(
-                signal_of(harness, "π ⠋ my-project"),
-                Some(TitleSignal::Working)
-            );
-        }
+    fn omp_writes_its_state_after_the_brand() {
+        assert_eq!(
+            signal_of(HarnessId::Omp, "π : my-project"),
+            Some(TitleSignal::Working)
+        );
+        assert_eq!(
+            signal_of(HarnessId::Omp, "π > my-project"),
+            Some(TitleSignal::Rest)
+        );
+        assert_eq!(
+            signal_of(HarnessId::Omp, "π ! my-project"),
+            Some(TitleSignal::NeedsYou)
+        );
+        assert_eq!(
+            signal_of(HarnessId::Omp, "π ⠋ my-project"),
+            Some(TitleSignal::Working)
+        );
         assert_eq!(
             signal_of(HarnessId::Omp, "OMP > my-project"),
             Some(TitleSignal::Rest)
         );
         assert_eq!(signal_of(HarnessId::Omp, "π: my-project"), None);
-    }
-
-    #[test]
-    fn a_name_alone_says_nothing_so_a_cursor_or_droid_session_is_not_called_done() {
-        assert_eq!(signal_of(HarnessId::Cursor, "cursor agent"), None);
-        assert_eq!(signal_of(HarnessId::Droid, "droid"), None);
-        assert_eq!(
-            signal_of(HarnessId::Cursor, "cursor running"),
-            Some(TitleSignal::Working)
-        );
-        assert_eq!(
-            signal_of(HarnessId::Droid, "droid ready"),
-            Some(TitleSignal::Rest)
-        );
-    }
-
-    #[test]
-    fn grok_shows_its_work_as_a_spinner_and_nothing_at_rest() {
-        assert_eq!(
-            signal_of(HarnessId::Grok, "⠋ Grok"),
-            Some(TitleSignal::Working)
-        );
-        assert_eq!(signal_of(HarnessId::Grok, "Grok"), None);
-    }
-
-    #[test]
-    fn antigravity_is_known_by_its_short_name_too() {
-        assert_eq!(
-            signal_of(HarnessId::Antigravity, "agy thinking"),
-            Some(TitleSignal::Working)
-        );
-        assert_eq!(
-            signal_of(HarnessId::Antigravity, "antigravity ready"),
-            Some(TitleSignal::Rest)
-        );
-    }
-
-    #[test]
-    fn a_title_that_asks_for_action_needs_the_user_for_any_agent() {
-        assert_eq!(
-            signal_of(HarnessId::Qwen, "Qwen - action required"),
-            Some(TitleSignal::NeedsYou)
-        );
     }
 }

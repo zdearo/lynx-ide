@@ -31,6 +31,8 @@ fn setup() -> (TerminalManager, Arc<RecordingSink>, tempfile::TempDir) {
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         HookHub::disabled(),
         SessionOwners::default(),
+        None,
+        None,
     );
     (manager, sink, tempfile::tempdir().expect("temp dir"))
 }

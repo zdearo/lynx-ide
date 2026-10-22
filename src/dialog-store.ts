@@ -20,6 +20,8 @@ interface DialogState {
   folderDialog: FolderDialog | null;
   moveTarget: MoveTarget | null;
   deleteFolderTarget: Folder | null;
+  /** How many terminal processes the daemon holds, while the user is asked what closing the app does. */
+  quitSessions: number | null;
   unlinkFolderTarget: Folder | null;
   addProjectOpen: boolean;
   /** Terminal session the user is asked to confirm closing. */
@@ -44,6 +46,7 @@ interface DialogState {
   askFolderDialog: (dialog: FolderDialog | null) => void;
   askMove: (target: MoveTarget | null) => void;
   askDeleteFolder: (folder: Folder | null) => void;
+  askQuit: (sessions: number | null) => void;
   askUnlinkFolder: (folder: Folder | null) => void;
   askAddProject: (open: boolean) => void;
   askCloseTerminal: (id: string | null) => void;
@@ -61,6 +64,7 @@ export const useDialogStore = create<DialogState>((set) => ({
   folderDialog: null,
   moveTarget: null,
   deleteFolderTarget: null,
+  quitSessions: null,
   unlinkFolderTarget: null,
   addProjectOpen: false,
   closeTerminalId: null,
@@ -75,6 +79,7 @@ export const useDialogStore = create<DialogState>((set) => ({
   askFolderDialog: (folderDialog) => set({ folderDialog }),
   askMove: (moveTarget) => set({ moveTarget }),
   askDeleteFolder: (deleteFolderTarget) => set({ deleteFolderTarget }),
+  askQuit: (quitSessions) => set({ quitSessions }),
   askUnlinkFolder: (unlinkFolderTarget) => set({ unlinkFolderTarget }),
   askAddProject: (addProjectOpen) => set({ addProjectOpen }),
   askCloseTerminal: (closeTerminalId) => set({ closeTerminalId }),

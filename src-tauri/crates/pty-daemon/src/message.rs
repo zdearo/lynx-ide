@@ -5,10 +5,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Request {
+    /// Must be the first request on a connection: the token the daemon wrote in its folder.
+    Hello {
+        token: String,
+    },
     Create {
+        /// The id the client gives the session, so it can reattach to it later. Empty means the
+        /// daemon chooses one.
+        #[serde(default)]
+        id: String,
         cwd: String,
         program: String,
+        #[serde(default)]
         args: Vec<String>,
+        /// Set for the new session's process, on top of the daemon's own environment.
+        #[serde(default)]
+        env: Vec<(String, String)>,
         cols: u16,
         rows: u16,
     },
@@ -28,7 +40,13 @@ pub enum Request {
     Kill {
         id: String,
     },
+    /// Asks which process group is in the foreground of the session's terminal (Unix).
+    Foreground {
+        id: String,
+    },
     List,
+    /// Ends every session and leaves, so the program the daemon runs can be replaced.
+    Shutdown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,6 +54,8 @@ pub enum Request {
 pub enum Message {
     Created {
         id: String,
+        /// The shell's process id, when the platform reports one.
+        pid: Option<u32>,
     },
     Ok,
     Error {
@@ -49,6 +69,8 @@ pub enum Message {
         id: String,
         data: String,
         last_seq: u32,
+        /// The shell's process id, when the platform reports one.
+        pid: Option<u32>,
     },
     Output {
         id: String,
@@ -58,5 +80,9 @@ pub enum Message {
     Exit {
         id: String,
         code: Option<i32>,
+    },
+    Foreground {
+        id: String,
+        group: Option<i32>,
     },
 }

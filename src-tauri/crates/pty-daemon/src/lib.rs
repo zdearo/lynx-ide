@@ -1,10 +1,11 @@
 //! The daemon that owns the PTYs. The app asks it for sessions over a local socket and can
 //! disconnect and come back: the daemon keeps each session's process and its recent output.
 //!
-//! This is the first slice: create, write, resize, attach (snapshot, then live output), kill, and
-//! leaving on its own once no session runs. Not here yet: binary frames, batching, backpressure,
-//! a token, the escape-boundary tracker, history on disk.
+//! Not here yet: a token, history on disk, reattaching sessions after a daemon restart.
 
 pub mod client;
 pub mod message;
+#[cfg(unix)]
+pub mod process_group;
 pub mod server;
+pub mod utf8_stream_decoder;

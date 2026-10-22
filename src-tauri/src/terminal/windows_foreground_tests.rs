@@ -41,6 +41,8 @@ fn an_agent_typed_into_cmd_is_followed_until_it_is_interrupted() {
         Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
         HookHub::disabled(),
         SessionOwners::default(),
+        None,
+        None,
     );
     let dir = tempfile::tempdir().expect("temp dir");
     let cli = fake_cli(dir.path());

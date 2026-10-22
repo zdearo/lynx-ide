@@ -124,6 +124,8 @@ struct Monitor<'a> {
     /// Output arrived since the last look, and an agent may have changed what it runs.
     look_pending: bool,
     last_look: Option<Instant>,
+    /// The conversation the agent last named, so the same one is not reported twice.
+    resume: Option<String>,
 }
 
 impl<'a> Monitor<'a> {
@@ -139,6 +141,7 @@ impl<'a> Monitor<'a> {
             launch_until: None,
             look_pending: false,
             last_look: None,
+            resume: None,
         }
     }
 
@@ -182,12 +185,13 @@ impl<'a> Monitor<'a> {
             Some(current) if current != harness => return,
             // A session that ends before it started had no agent to end.
             None if event == HookEvent::Ended => return,
-            // Grok also runs the hooks of Claude Code, so a Claude hook can arrive from a Grok job.
+            // A job can run another agent's hooks, so a Claude hook can arrive from a job that is not Claude.
             // The job in the foreground says whose the hook is.
             None if self.foreground_runs_another(harness) => return,
             None => self.become_agent(harness),
             Some(_) => {}
         }
+        self.remember_resume(harness, payload);
         if event == HookEvent::Ended {
             self.become_shell();
             return;
@@ -195,6 +199,17 @@ impl<'a> Monitor<'a> {
         if let Some(next) = self.activity.on_hook(event) {
             self.set_status(next);
         }
+    }
+
+    fn remember_resume(&mut self, harness: HarnessId, payload: &Value) {
+        let Some(resume) = hook_events::resume_id_of(harness, payload) else {
+            return;
+        };
+        if self.resume.as_deref() == Some(resume.as_str()) {
+            return;
+        }
+        self.sink.agent_resume(self.id, harness, &resume);
+        self.resume = Some(resume);
     }
 
     fn on_seen(&mut self) {
@@ -636,63 +651,6 @@ mod tests {
         assert_eq!(
             link.slot.lock().expect("lock").harness,
             Some(HarnessId::Claude)
-        );
-    }
-
-    #[test]
-    fn a_hook_alone_does_not_end_an_agent_before_its_job_is_seen() {
-        let sink = Arc::new(StateSink::default());
-        let link = start(
-            "s1",
-            Some(HarnessId::Antigravity),
-            Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
-        )
-        .expect("start");
-        link.input
-            .send(AgentInput::Hook {
-                harness: HarnessId::Antigravity,
-                payload: serde_json::json!({ "hook_event_name": "PreInvocation" }),
-            })
-            .expect("send");
-        // The hook's job is not what the foreground shows, so nothing may end the agent.
-        link.input
-            .send(AgentInput::Attach(Scripted::new(vec![Some(
-                Foreground::Shell,
-            )])))
-            .expect("send");
-        link.input
-            .send(AgentInput::Output("done\n".to_owned()))
-            .expect("send");
-
-        std::thread::sleep(Duration::from_millis(600));
-        assert_eq!(
-            link.slot.lock().expect("lock").harness,
-            Some(HarnessId::Antigravity)
-        );
-    }
-    #[test]
-    fn a_hook_from_the_harness_next_door_does_not_make_a_grok_job_a_claude_session() {
-        let sink = Arc::new(StateSink::default());
-        let link =
-            start("s1", None, Arc::clone(&sink) as Arc<dyn TerminalEventSink>).expect("start");
-        link.input
-            .send(AgentInput::Attach(Scripted::new(vec![job(&["grok"])])))
-            .expect("send");
-
-        // Grok relays Claude Code's hook while it runs in this shell.
-        link.input
-            .send(hook(HarnessId::Claude, "SessionStart"))
-            .expect("send");
-        std::thread::sleep(Duration::from_millis(150));
-        assert_eq!(link.slot.lock().expect("lock").harness, None);
-
-        // Its own hook names it.
-        link.input
-            .send(hook(HarnessId::Grok, "SessionStart"))
-            .expect("send");
-        assert_eq!(
-            wait_for_changes(&sink, 1),
-            vec![(Some(HarnessId::Grok), Some(AgentStatus::Idle))]
         );
     }
 }

@@ -12,14 +12,6 @@ pub enum HarnessId {
     Claude,
     Codex,
     Opencode,
-    Antigravity,
-    Cursor,
-    Copilot,
-    Grok,
-    Droid,
-    Kiro,
-    Qwen,
-    Pi,
     Omp,
 }
 
@@ -46,46 +38,6 @@ const HARNESSES: &[HarnessSpec] = &[
         id: HarnessId::Opencode,
         name: "opencode",
         executable: "opencode",
-    },
-    HarnessSpec {
-        id: HarnessId::Antigravity,
-        name: "antigravity",
-        executable: "agy",
-    },
-    HarnessSpec {
-        id: HarnessId::Cursor,
-        name: "cursor",
-        executable: "cursor-agent",
-    },
-    HarnessSpec {
-        id: HarnessId::Copilot,
-        name: "copilot",
-        executable: "copilot",
-    },
-    HarnessSpec {
-        id: HarnessId::Grok,
-        name: "grok",
-        executable: "grok",
-    },
-    HarnessSpec {
-        id: HarnessId::Droid,
-        name: "droid",
-        executable: "droid",
-    },
-    HarnessSpec {
-        id: HarnessId::Kiro,
-        name: "kiro",
-        executable: "kiro-cli",
-    },
-    HarnessSpec {
-        id: HarnessId::Qwen,
-        name: "qwen",
-        executable: "qwen",
-    },
-    HarnessSpec {
-        id: HarnessId::Pi,
-        name: "pi",
-        executable: "pi",
     },
     HarnessSpec {
         id: HarnessId::Omp,
@@ -161,6 +113,16 @@ pub fn harness_name(harness: HarnessId) -> &'static str {
         .iter()
         .find(|spec| spec.id == harness)
         .map_or("", |spec| spec.name)
+}
+
+/// The arguments that resume a conversation of this harness by the id the agent gave it.
+pub fn resume_arguments(harness: HarnessId, resume_id: &str) -> Vec<String> {
+    let flag = match harness {
+        HarnessId::Claude | HarnessId::Omp => "--resume",
+        HarnessId::Opencode => "--session",
+        HarnessId::Codex => return vec!["resume".to_owned(), resume_id.to_owned()],
+    };
+    vec![flag.to_owned(), resume_id.to_owned()]
 }
 
 /// The harness with this name, as a relay or a hook command names it.
@@ -259,6 +221,19 @@ mod tests {
         assert_eq!(
             harness_for_command(r"C:\Tools\opencode.exe --help"),
             Some(HarnessId::Opencode)
+        );
+    }
+
+    #[test]
+    fn each_harness_resumes_a_conversation_by_its_own_arguments() {
+        assert_eq!(
+            resume_arguments(HarnessId::Claude, "abc"),
+            ["--resume", "abc"]
+        );
+        assert_eq!(resume_arguments(HarnessId::Codex, "abc"), ["resume", "abc"]);
+        assert_eq!(
+            resume_arguments(HarnessId::Opencode, "abc"),
+            ["--session", "abc"]
         );
     }
 }

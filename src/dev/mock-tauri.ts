@@ -406,6 +406,7 @@ const DEFAULT_CONFIG: AppConfig = {
     shell: null,
     scrollback: 5000,
     copyOnSelect: false,
+    ptyDaemon: false,
     bell: "visual",
     macOptionIsMeta: false,
     closeOnExit: false,
@@ -593,14 +594,6 @@ export function installMockTauri(scenario: string): void {
     claude: "claude",
     codex: "codex",
     opencode: "opencode",
-    agy: "antigravity",
-    "cursor-agent": "cursor",
-    copilot: "copilot",
-    grok: "grok",
-    droid: "droid",
-    "kiro-cli": "kiro",
-    qwen: "qwen",
-    pi: "pi",
     omp: "omp",
   };
   // Which agent a typed command starts, as the backend decides it.
@@ -769,30 +762,11 @@ export function installMockTauri(scenario: string): void {
     },
   };
   // Every agent Lynx lists, and the ones whose CLI this mock machine has on its PATH.
-  const catalogHarnesses = [
-    "claude",
-    "codex",
-    "opencode",
-    "antigravity",
-    "cursor",
-    "copilot",
-    "grok",
-    "droid",
-    "kiro",
-    "qwen",
-    "pi",
-    "omp",
-  ] as const;
+  const catalogHarnesses = ["claude", "codex", "opencode", "omp"] as const;
   // What the last "Fix with AI" wrote and typed, for the e2e to read.
   let lastAgentPrompt = "";
   let lastTerminalCommand: string | null = null;
-  const onThisMachine = new Set([
-    "claude",
-    "codex",
-    "antigravity",
-    "grok",
-    "omp",
-  ]);
+  const onThisMachine = new Set(["claude", "codex", "omp"]);
   function hookStatusOf(harness: string) {
     const file = hookFiles[harness] ?? hookFiles.claude;
     return {
@@ -1595,6 +1569,12 @@ export function installMockTauri(scenario: string): void {
         }
         case "list_terminals":
           return structuredClone(sessions);
+        case "pty_daemon_status":
+          return { enabled: false, state: "idle", sessions: 0 };
+        case "list_resumable_sessions":
+          return [];
+        case "prepare_quit":
+          return null;
         case "mark_agent_seen":
           return null;
         case "agent_catalog":

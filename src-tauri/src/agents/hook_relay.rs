@@ -9,7 +9,6 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::harness::harness_named;
-use super::hook_decision;
 use super::hook_events::EVENT_KEY;
 use super::hook_hub::{HOOK_PATH, SESSION_ENV, TOKEN_HEADER};
 use super::hub_address::{self, HubAddress};
@@ -32,18 +31,13 @@ pub fn run_if_requested(arguments: &[String]) -> Option<i32> {
         .read_to_string(&mut raw);
     let name = arguments.get(2).map_or("", String::as_str);
     let event = arguments.get(3).map(String::as_str);
-    let answer = match (harness_named(name), relay_payload(&raw, event)) {
-        (Some(harness), Some(payload)) => {
-            let answer = hook_decision::answer(harness, &payload);
-            if let Some(target) = Target::from_env() {
-                forward(&target, name, payload);
-            }
-            answer
-        }
-        _ => "{}",
-    };
-    // The harness reads stdout as the hook's answer. Lynx never blocks anything, so it is mostly `{}`.
-    println!("{answer}");
+    if let (Some(_), Some(payload)) = (harness_named(name), relay_payload(&raw, event))
+        && let Some(target) = Target::from_env()
+    {
+        forward(&target, name, payload);
+    }
+    // The harness reads stdout as the hook's answer. Lynx only watches, so it always carries on.
+    println!("{{}}");
     Some(0)
 }
 

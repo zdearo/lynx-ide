@@ -46,6 +46,9 @@ const FolderDialog = lazy(() =>
 const MoveDialog = lazy(() =>
   import("@/workspace/MoveDialog").then((m) => ({ default: m.MoveDialog })),
 );
+const QuitDialog = lazy(() =>
+  import("@/terminal/QuitDialog").then((m) => ({ default: m.QuitDialog })),
+);
 const DeleteFolderDialog = lazy(() =>
   import("@/workspace/DeleteFolderDialog").then((m) => ({
     default: m.DeleteFolderDialog,
@@ -122,6 +125,7 @@ export function DialogHost() {
   const customCommandFor = useDialogStore((state) => state.customCommandFor);
   const folderDialog = useDialogStore((state) => state.folderDialog);
   const moveTarget = useDialogStore((state) => state.moveTarget);
+  const quitSessions = useDialogStore((state) => state.quitSessions);
   const deleteFolderTarget = useDialogStore(
     (state) => state.deleteFolderTarget,
   );
@@ -147,6 +151,7 @@ export function DialogHost() {
       {folderDialog !== null && <FolderDialog />}
       {moveTarget !== null && <MoveDialog />}
       {deleteFolderTarget !== null && <DeleteFolderDialog />}
+      {quitSessions !== null && <QuitDialog />}
       {unlinkFolderTarget !== null && <UnlinkFolderDialog />}
       {newWorktreeDraft !== null && <NewWorktreeDialog />}
       {removeWorktreeTarget !== null && <RemoveWorktreeDialog />}

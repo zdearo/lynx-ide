@@ -5,6 +5,7 @@
   "windows": ["main", "browser"],
   "permissions": [
     "core:default",
+    "core:window:allow-destroy",
     "dialog:allow-open",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",

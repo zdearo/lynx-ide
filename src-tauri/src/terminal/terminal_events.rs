@@ -42,6 +42,8 @@ pub trait TerminalEventSink: Send + Sync + 'static {
     fn exit(&self, id: &str, exit_code: Option<i32>);
     /// Most sinks do not show agent state, so the default ignores it.
     fn agent_state(&self, _id: &str, _harness: Option<HarnessId>, _status: Option<AgentStatus>) {}
+    /// The agent named its conversation, which is what resumes it later.
+    fn agent_resume(&self, _id: &str, _harness: HarnessId, _resume_id: &str) {}
 }
 
 pub struct TauriEventSink {

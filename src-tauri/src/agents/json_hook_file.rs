@@ -1,17 +1,15 @@
 //! Hook entries in a JSON settings file, the shape most agents share. Lynx owns the entries whose
 //! command carries its marker; every other entry and every other key stays as it is.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
 use super::hook_install::{
-    HookInstallError, HookInstallState, HookInstallStatus, invalid_config, io_error, read_optional,
-    relay_command, write_atomic,
+    HookInstallError, invalid_config, io_error, read_optional, write_atomic,
 };
 
-/// One event Lynx listens to. A grouped event nests its handler in a group with an optional
-/// matcher; a flat event lists the handler itself, with the matcher beside it when there is one.
+/// One event Lynx listens to. Its handler sits in a group with an optional matcher.
 #[derive(Debug, Clone, Copy)]
 pub struct EventSpec {
     pub name: &'static str,
@@ -27,37 +25,15 @@ impl EventSpec {
             matcher,
         }
     }
-
-    pub const fn flat(name: &'static str, matcher: Option<&'static str>) -> Self {
-        Self {
-            name,
-            grouped: false,
-            matcher,
-        }
-    }
 }
 
 /// The file layout of one agent: where its events live and what a handler looks like.
 #[derive(Debug, Clone, Copy)]
 pub struct JsonHookFormat {
-    /// The key holding the events: `hooks` for most agents, a bundle name for Antigravity.
+    /// The key holding the events: `hooks`.
     pub root_key: &'static str,
-    /// A top-level version Lynx sets when the file has none, for agents that require one.
-    pub version: Option<u64>,
-    /// Copilot is told its event by an argument, so each event runs its own command.
-    pub event_argument: bool,
     /// The handler object for one command.
     pub handler: fn(&str) -> Value,
-}
-
-/// The command one event runs: the base command, with the event as an argument where the agent
-/// needs it.
-fn command_for(format: &JsonHookFormat, base: &str, event: &str) -> String {
-    if format.event_argument {
-        format!("{base} {event}")
-    } else {
-        base.to_owned()
-    }
 }
 
 /// The exact entry Lynx writes for one event.
@@ -184,15 +160,12 @@ pub fn apply(
     let Some(root) = settings.as_object_mut() else {
         return;
     };
-    if let Some(version) = format.version {
-        root.entry("version").or_insert(json!(version));
-    }
     let bundle = root.entry(format.root_key).or_insert_with(|| json!({}));
     let Some(bundle) = bundle.as_object_mut() else {
         return;
     };
     for spec in events {
-        let base = command_for(format, command, spec.name);
+        let base = command.to_owned();
         let list = bundle.entry(spec.name).or_insert_with(|| json!([]));
         if let Some(list) = list.as_array_mut() {
             list.push(entry(format, spec, &base));
@@ -210,7 +183,7 @@ pub fn missing_events(
     events
         .iter()
         .filter(|spec| {
-            let base = command_for(format, command, spec.name);
+            let base = command.to_owned();
             let expected = entry(format, spec, &base);
             let list = settings
                 .get(format.root_key)
@@ -243,106 +216,6 @@ pub fn commands_of<'a>(settings: &'a Value, format: &JsonHookFormat, event: &str
         .collect()
 }
 
-/// A settings file that Lynx writes entries into, for one harness.
-#[derive(Clone)]
-pub struct JsonHookTarget {
-    /// The harness name the marker is built from.
-    pub name: &'static str,
-    pub path: PathBuf,
-    pub format: JsonHookFormat,
-    pub events: &'static [EventSpec],
-    pub command: Option<String>,
-}
-
-impl JsonHookTarget {
-    pub fn new(
-        name: &'static str,
-        path: PathBuf,
-        format: JsonHookFormat,
-        events: &'static [EventSpec],
-        executable: Option<&Path>,
-    ) -> Self {
-        Self {
-            name,
-            path,
-            format,
-            events,
-            command: executable.map(|executable| relay_command(executable, name)),
-        }
-    }
-
-    fn marker(&self) -> String {
-        format!(" --agent-hook {}", self.name)
-    }
-
-    pub fn status(&self) -> HookInstallStatus {
-        match read_settings(&self.path, &self.format) {
-            Ok(settings) => self.describe(&settings),
-            Err(error) => self.status_with(HookInstallState::Error, Some(error.to_string())),
-        }
-    }
-
-    /// Adds Lynx's entries, replacing any it wrote before.
-    pub fn install(&self) -> Result<HookInstallStatus, HookInstallError> {
-        let command = self
-            .command
-            .as_deref()
-            .ok_or(HookInstallError::NoExecutable)?;
-        let mut settings = read_settings(&self.path, &self.format)?;
-        apply(
-            &mut settings,
-            &self.format,
-            &self.marker(),
-            command,
-            self.events,
-        );
-        write_settings(&self.path, &settings)?;
-        Ok(self.status())
-    }
-
-    /// Removes Lynx's entries and leaves the rest of the file as it was.
-    pub fn remove(&self) -> Result<HookInstallStatus, HookInstallError> {
-        let mut settings = read_settings(&self.path, &self.format)?;
-        if strip(&mut settings, &self.format, &self.marker()) {
-            write_settings(&self.path, &settings)?;
-        }
-        Ok(self.status())
-    }
-
-    fn describe(&self, settings: &Value) -> HookInstallStatus {
-        let Some(command) = self.command.as_deref() else {
-            return self.status_with(
-                HookInstallState::Error,
-                Some(HookInstallError::NoExecutable.to_string()),
-            );
-        };
-        let missing = missing_events(settings, &self.format, command, self.events);
-        let state = if missing.is_empty() {
-            HookInstallState::Installed
-        } else if missing.len() == self.events.len() {
-            HookInstallState::NotInstalled
-        } else {
-            HookInstallState::Partial
-        };
-        let detail = (state == HookInstallState::Partial)
-            .then(|| format!("Missing hooks for: {}", missing.join(", ")));
-        self.status_with(state, detail)
-    }
-
-    fn status_with(&self, state: HookInstallState, detail: Option<String>) -> HookInstallStatus {
-        HookInstallStatus {
-            state,
-            config_path: self.path.to_string_lossy().into_owned(),
-            events: self
-                .events
-                .iter()
-                .map(|spec| spec.name.to_owned())
-                .collect(),
-            detail,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,8 +230,6 @@ mod tests {
     fn grouped_format() -> JsonHookFormat {
         JsonHookFormat {
             root_key: "hooks",
-            version: None,
-            event_argument: false,
             handler: claude_handler,
         }
     }
@@ -374,52 +245,6 @@ mod tests {
         apply(&mut settings, &grouped_format(), MARKER, COMMAND, GROUPED);
         assert_eq!(settings["hooks"]["Stop"][0]["hooks"][0]["command"], COMMAND);
         assert_eq!(settings["hooks"]["PreToolUse"][0]["matcher"], "*");
-    }
-
-    #[test]
-    fn flat_events_list_the_handler_with_its_matcher_beside_it() {
-        let format = JsonHookFormat {
-            root_key: "hooks",
-            version: None,
-            event_argument: false,
-            handler: |command| json!({ "command": command, "timeout_ms": 5000 }),
-        };
-        const FLAT: &[EventSpec] = &[EventSpec::flat("preToolUse", Some("*"))];
-        let mut settings = json!({});
-        apply(&mut settings, &format, MARKER, COMMAND, FLAT);
-        let handler = &settings["hooks"]["preToolUse"][0];
-        assert_eq!(handler["matcher"], "*");
-        assert_eq!(handler["timeout_ms"], 5000);
-    }
-
-    #[test]
-    fn a_version_is_set_only_when_the_file_has_none() {
-        let format = JsonHookFormat {
-            version: Some(1),
-            ..grouped_format()
-        };
-        let mut settings = json!({});
-        apply(&mut settings, &format, MARKER, COMMAND, GROUPED);
-        assert_eq!(settings["version"], 1);
-        let mut kept = json!({ "version": 7 });
-        apply(&mut kept, &format, MARKER, COMMAND, GROUPED);
-        assert_eq!(kept["version"], 7);
-    }
-
-    #[test]
-    fn copilot_style_commands_carry_their_event_as_an_argument() {
-        let format = JsonHookFormat {
-            event_argument: true,
-            ..grouped_format()
-        };
-        const FLAT: &[EventSpec] = &[EventSpec::flat("Stop", None)];
-        let mut settings = json!({});
-        apply(&mut settings, &format, MARKER, COMMAND, FLAT);
-        assert_eq!(
-            commands_of(&settings, &format, "Stop"),
-            vec![format!("{COMMAND} Stop").as_str()]
-        );
-        assert!(missing_events(&settings, &format, COMMAND, FLAT).is_empty());
     }
 
     #[test]

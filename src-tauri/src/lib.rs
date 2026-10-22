@@ -18,6 +18,7 @@ mod usage;
 mod watching;
 mod workspace;
 
+use lynx_pty_daemon::server::daemon_dir;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -48,6 +49,7 @@ pub fn run() {
     let arguments: Vec<String> = std::env::args().collect();
     if let Some(code) = agents::hook_relay::run_if_requested(&arguments)
         .or_else(|| agents::mcp_server::run_if_requested(&arguments))
+        .or_else(|| terminal::daemon_host::run_if_requested(&arguments))
     {
         std::process::exit(code);
     }
@@ -146,7 +148,14 @@ pub fn run() {
             )));
 
             let shell_config = Arc::clone(&config);
-            app.manage(TerminalManager::new(
+            let daemon_config = Arc::clone(&config);
+            let daemon = terminal::daemon_host::DaemonHost::new(
+                daemon_dir(&lynx_home(app.path().home_dir()?)),
+                executable.clone(),
+                Arc::new(move || daemon_config.config().terminal.pty_daemon),
+            );
+            let terminal_database = Arc::new(AppDatabase::open(&database_file)?);
+            let terminals = TerminalManager::new(
                 Arc::new(move || {
                     terminal::Shell::from_config(shell_config.config().terminal.shell.as_deref())
                 }),
@@ -156,15 +165,19 @@ pub fn run() {
                 )),
                 hook_hub,
                 owners,
-            ));
+                Some(daemon),
+                Some(terminal_database),
+            );
+            terminals.restore();
+            app.manage(terminals);
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // Without this, shells and agents would outlive the window.
+            // Local shells end with the app. The daemon's sessions end too, unless the user kept them.
             if let RunEvent::Exit = event {
-                app.state::<TerminalManager>().close_all();
+                app.state::<TerminalManager>().quit();
                 app.state::<Arc<browser::BrowserService>>().shutdown();
             }
         });

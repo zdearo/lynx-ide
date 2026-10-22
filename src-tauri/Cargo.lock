@@ -2689,6 +2689,7 @@ dependencies = [
 name = "lynx-ide"
 version = "0.1.1"
 dependencies = [
+ "anyhow",
  "base64 0.22.1",
  "chrono",
  "flate2",
@@ -2697,6 +2698,7 @@ dependencies = [
  "ignore",
  "image",
  "lynx-browser-protocol",
+ "lynx-pty-daemon",
  "nix 0.31.3",
  "notify",
  "open",
@@ -2731,11 +2733,13 @@ name = "lynx-pty-daemon"
 version = "0.1.0"
 dependencies = [
  "lynx-browser-protocol",
+ "nix 0.31.3",
  "portable-pty",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]

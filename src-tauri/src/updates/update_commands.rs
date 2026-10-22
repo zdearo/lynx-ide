@@ -1,10 +1,11 @@
 use std::process::Command;
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::app_image_environment::{clean_command, launch_executable};
 use crate::error::{AppError, IpcError};
+use crate::terminal::terminal_manager::TerminalManager;
 
 use super::update_service::UpdateService;
 use super::update_state::UpdateStatus;
@@ -41,6 +42,10 @@ pub async fn install_update(
 #[tauri::command]
 #[specta::specta]
 pub fn restart_to_update(app: AppHandle) {
+    // The new version must not find this one's sessions, so they end before it starts.
+    let terminals = app.state::<TerminalManager>();
+    terminals.set_keep_on_exit(false);
+    terminals.quit();
     // An AppImage runs from a mount that is gone once the app exits, so the new version starts from
     // the file itself, with the AppImage's own variables left out.
     if let Some(executable) = launch_executable(std::env::current_exe().ok()) {

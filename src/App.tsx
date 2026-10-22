@@ -39,6 +39,7 @@ import {
   NavigationSidebar,
 } from "@/navigation/NavigationSidebar";
 import { useNavigationStore } from "@/navigation/navigation-store";
+import { useQuitGuard } from "@/quit-guard";
 
 /** Below this width the sidebar becomes a drawer so the terminal keeps the room. */
 const WIDE_LAYOUT_QUERY = "(min-width: 900px)";
@@ -78,6 +79,7 @@ function App() {
     else panel.show("files", canDockRight);
   }, [canDockRight]);
   useAppShortcuts(toggleSidebar, toggleFilesPanel);
+  useQuitGuard();
 
   useEffect(() => {
     Promise.all([

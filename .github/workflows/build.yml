@@ -3,7 +3,8 @@ name: Build
 # `verify` checks the frontend and the backend and runs the Rust tests: the terminal code has
 # Windows-only paths that nothing else here compiles. It runs on every pull request, which is where
 # changes reach main (main accepts no direct pushes), so a push to main does not repeat it. `package`
-# builds the installers, signed for the updater, on a push to main, a tag or a manual run.
+# builds the installers, signed for the updater, only when the run releases the app: a version bump
+# on main, a tag or a manual run (see `changes`).
 # `publish` releases the update when the version in the config is newer than the stable channel: a
 # release is a version bump merged to main. A push that changes the browser engine rebuilds and
 # publishes it first (`engine`), and `publish` refuses a release whose engine does not speak the
@@ -77,7 +78,8 @@ jobs:
 
   package:
     name: Package ${{ matrix.name }}
-    if: github.event_name != 'pull_request'
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -145,13 +147,15 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
-  # Finds out whether this push changed what the browser engine is made of. Only a push to main can:
-  # tags and manual runs release the app and leave the engine as it is.
+  # Finds out what this run has to do: whether it releases the app, and whether the push changed what
+  # the browser engine is made of. Only a push to main can change the engine; tags and manual runs
+  # release the app and leave the engine as it is.
   changes:
     name: Find what changed
     runs-on: ubuntu-22.04
     outputs:
       engine: ${{ steps.paths.outputs.engine }}
+      release: ${{ steps.release.outputs.release }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -179,6 +183,30 @@ jobs:
           fi
           echo "engine=$engine" >> "$GITHUB_OUTPUT"
           echo "the browser engine is rebuilt: $engine"
+
+      - name: Check whether this run releases the app
+        id: release
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          # A release is a tag, a manual run, or a push to main that bumps the version in these files.
+          release=false
+          case "$EVENT:$REF" in
+            workflow_dispatch:* | push:refs/tags/v*)
+              release=true ;;
+            push:refs/heads/main)
+              if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                release=true
+              elif git diff "$BEFORE" "$SHA" -- package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml \
+                  | grep -Eq '^[-+][[:space:]]*("version"|version[[:space:]]*=)'; then
+                release=true
+              fi ;;
+          esac
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "this run releases the app: $release"
 
   # Builds and publishes the browser engine before the app, when its inputs changed. So the app
   # released after it finds an engine that speaks its protocol.

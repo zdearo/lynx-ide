@@ -1,10 +1,17 @@
 import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
 import { LockGlyph18 } from "@/components/icons/LockGlyph18";
 import { SquareTerminalGlyph18 } from "@/components/icons/SquareTerminalGlyph18";
+import { TrashGlyph18 } from "@/components/icons/TrashGlyph18";
 import { TriangleWarningGlyph18 } from "@/components/icons/TriangleWarningGlyph18";
 
 import type { WorktreeInfo } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +34,16 @@ interface WorktreeRowProps {
   onSelect: () => void;
 }
 
+/** Same content in the three-dot menu and in the right-click menu. */
+function RemoveWorktreeItem() {
+  return (
+    <>
+      <TrashGlyph18 aria-hidden />
+      {copy.worktree.remove}
+    </>
+  );
+}
+
 /**
  * The worktree's own line. It draws no background, selected or hovered: the
  * surrounding `WorktreeGroup` paints one surface for the line and its agents.
@@ -41,7 +58,7 @@ export function WorktreeRow({
   const askRemoveWorktree = useDialogStore((state) => state.askRemoveWorktree);
   const label = worktreeLabel(worktree);
 
-  return (
+  const row = (
     <div className="group/row relative">
       <button
         type="button"
@@ -116,12 +133,29 @@ export function WorktreeRow({
                 variant="destructive"
                 onSelect={() => askRemoveWorktree({ repoId, worktree })}
               >
-                {copy.worktree.remove}
+                <RemoveWorktreeItem />
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
       </div>
     </div>
+  );
+
+  // The main worktree cannot be removed, so it has no actions of its own.
+  if (worktree.isMain) return row;
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent className="min-w-44">
+        <ContextMenuItem
+          variant="destructive"
+          onSelect={() => askRemoveWorktree({ repoId, worktree })}
+        >
+          <RemoveWorktreeItem />
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

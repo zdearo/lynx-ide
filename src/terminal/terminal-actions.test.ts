@@ -14,6 +14,7 @@ vi.mock("@/bindings", () => ({
     createTerminal: vi.fn(),
     getConfig: vi.fn(),
     updateConfig: vi.fn(),
+    agentLaunchLine: vi.fn(),
   },
 }));
 
@@ -70,28 +71,26 @@ async function startedWith(id: string): Promise<string | null> {
 describe("startPreset", () => {
   beforeEach(() => {
     api.createTerminal.mockReset();
+    api.agentLaunchLine.mockReset();
   });
 
-  it("starts an agent in YOLO mode with its flag and its arguments", async () => {
+  it("starts an agent with the line the backend builds for its settings", async () => {
     withAgents({
       launchMode: "yolo",
       launchArguments: { claude: "--model opus" },
     });
+    api.agentLaunchLine.mockResolvedValue(
+      "claude --dangerously-skip-permissions --model opus",
+    );
+
     expect(await startedWith("claude")).toBe(
       "claude --dangerously-skip-permissions --model opus",
     );
+    expect(api.agentLaunchLine).toHaveBeenCalledWith("claude");
   });
 
-  it("starts an agent in manual mode with only its arguments", async () => {
-    withAgents({
-      launchMode: "manual",
-      launchArguments: { claude: "--model opus" },
-    });
-    expect(await startedWith("claude")).toBe("claude --model opus");
-  });
-
-  it("starts a plain shell with no command at all", async () => {
-    withAgents({ launchMode: "yolo", launchArguments: {} });
+  it("starts a plain shell with no command, without asking the backend", async () => {
     expect(await startedWith("shell")).toBeNull();
+    expect(api.agentLaunchLine).not.toHaveBeenCalled();
   });
 });

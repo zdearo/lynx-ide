@@ -8,6 +8,7 @@ use crate::agents::harness::HarnessId;
 use crate::persistence::AppDatabase;
 
 use super::terminal_events::TerminalEventSink;
+use super::terminal_session::TerminalInfo;
 
 pub struct SessionRecordSink {
     inner: Arc<dyn TerminalEventSink>,
@@ -43,5 +44,9 @@ impl TerminalEventSink for SessionRecordSink {
     fn agent_resume(&self, id: &str, harness: HarnessId, resume_id: &str) {
         let _ = self.database.set_terminal_resume_id(id, resume_id);
         self.inner.agent_resume(id, harness, resume_id);
+    }
+
+    fn created(&self, session: &TerminalInfo) {
+        self.inner.created(session);
     }
 }

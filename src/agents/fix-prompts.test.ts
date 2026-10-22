@@ -81,9 +81,7 @@ describe("agentCommand", () => {
   const instruction = promptInstruction("/tmp/lynx-prompts/prompt-1.md");
 
   it("puts the instruction after the command, quoted for the shell", () => {
-    expect(
-      agentCommand(preset("claude"), {}, "manual", instruction, false),
-    ).toBe(
+    expect(agentCommand(preset("claude"), "claude", instruction, false)).toBe(
       "claude 'Read /tmp/lynx-prompts/prompt-1.md and follow the instructions in it.'",
     );
   });
@@ -92,8 +90,7 @@ describe("agentCommand", () => {
     expect(
       agentCommand(
         preset("opencode"),
-        { opencode: "--model x" },
-        "manual",
+        "opencode --model x",
         instruction,
         false,
       ),
@@ -102,9 +99,14 @@ describe("agentCommand", () => {
     );
   });
 
-  it("keeps the YOLO flag the launch mode asks for", () => {
-    expect(agentCommand(preset("claude"), {}, "yolo", "go", false)).toBe(
-      "claude --dangerously-skip-permissions go",
-    );
+  it("adds the instruction after the whole launch line it is given", () => {
+    expect(
+      agentCommand(
+        preset("claude"),
+        "claude --dangerously-skip-permissions",
+        "go",
+        false,
+      ),
+    ).toBe("claude --dangerously-skip-permissions go");
   });
 });

@@ -212,6 +212,10 @@ Decidido em vez de um browser no estilo Orca: o Chromium (CEF) roda num processo
     - [x] **4. Hibernação (manual).** Clique direito na aba, "Sleep terminal": o daemon congela o grupo do programa em primeiro plano (`SIGSTOP`) e deixa o shell rodando, que vê a parada e devolve o terminal a si mesmo; a aba mostra "sleeping". Digitar ou reanexar acorda: com controle de tarefas no shell, o daemon digita `fg` e espera o programa ter o terminal antes de entregar a digitação; sem isso, `SIGCONT`. Encerrar acorda antes, para o SIGHUP chegar. Recusada, com o motivo, enquanto o agente trabalha, enquanto uma ferramenta do browser roda para a sessão, ou fora do daemon. Só Unix: no Windows é recusada. Não feito: a automática, que depende de medir a memória com 8 a 10 agentes
     - [ ] Depois: breaker de crescimento de processos.
 - [ ] Orquestração multi-agente: runs, tarefas com dependências e mensagens
+  - [x] Fatia 0: o backend emite `terminal-created` para toda sessão que inicia (a lista de abas a recebe, sem trocar a aba ativa), e a linha de comando de cada agente é montada no Rust (`agent_launch_line`), com os mesmos casos de `agent-presets.test.ts`
+  - [x] Fatia 1: Run, Task e Dispatch no SQLite (migração 9), serviço com as regras (aprovação, dependências, orçamento: simultâneos, total e agentes permitidos, YOLO só se aprovado), roteador `lynx_*` no hub e as ferramentas `lynx_run_start`, `lynx_task_create`, `lynx_worker_start`, `lynx_worker_read` e `lynx_worker_stop`. A aprovação do orçamento é um comando IPC (`approve_run`), ainda sem tela. Não feito: a tabela de mensagens e `lynx_report`/`lynx_check` (fatia 2), o teto de uso e o tempo máximo do orçamento (fatia 2)
+  - [ ] Fatia 2: `lynx_report`, `lynx_check`, aprovação do orçamento na UI e fallback por status
+  - [ ] Fatia 3: view Orchestration e notificações
 - [ ] CLI própria para o agente controlar o app
 - [ ] Automações agendadas
 - [ ] Execução remota por SSH

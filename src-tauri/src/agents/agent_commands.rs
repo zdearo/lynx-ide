@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::blocking_task::run_blocking;
+use crate::config::config_store::ConfigStore;
 use crate::error::IpcError;
 
 use super::agent_catalog::{AgentEntry, catalog};
 use super::harness::HarnessId;
 use super::hook_install::HookInstallStatus;
 use super::hook_targets::HookTargets;
+use super::launch_line::launch_line;
 
 /// Every supported agent: whether it is on this computer, and whether its hooks are in.
 #[tauri::command]
@@ -57,4 +61,12 @@ pub async fn write_agent_prompt(prompt: String) -> Result<String, IpcError> {
         Ok(path.to_string_lossy().into_owned())
     })
     .await
+}
+
+/// The line that starts an agent, with the launch mode and the arguments Settings hold now.
+#[tauri::command]
+#[specta::specta]
+pub fn agent_launch_line(store: State<'_, Arc<ConfigStore>>, harness: HarnessId) -> String {
+    let agents = store.config().agents;
+    launch_line(harness, agents.launch_mode, &agents.launch_arguments)
 }

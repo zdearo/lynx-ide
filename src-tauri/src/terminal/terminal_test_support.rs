@@ -11,6 +11,7 @@ use crate::agents::harness::HarnessId;
 use crate::workspace::linked_folder_sync::without_verbatim_prefix;
 
 use super::terminal_events::TerminalEventSink;
+use super::terminal_session::TerminalInfo;
 
 pub(super) const WAIT: Duration = Duration::from_secs(10);
 
@@ -20,6 +21,8 @@ pub(super) struct Events {
     pub(super) exits: Vec<(String, Option<i32>)>,
     /// Agent state reports, in order: session, harness and status.
     pub(super) states: Vec<(String, Option<HarnessId>, Option<AgentStatus>)>,
+    /// Sessions started, in order.
+    pub(super) created: Vec<String>,
 }
 
 #[derive(Default)]
@@ -53,6 +56,15 @@ impl TerminalEventSink for RecordingSink {
             .expect("lock")
             .states
             .push((id.to_owned(), harness, status));
+        self.changed.notify_all();
+    }
+
+    fn created(&self, session: &TerminalInfo) {
+        self.events
+            .lock()
+            .expect("lock")
+            .created
+            .push(session.id.clone());
         self.changed.notify_all();
     }
 }

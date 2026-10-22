@@ -169,6 +169,7 @@ impl TerminalManager {
 
         let info = session.info();
         self.sessions().insert(info.id.clone(), Arc::new(session));
+        self.inner.sink.created(&info);
         Ok(info)
     }
 
@@ -428,6 +429,11 @@ impl TerminalManager {
         let sessions = self.inner.daemon.as_ref()?.usage()?;
         let kib: u64 = sessions.iter().map(|session| session.memory_kib).sum();
         Some(u32::try_from(kib / 1024).unwrap_or(u32::MAX))
+    }
+
+    /// One session as the screen sees it: whether it runs, and its agent status.
+    pub fn info(&self, id: &str) -> Result<TerminalInfo, TerminalError> {
+        Ok(self.session(id)?.info())
     }
 
     pub fn list(&self) -> Vec<TerminalInfo> {

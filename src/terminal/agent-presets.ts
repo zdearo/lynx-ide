@@ -63,25 +63,6 @@ export const TERMINAL_PRESETS: readonly TerminalPreset[] = [
 /** The arguments Settings sets for each agent. An agent is in the map when its arguments are on. */
 export type LaunchArguments = Partial<Record<HarnessId, string>>;
 
-/**
- * The line typed into the shell for a preset: its command, then in YOLO mode the agent's flag, then
- * the arguments set for it. A plain shell has no command, so it has no line.
- */
-export function launchCommand(
-  preset: TerminalPreset,
-  launchArguments: LaunchArguments,
-  mode: LaunchMode,
-): string | null {
-  if (preset.command === null) return null;
-  const parts = [preset.command];
-  if (preset.harness !== null) {
-    if (mode === "yolo" && preset.yolo) parts.push(preset.yolo);
-    const extra = launchArguments[preset.harness]?.trim();
-    if (extra) parts.push(extra);
-  }
-  return parts.join(" ");
-}
-
 /** The flag an agent's YOLO mode adds, or null when none is known for it. */
 export function yoloFlag(harness: HarnessId): string | null {
   return (

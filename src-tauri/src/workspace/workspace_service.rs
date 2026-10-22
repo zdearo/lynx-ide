@@ -254,6 +254,15 @@ impl WorkspaceService {
     }
 
     /// The folder of a worktree this app knows about; anything else is refused.
+    /// The repository a worktree belongs to, when Git has reported that worktree.
+    pub fn repo_id_of_worktree(&self, path: &str) -> Option<String> {
+        let wanted = Path::new(path);
+        self.known_worktrees()
+            .iter()
+            .find(|(_, paths)| paths.contains(wanted))
+            .map(|(repo_id, _)| repo_id.clone())
+    }
+
     pub fn resolve_worktree(&self, path: &str) -> Result<PathBuf, AppError> {
         let wanted = Path::new(path);
         self.known_worktrees()

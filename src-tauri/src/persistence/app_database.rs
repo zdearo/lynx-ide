@@ -355,7 +355,7 @@ impl AppDatabase {
         Ok(())
     }
 
-    fn lock(&self) -> MutexGuard<'_, Connection> {
+    pub(crate) fn lock(&self) -> MutexGuard<'_, Connection> {
         // Each statement is atomic in SQLite, so a poisoned lock holds no half-applied state.
         self.connection
             .lock()

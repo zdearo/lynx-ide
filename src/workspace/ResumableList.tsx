@@ -6,11 +6,10 @@ import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
-import { useConfigStore } from "@/config/config-store";
 import { errorMessage } from "@/lib/error-message";
 import { copy } from "@/ui-copy";
 import { TERMINAL_PRESETS } from "@/terminal/agent-presets";
-import { startTerminal } from "@/terminal/terminal-actions";
+import { launchLine, startTerminal } from "@/terminal/terminal-actions";
 import { useResumableStore } from "@/workspace/resumable-store";
 import { resumeCommand } from "@/workspace/resume-command";
 
@@ -27,19 +26,12 @@ export function ResumableList({ worktreePath }: { worktreePath: string }) {
 
   if (!items?.length) return null;
 
-  const resume = (item: ResumableSession) => {
+  const resume = async (item: ResumableSession) => {
     const preset = TERMINAL_PRESETS.find(
       (candidate) => candidate.harness === item.harness,
     );
-    const agents = useConfigStore.getState().snapshot?.config.agents;
-    const command =
-      preset &&
-      resumeCommand(
-        preset,
-        agents?.launchArguments ?? {},
-        agents?.launchMode ?? "manual",
-        item.resumeArguments,
-      );
+    const launch = preset ? await launchLine(preset) : null;
+    const command = resumeCommand(launch, item.resumeArguments);
     if (!command) {
       toast.error(copy.resumable.failed);
       return;
@@ -76,7 +68,7 @@ export function ResumableList({ worktreePath }: { worktreePath: string }) {
             </span>
             <TooltipIconButton
               label={copy.resumable.resume}
-              onClick={() => resume(item)}
+              onClick={() => void resume(item)}
             >
               <RefreshGlyph18 aria-hidden className="size-3" />
             </TooltipIconButton>

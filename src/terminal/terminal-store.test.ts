@@ -53,6 +53,27 @@ describe("create", () => {
   });
 });
 
+describe("added", () => {
+  it("lists a session the backend started, without making it active", () => {
+    useTerminalStore.getState().added(session("agent", wt));
+
+    const state = useTerminalStore.getState();
+    expect(state.sessions.map((s) => s.id)).toEqual(["agent"]);
+    expect(state.activeByWorktree[wt]).toBeUndefined();
+  });
+
+  it("lists a session once, even when the event and the answer both arrive", async () => {
+    api.createTerminal.mockResolvedValue(ok(session("t1", wt)));
+
+    useTerminalStore.getState().added(session("t1", wt));
+    await useTerminalStore.getState().create(wt, null);
+
+    expect(useTerminalStore.getState().sessions.map((s) => s.id)).toEqual([
+      "t1",
+    ]);
+  });
+});
+
 describe("close", () => {
   beforeEach(() => {
     useTerminalStore.setState({

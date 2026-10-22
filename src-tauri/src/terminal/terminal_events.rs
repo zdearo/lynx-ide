@@ -9,6 +9,8 @@ use crate::agents::activity::AgentStatus;
 use crate::agents::harness::HarnessId;
 use crate::browser::BrowserService;
 
+use super::terminal_session::TerminalInfo;
+
 /// A chunk of terminal output. `seq` counts chunks per session from 1, so a view
 /// that attached from a snapshot can skip chunks the snapshot already contains.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
@@ -35,6 +37,13 @@ pub struct AgentStatusChanged {
     pub status: Option<AgentStatus>,
 }
 
+/// A session was started, by the screen or by the backend, so the screen can list it.
+#[derive(Debug, Clone, Serialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalCreated {
+    pub session: TerminalInfo,
+}
+
 /// Where a session reports output, exit and agent status. A trait so tests can observe sessions
 /// without a running Tauri app.
 pub trait TerminalEventSink: Send + Sync + 'static {
@@ -44,6 +53,8 @@ pub trait TerminalEventSink: Send + Sync + 'static {
     fn agent_state(&self, _id: &str, _harness: Option<HarnessId>, _status: Option<AgentStatus>) {}
     /// The agent named its conversation, which is what resumes it later.
     fn agent_resume(&self, _id: &str, _harness: HarnessId, _resume_id: &str) {}
+    /// A session was started, so the screen can list it whoever asked for it.
+    fn created(&self, _session: &TerminalInfo) {}
 }
 
 pub struct TauriEventSink {
@@ -73,6 +84,13 @@ impl TerminalEventSink for TauriEventSink {
         let _ = TerminalExit {
             id: id.to_owned(),
             exit_code,
+        }
+        .emit(&self.app);
+    }
+
+    fn created(&self, session: &TerminalInfo) {
+        let _ = TerminalCreated {
+            session: session.clone(),
         }
         .emit(&self.app);
     }

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { AppConfig } from "@/bindings";
 import { DEFAULT_TERMINAL_CONFIG } from "@/config/config-store";
 import {
-  launchCommand,
   TERMINAL_PRESETS,
   visiblePresets,
   withLaunchArgument,
@@ -34,12 +33,6 @@ describe("visiblePresets", () => {
   });
 });
 
-function preset(id: string) {
-  const found = TERMINAL_PRESETS.find((candidate) => candidate.id === id);
-  if (!found) throw new Error(`no preset ${id}`);
-  return found;
-}
-
 const config: AppConfig = {
   terminal: DEFAULT_TERMINAL_CONFIG,
   worktrees: { directory: null },
@@ -62,39 +55,6 @@ const config: AppConfig = {
     commitMessageInstructions: null,
   },
 };
-
-describe("launchCommand", () => {
-  it("types the agent's command followed by the arguments turned on for it", () => {
-    expect(
-      launchCommand(preset("claude"), { claude: "--model opus" }, "manual"),
-    ).toBe("claude --model opus");
-  });
-
-  it("is the plain command when the agent's arguments are off", () => {
-    expect(launchCommand(preset("claude"), { codex: "--x" }, "manual")).toBe(
-      "claude",
-    );
-    expect(launchCommand(preset("claude"), {}, "manual")).toBe("claude");
-  });
-
-  it("adds the agent's YOLO flag in YOLO mode, before its arguments", () => {
-    expect(
-      launchCommand(preset("claude"), { claude: "--model opus" }, "yolo"),
-    ).toBe("claude --dangerously-skip-permissions --model opus");
-  });
-
-  it("adds only the YOLO flag when the arguments are on but empty", () => {
-    expect(launchCommand(preset("codex"), { codex: "" }, "yolo")).toBe(
-      "codex --dangerously-bypass-approvals-and-sandbox",
-    );
-  });
-
-  it("gives a plain shell no command, whatever is set", () => {
-    expect(
-      launchCommand(preset("shell"), { claude: "--model opus" }, "yolo"),
-    ).toBeNull();
-  });
-});
 
 describe("yoloFlag", () => {
   it("names the flag of each agent that has one", () => {

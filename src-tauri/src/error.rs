@@ -7,6 +7,7 @@ use crate::agents::hook_install::HookInstallError;
 use crate::config::config_store::ConfigError;
 use crate::files::files_error::FilesError;
 use crate::git::GitError;
+use crate::orchestration::service::OrchestrationError;
 use crate::persistence::DatabaseError;
 use crate::pull_request::github_remote::GitHubRemoteError;
 use crate::pull_request::pull_request_create::CreatePullRequestError;
@@ -53,6 +54,8 @@ pub enum AppError {
     Database(#[from] DatabaseError),
     #[error(transparent)]
     Terminal(#[from] TerminalError),
+    #[error(transparent)]
+    Orchestration(#[from] OrchestrationError),
     #[error(transparent)]
     Config(#[from] ConfigError),
     #[error(transparent)]
@@ -139,6 +142,7 @@ pub enum IpcErrorKind {
     TerminalNotFound,
     TerminalNotRunning,
     Terminal,
+    Orchestration,
     AgentHooks,
     BrowserEngineMissing,
     BrowserEngineOutdated,
@@ -213,6 +217,7 @@ impl From<AppError> for IpcError {
             AppError::Terminal(TerminalError::NotFound(_)) => IpcErrorKind::TerminalNotFound,
             AppError::Terminal(TerminalError::NotRunning) => IpcErrorKind::TerminalNotRunning,
             AppError::Terminal(_) => IpcErrorKind::Terminal,
+            AppError::Orchestration(_) => IpcErrorKind::Orchestration,
             AppError::AgentHooks(_) => IpcErrorKind::AgentHooks,
             AppError::Browser(crate::browser::BrowserError::EngineMissing(_)) => {
                 IpcErrorKind::BrowserEngineMissing

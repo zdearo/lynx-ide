@@ -11,7 +11,7 @@ import { useConfigStore } from "@/config/config-store";
 import { errorMessage } from "@/lib/error-message";
 import { unwrap } from "@/lib/ipc-result";
 import { visiblePresets } from "@/terminal/agent-presets";
-import { startTerminal } from "@/terminal/terminal-actions";
+import { launchLine, startTerminal } from "@/terminal/terminal-actions";
 import { copy } from "@/ui-copy";
 
 /** Whether an agent that takes a first prompt is on, so the fix buttons have someone to hand it to. */
@@ -49,11 +49,9 @@ export async function fixWithAgent(
   }
   try {
     const path = await unwrap(commands.writeAgentPrompt(prompt));
-    const agents = useConfigStore.getState().snapshot?.config.agents;
     const command = agentCommand(
       preset,
-      agents?.launchArguments ?? {},
-      agents?.launchMode ?? "manual",
+      await launchLine(preset),
       promptInstruction(path),
       /Windows/.test(navigator.userAgent),
     );

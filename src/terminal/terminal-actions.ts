@@ -1,27 +1,28 @@
 import { toast } from "sonner";
 
+import { commands } from "@/bindings";
 import { useConfigStore } from "@/config/config-store";
 import { useDialogStore } from "@/dialog-store";
 import { copy } from "@/ui-copy";
 import { errorMessage } from "@/lib/error-message";
-import { launchCommand, type TerminalPreset } from "@/terminal/agent-presets";
+import type { TerminalPreset } from "@/terminal/agent-presets";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
+/** The line that starts a preset's agent, as the backend builds it from Settings. Null for a shell. */
+export async function launchLine(
+  preset: TerminalPreset,
+): Promise<string | null> {
+  if (preset.harness === null) return null;
+  return commands.agentLaunchLine(preset.harness);
+}
+
 /** Starts a preset in a worktree, with the launch arguments Settings sets for its agent. */
-export function startPreset(
+export async function startPreset(
   worktreePath: string,
   preset: TerminalPreset,
 ): Promise<void> {
-  const agents = useConfigStore.getState().snapshot?.config.agents;
-  return startTerminal(
-    worktreePath,
-    launchCommand(
-      preset,
-      agents?.launchArguments ?? {},
-      agents?.launchMode ?? "manual",
-    ),
-  );
+  await startTerminal(worktreePath, await launchLine(preset));
 }
 
 export async function startTerminal(

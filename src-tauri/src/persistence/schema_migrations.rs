@@ -54,6 +54,36 @@ const MIGRATIONS: &[&str] = &[
          exit_code     INTEGER
      );
      CREATE INDEX terminal_sessions_worktree ON terminal_sessions (worktree_path);",
+    // 9: orchestration runs, their tasks, and the workers (dispatches) started for the tasks
+    "CREATE TABLE orchestration_runs (
+         id                  TEXT PRIMARY KEY,
+         coordinator_session TEXT NOT NULL,
+         worktree_path       TEXT NOT NULL,
+         title               TEXT NOT NULL,
+         state               TEXT NOT NULL,
+         budget              TEXT,
+         created_at          INTEGER NOT NULL
+     );
+     CREATE INDEX orchestration_runs_session ON orchestration_runs (coordinator_session);
+     CREATE TABLE orchestration_tasks (
+         id         TEXT PRIMARY KEY,
+         run_id     TEXT NOT NULL REFERENCES orchestration_runs (id),
+         spec       TEXT NOT NULL,
+         depends_on TEXT NOT NULL,
+         state      TEXT NOT NULL,
+         created_at INTEGER NOT NULL
+     );
+     CREATE TABLE orchestration_dispatches (
+         id            TEXT PRIMARY KEY,
+         run_id        TEXT NOT NULL REFERENCES orchestration_runs (id),
+         task_id       TEXT NOT NULL REFERENCES orchestration_tasks (id),
+         session_id    TEXT NOT NULL,
+         worktree_path TEXT NOT NULL,
+         harness       TEXT NOT NULL,
+         state         TEXT NOT NULL,
+         started_at    INTEGER NOT NULL
+     );
+     CREATE INDEX orchestration_dispatches_session ON orchestration_dispatches (session_id);",
 ];
 
 #[derive(Debug, thiserror::Error)]

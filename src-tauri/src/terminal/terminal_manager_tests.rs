@@ -557,3 +557,21 @@ fn an_agent_that_names_its_conversation_can_be_resumed_after_it_ends() {
         ["--resume", "conversation-7"]
     );
 }
+
+/// Every session the manager starts is announced once, with its id, so the screen can list it
+/// whoever asked for it.
+#[test]
+fn a_started_session_is_announced_once_with_its_id() {
+    let (manager, sink, dir) = setup();
+    let info = manager
+        .create(&path_of(&dir), None, 80, 24)
+        .expect("create");
+    let rejected = manager.create("/no/such/folder", None, 80, 24);
+    assert!(rejected.is_err());
+
+    assert_eq!(
+        sink.events.lock().expect("lock").created,
+        vec![info.id.clone()]
+    );
+    manager.close(&info.id).expect("close");
+}

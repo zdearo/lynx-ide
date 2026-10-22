@@ -10,10 +10,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::browser::agent_tool_definitions::{INSTRUCTIONS, list};
-
 use super::hook_hub::{SESSION_ENV, TOKEN_HEADER, TOOL_PATH};
 use super::hub_address;
+use super::tool_catalog::{instructions, list};
 
 pub const FLAG: &str = "--mcp";
 const SERVER_NAME: &str = "lynx";
@@ -82,7 +81,7 @@ fn answer(message: &Value, transport: &impl ToolTransport) -> Option<Value> {
             "protocolVersion": negotiated(params),
             "capabilities": { "tools": {} },
             "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
-            "instructions": INSTRUCTIONS,
+            "instructions": instructions(),
         }),
         "ping" => json!({}),
         "tools/list" => json!({ "tools": list() }),

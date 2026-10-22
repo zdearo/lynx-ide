@@ -36,10 +36,20 @@ interface TerminalState {
     status: AgentStatus | null,
   ) => void;
   markSeen: (id: string) => void;
+  /** A session was started by the backend, possibly for an agent: listed, not made active. */
+  added: (session: TerminalInfo) => void;
   /** Freezes a terminal the user is not using. The backend refuses, with the reason, when it cannot. */
   hibernate: (id: string) => Promise<void>;
   /** The terminal got input, so the daemon has run it again. */
   woken: (id: string) => void;
+}
+
+/** The list with the session at its end, unless it is already listed: the screen hears of its own
+ * new sessions twice, from the event and from the command's answer. */
+function withSession(sessions: TerminalInfo[], session: TerminalInfo) {
+  return sessions.some((s) => s.id === session.id)
+    ? sessions
+    : [...sessions, session];
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -62,13 +72,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       ),
     );
     set((state) => ({
-      sessions: [...state.sessions, session],
+      sessions: withSession(state.sessions, session),
       activeByWorktree: {
         ...state.activeByWorktree,
         [worktreePath]: session.id,
       },
     }));
     return session;
+  },
+
+  added(session) {
+    set((state) => ({ sessions: withSession(state.sessions, session) }));
   },
 
   async close(id) {

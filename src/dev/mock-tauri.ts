@@ -1727,6 +1727,26 @@ export function installMockTauri(scenario: string): void {
         case "write_agent_prompt":
           lastAgentPrompt = String(args.prompt);
           return "/tmp/lynx-prompts/prompt-mock.md";
+        case "agent_launch_line": {
+          // The same line the backend builds (src-tauri/src/agents/launch_line.rs).
+          const launchers: Record<string, [string, string]> = {
+            claude: ["claude", "--dangerously-skip-permissions"],
+            codex: ["codex", "--dangerously-bypass-approvals-and-sandbox"],
+            opencode: ["opencode", "--auto"],
+            omp: ["omp", "--auto-approve"],
+          };
+          const harness = String(args.harness);
+          const [command, yolo] = launchers[harness] ?? [harness, ""];
+          const { launchMode, launchArguments } = configSnapshot.config.agents;
+          const extra = (launchArguments as Record<string, string>)[
+            harness
+          ]?.trim();
+          return [
+            command,
+            ...(launchMode === "yolo" ? [yolo] : []),
+            ...(extra ? [extra] : []),
+          ].join(" ");
+        }
         case "create_terminal": {
           lastTerminalCommand = (args.command as string | null) ?? null;
           const id = addSession(

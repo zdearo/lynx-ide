@@ -1,10 +1,6 @@
-import type { CommitMessageAgent, HarnessId, LaunchMode } from "@/bindings";
+import type { CommitMessageAgent, HarnessId } from "@/bindings";
 import { quotePathForShell } from "@/files/shell-quote";
-import {
-  launchCommand,
-  type LaunchArguments,
-  type TerminalPreset,
-} from "@/terminal/agent-presets";
+import type { TerminalPreset } from "@/terminal/agent-presets";
 
 /** The agents Lynx knows how to hand a first prompt to, with how each takes it. */
 const PROMPT_AGENTS: readonly HarnessId[] = ["claude", "codex", "opencode"];
@@ -75,18 +71,16 @@ export function pickFixAgent(
   );
 }
 
-/** The command line that starts the agent with its settings and the one-line instruction. */
+/** The command line that starts the agent, from its launch line, and the one-line instruction. */
 export function agentCommand(
   preset: TerminalPreset,
-  launchArguments: LaunchArguments,
-  mode: LaunchMode,
+  launch: string | null,
   instruction: string,
   windows: boolean,
 ): string | null {
-  const base = launchCommand(preset, launchArguments, mode);
-  if (base === null) return null;
+  if (launch === null) return null;
   const quoted = quotePathForShell(instruction, windows);
   return preset.harness === "opencode"
-    ? `${base} --prompt ${quoted}`
-    : `${base} ${quoted}`;
+    ? `${launch} --prompt ${quoted}`
+    : `${launch} ${quoted}`;
 }

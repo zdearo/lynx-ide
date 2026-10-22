@@ -89,6 +89,10 @@ export const commands = {
 	hibernateTerminal: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("hibernate_terminal", { id })),
 	/**  Takes an ended agent conversation off the resumable list. The agent keeps the conversation. */
 	forgetResumableSession: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("forget_resumable_session", { id })),
+	/**  The line that starts an agent, with the launch mode and the arguments Settings hold now. */
+	agentLaunchLine: (harness: HarnessId) => __TAURI_INVOKE<string>("agent_launch_line", { harness }),
+	/**  The user approves a run's budget. Workers can start only after this. */
+	approveRun: (runId: string, budget: Budget) => typedError<null, IpcError>(__TAURI_INVOKE("approve_run", { runId, budget })),
 	listResumableSessions: (worktreePath: string) => typedError<ResumableSession[], IpcError>(__TAURI_INVOKE("list_resumable_sessions", { worktreePath })),
 	/**  Chooses what closing the app does with the daemon's sessions, before the window closes. */
 	prepareQuit: (keepSessions: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("prepare_quit", { keepSessions })),
@@ -260,6 +264,7 @@ export const events = {
 	browserStateChanged: makeEvent<BrowserStateChanged>("browser-state-changed"),
 	browserThumbnailChanged: makeEvent<BrowserThumbnailChanged>("browser-thumbnail-changed"),
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
+	terminalCreated: makeEvent<TerminalCreated>("terminal-created"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
 	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
 	updateStatusChanged: makeEvent<UpdateStatusChanged>("update-status-changed"),
@@ -431,6 +436,18 @@ export type BrowserThumbnail = {
 export type BrowserThumbnailChanged = {
 	page: number,
 	png: string,
+};
+
+/**  What the user approves once for a run. The coordinator can use less of it, never more. */
+export type Budget = {
+	/**  Workers running at the same time. */
+	maxConcurrent: number,
+	/**  Workers the run may start in all. */
+	maxTotal: number,
+	/**  The agents a worker may run. */
+	harnesses: HarnessId[],
+	/**  YOLO for the workers, only when the user approved it here. */
+	launchMode: LaunchMode,
 };
 
 export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "typeChanged" | "untracked" | "conflicted";
@@ -693,7 +710,7 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "update" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "orchestration" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "update" | "internal";
 
 export type LastCommitMessage = {
 	summary: string,
@@ -918,6 +935,11 @@ export type TerminalConfig = {
 	colorScheme: ColorScheme,
 	/**  Theme whose text palette (text colour and ANSI colours) the text uses; `None` uses `color_scheme`'s. */
 	textColorScheme: ColorScheme | null,
+};
+
+/**  A session was started, by the screen or by the backend, so the screen can list it. */
+export type TerminalCreated = {
+	session: TerminalInfo,
 };
 
 export type TerminalExit = {

@@ -96,6 +96,11 @@ function App() {
       handleTerminalExit(payload.id, payload.exitCode);
     });
 
+    // A session an agent started through the backend appears in the list, not only one the screen made.
+    const unlistenCreated = events.terminalCreated.listen(({ payload }) => {
+      useTerminalStore.getState().added(payload.session);
+    });
+
     const unlistenAgentStatus = events.agentStatusChanged.listen(
       ({ payload }) => {
         // Before the store takes the new status, so the notification can compare with the old one.
@@ -174,6 +179,7 @@ function App() {
     return () => {
       window.removeEventListener("focus", refreshOnFocus);
       void unlistenExit.then((unlisten) => unlisten());
+      void unlistenCreated.then((unlisten) => unlisten());
       void unlistenAgentStatus.then((unlisten) => unlisten());
       void unlistenWorktree.then((unlisten) => unlisten());
       void unlistenConfig.then((unlisten) => unlisten());

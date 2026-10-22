@@ -10,6 +10,7 @@ mod error;
 mod files;
 mod git;
 mod ipc;
+mod orchestration;
 mod persistence;
 mod pull_request;
 mod terminal;
@@ -148,11 +149,26 @@ pub fn run() {
                 let _ =
                     hook_hub.publish_address(&lynx_home(app.path().home_dir()?).join("hub.json"));
             }
-            hook_hub.set_tool_handler(Arc::new(browser::AgentToolBridge::new(
-                app.handle().clone(),
-                browser_service,
-                Arc::clone(&config),
-                owners.clone(),
+            // Orchestration shares the terminals' database. It reads terminals, worktrees and
+            // settings from the managed services when a call needs them.
+            let terminal_database = Arc::new(AppDatabase::open(&database_file)?);
+            let orchestration = Arc::new(orchestration::service::Orchestration::new(
+                Arc::clone(&terminal_database),
+                Arc::new(orchestration::host::AppWorkers::new(
+                    app.handle().clone(),
+                    owners.clone(),
+                    Arc::clone(&config),
+                )),
+            ));
+            app.manage(Arc::clone(&orchestration));
+            hook_hub.set_tool_handler(Arc::new(orchestration::router::ToolRouter::new(
+                Arc::new(browser::AgentToolBridge::new(
+                    app.handle().clone(),
+                    browser_service,
+                    Arc::clone(&config),
+                    owners.clone(),
+                )),
+                orchestration,
             )));
 
             let shell_config = Arc::clone(&config);
@@ -162,7 +178,6 @@ pub fn run() {
                 executable.clone(),
                 Arc::new(move || daemon_config.config().terminal.pty_daemon),
             );
-            let terminal_database = Arc::new(AppDatabase::open(&database_file)?);
             let terminals = TerminalManager::new(
                 Arc::new(move || {
                     terminal::Shell::from_config(shell_config.config().terminal.shell.as_deref())

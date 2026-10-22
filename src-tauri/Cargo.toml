@@ -1,6 +1,6 @@
 [package]
 name = "lynx-ide"
-version = "0.1.2"
+version = "0.2.0"
 description = "Agentic Development Environment: parallel coding agents in isolated git worktrees"
 edition = "2024"
 

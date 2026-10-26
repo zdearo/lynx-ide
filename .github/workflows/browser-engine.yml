@@ -75,6 +75,8 @@ jobs:
         with:
           name: browser-engine-${{ matrix.name }}
           path: engine-package/*
+          # The package reaches users through the release bucket, not through this artifact.
+          retention-days: 1
 
       # Always runs: a package that the app would refuse must not get as far as the bucket.
       - name: Check the package

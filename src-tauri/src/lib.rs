@@ -1,8 +1,5 @@
 mod agents;
-mod app_image_environment;
 mod app_info;
-mod blocking_task;
-mod bounded_command;
 mod browser;
 mod changes;
 mod config;
@@ -12,6 +9,7 @@ mod git;
 mod ipc;
 mod orchestration;
 mod persistence;
+mod process;
 mod pull_request;
 mod terminal;
 mod updates;
@@ -30,6 +28,7 @@ use agents::hook_targets::HookTargets;
 use config::ConfigStore;
 use config::config_events::start_config_watcher;
 use persistence::AppDatabase;
+use process::app_image_environment;
 use terminal::terminal_events::TauriEventSink;
 use terminal::terminal_manager::TerminalManager;
 use usage::plan_usage_service::PlanUsageService;
@@ -170,6 +169,8 @@ pub fn run() {
                 orchestration,
             )));
 
+            let output_channels = Arc::new(terminal::output_channels::OutputChannels::default());
+            app.manage(Arc::clone(&output_channels));
             let shell_config = Arc::clone(&config);
             let daemon_config = Arc::clone(&config);
             let daemon = terminal::daemon_host::DaemonHost::new(
@@ -184,6 +185,7 @@ pub fn run() {
                 Arc::new(TauriEventSink::new(
                     app.handle().clone(),
                     Some(browser_for_events),
+                    output_channels,
                 )),
                 hook_hub,
                 owners,

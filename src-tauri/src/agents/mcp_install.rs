@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
-use crate::bounded_command::{BoundedError, run_bounded};
+use crate::process::bounded_command::{BoundedError, run_bounded};
 
 use super::harness::{HarnessId, harness_name};
 use super::hook_hub::{PORT_ENV, SESSION_ENV, TOKEN_ENV};

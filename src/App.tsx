@@ -30,7 +30,7 @@ import { notifyUpdate } from "@/updates/notify-update";
 import { useUpdateStore } from "@/updates/update-store";
 import { applyWorktreeChange } from "@/watching/apply-worktree-change";
 import { useWorktreeWatch } from "@/watching/use-worktree-watch";
-import { useLinkedFolderSync } from "@/workspace/use-linked-folder-sync";
+import { useLinkedFolderSync } from "@/workspace/projects/use-linked-folder-sync";
 import { useAppShortcuts } from "@/use-app-shortcuts";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import {

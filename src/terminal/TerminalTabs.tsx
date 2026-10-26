@@ -24,8 +24,8 @@ import {
 } from "@/terminal/terminal-actions";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
-import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
-import { worktreeLabel } from "@/workspace/worktree-label";
+import { useSelectedWorktree } from "@/workspace/worktrees/use-selected-worktree";
+import { worktreeLabel } from "@/workspace/worktrees/worktree-label";
 
 interface TerminalTabsProps {
   /** When the sidebar is hidden the bar says which worktree this is. */

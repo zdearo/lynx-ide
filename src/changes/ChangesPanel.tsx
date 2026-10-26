@@ -14,8 +14,8 @@ import {
 } from "@/changes/change-sections";
 import { useCollapsedChangeSections } from "@/changes/change-section-collapse";
 import { ChangeRow, type IndexAction } from "@/changes/ChangeRow";
-import { CommitArea } from "@/changes/CommitArea";
-import { CommitList } from "@/changes/CommitList";
+import { CommitArea } from "@/changes/commits/CommitArea";
+import { CommitList } from "@/changes/commits/CommitList";
 import { useChangesViewStore } from "@/changes/changes-view-store";
 import { stageFile, stageFiles, unstageFile } from "@/changes/change-actions";
 import { useChangesRefresh } from "@/changes/use-changes-refresh";
@@ -26,8 +26,8 @@ import { useDialogStore } from "@/dialog-store";
 import { useEditorStore } from "@/editor/editor-store";
 import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
-import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
-import { worktreeLabel } from "@/workspace/worktree-label";
+import { useSelectedWorktree } from "@/workspace/worktrees/use-selected-worktree";
+import { worktreeLabel } from "@/workspace/worktrees/worktree-label";
 
 /** Sections whose files can all be staged at once. Conflicts are resolved by hand, not staged. */
 const STAGE_ALL: ReadonlySet<ChangeSectionId> = new Set([

@@ -8,13 +8,15 @@ import {
   type WorktreeInfo,
 } from "@/bindings";
 import { IpcRequestError, unwrap } from "@/lib/ipc-result";
-import { forEachBounded } from "@/workspace/bounded-concurrency";
-import { visibleFirst } from "@/workspace/repo-load-order";
+import { forEachBounded } from "@/workspace/projects/bounded-concurrency";
+import { visibleFirst } from "@/workspace/projects/repo-load-order";
 
 const SELECTED_WORKTREE_KEY = "lynx-ide.selectedWorktree";
 
 /** Worktree lists read at the same time; each one is a `git` process. */
 const WORKTREE_LOAD_LIMIT = 6;
+/** Repos read before the sidebar is drawn again: one redraw per repo would redraw every repo each time. */
+const WORKTREE_BATCH = 8;
 
 let nextPendingId = 0;
 
@@ -89,6 +91,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   const select = (path: string | null) => {
     set({ selectedWorktreePath: path });
     rememberSelection(path);
+  };
+
+  /** The worktrees of a repo, or null when its folder is gone: the sidebar then keeps what it had. */
+  const readWorktrees = async (repoId: string) => {
+    try {
+      return await unwrap(commands.listWorktrees(repoId));
+    } catch (error) {
+      if (!(error instanceof IpcRequestError)) throw error;
+      return null;
+    }
   };
 
   /** Keeps the selection pointing at a worktree that still exists. */
@@ -216,22 +228,33 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     async refreshAll() {
       // One `git worktree list` per repo: with many linked projects they must not all start at once.
       const { repos, folders } = get();
+      let batch: Record<string, WorktreeInfo[]> = {};
+      let count = 0;
+      const flush = () => {
+        if (count === 0) return;
+        const lists = batch;
+        batch = {};
+        count = 0;
+        set((state) => ({ worktrees: { ...state.worktrees, ...lists } }));
+      };
       await forEachBounded(
         visibleFirst(repos, folders),
         WORKTREE_LOAD_LIMIT,
-        (repo) => get().refreshWorktrees(repo.id),
+        async (repo) => {
+          const list = await readWorktrees(repo.id);
+          if (!list) return;
+          batch[repo.id] = list;
+          if (++count >= WORKTREE_BATCH) flush();
+        },
       );
+      flush();
       reconcileSelection();
     },
 
     async refreshWorktrees(repoId) {
-      try {
-        const list = await unwrap(commands.listWorktrees(repoId));
+      const list = await readWorktrees(repoId);
+      if (list)
         set((state) => ({ worktrees: { ...state.worktrees, [repoId]: list } }));
-      } catch (error) {
-        // A repo whose folder vanished keeps its last known worktrees instead of blanking the sidebar.
-        if (!(error instanceof IpcRequestError)) throw error;
-      }
     },
 
     async addRepo(path) {

@@ -17,7 +17,7 @@ use super::daemon_pty;
 use super::shell_resolution::Shell;
 use super::terminal_session::{PtyProcess, SESSION_VARIABLES, SpawnRequest};
 use crate::agents::hook_hub::SESSION_ENV;
-use crate::app_image_environment::{self, EnvironmentCleanup};
+use crate::process::app_image_environment::{self, EnvironmentCleanup};
 
 /// The argument that makes the program run as the daemon, not as the window.
 pub const FLAG: &str = "--pty-daemon";

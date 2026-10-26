@@ -15,7 +15,7 @@ import { EngineProgressBar } from "@/browser/EngineProgressBar";
 import { useBrowserStore } from "@/browser/browser-store";
 import { isBrowserWindow } from "@/browser/browser-window";
 import { copy } from "@/ui-copy";
-import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
+import { useSelectedWorktree } from "@/workspace/worktrees/use-selected-worktree";
 
 // Menus, dialogs and lists are drawn by the web view, and the page is a native view above it:
 // while one is open the page steps aside, or it would cover it.

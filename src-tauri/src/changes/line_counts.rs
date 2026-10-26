@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::thread;
 
 use serde::Serialize;
 use specta::Type;
@@ -71,14 +72,31 @@ fn numstat(root: &Path, cached: bool) -> HashMap<String, LineCounts> {
         .unwrap_or_default()
 }
 
+/// The counts of the files Git already tracks, by path.
+#[derive(Default)]
+pub struct TrackedCounts {
+    staged: HashMap<String, LineCounts>,
+    unstaged: HashMap<String, LineCounts>,
+}
+
+/// Reads both sides at once: each is a pass over the worktree, and neither needs the other.
+pub fn read_tracked(root: &Path) -> TrackedCounts {
+    thread::scope(|scope| {
+        let staged = scope.spawn(|| numstat(root, true));
+        let unstaged = numstat(root, false);
+        TrackedCounts {
+            staged: staged.join().unwrap_or_default(),
+            unstaged,
+        }
+    })
+}
+
 /// Fills `staged_lines` and `unstaged_lines`. An untracked file counts as all added.
-pub fn attach(root: &Path, files: &mut [ChangedFile]) {
-    let staged = numstat(root, true);
-    let unstaged = numstat(root, false);
+pub fn attach(root: &Path, files: &mut [ChangedFile], counts: &TrackedCounts) {
     let mut untracked_read = 0;
     for file in files {
-        file.staged_lines = staged.get(&file.path).copied();
-        file.unstaged_lines = unstaged.get(&file.path).copied();
+        file.staged_lines = counts.staged.get(&file.path).copied();
+        file.unstaged_lines = counts.unstaged.get(&file.path).copied();
         if file.unstaged == Some(ChangeKind::Untracked) && untracked_read < MAX_UNTRACKED_COUNTED {
             untracked_read += 1;
             file.unstaged_lines = untracked_counts(&root.join(&file.path));

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::blocking_task::run_blocking;
 use crate::config::ConfigStore;
 use crate::error::IpcError;
+use crate::process::blocking_task::run_blocking;
 use crate::workspace::workspace_service::WorkspaceService;
 
 use super::branch_sync::{

@@ -30,38 +30,75 @@ pub struct BranchSync {
     pub rewritten: bool,
 }
 
-struct Header {
+struct Position {
     branch: Option<String>,
     upstream: Option<String>,
     ahead: u32,
     behind: u32,
 }
 
-/// Reads the `# branch.*` lines of `git status --porcelain=v2 --branch`.
-fn parse_header(status: &str) -> Header {
-    let mut header = Header {
-        branch: None,
+/// Reads `ahead 2, behind 1` (what `%(upstream:track,nobracket)` prints); `gone` and nothing at
+/// all both mean no distance to report.
+fn parse_track(track: &str) -> (u32, u32) {
+    let mut counts = (0, 0);
+    for part in track.split(',').map(str::trim) {
+        if let Some(number) = part.strip_prefix("ahead ") {
+            counts.0 = number.parse().unwrap_or(0);
+        } else if let Some(number) = part.strip_prefix("behind ") {
+            counts.1 = number.parse().unwrap_or(0);
+        }
+    }
+    counts
+}
+
+/// Where HEAD stands against its upstream, from the refs alone. `git status --branch` says the
+/// same, but only after it has scanned the whole worktree, which is what a big repository pays for.
+///
+/// One `for-each-ref` over the local branches gives the current one (`%(HEAD)`), its upstream and
+/// the distance. A branch with no commit yet has no ref, and a detached HEAD is on none; only then
+/// is a second process asked which of the two it is.
+fn read_position(root: &Path) -> Result<Position, AppError> {
+    let refs = git(root)
+        .args([
+            "for-each-ref",
+            "--format=%(HEAD)%09%(refname)%09%(upstream:short)%09%(upstream:track,nobracket)",
+            "refs/heads/",
+        ])
+        .run()?;
+    for line in refs.lines() {
+        let mut fields = line.split('\t');
+        if fields.next().map(str::trim) != Some("*") {
+            continue;
+        }
+        let branch = fields
+            .next()
+            .and_then(|name| name.strip_prefix("refs/heads/"))
+            .map(str::to_owned);
+        let upstream = fields
+            .next()
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+        let (ahead, behind) = parse_track(fields.next().unwrap_or(""));
+        return Ok(Position {
+            branch,
+            upstream,
+            ahead,
+            behind,
+        });
+    }
+    // Fails on a detached HEAD, which is an answer, not a problem.
+    let unborn = git(root)
+        .args(["symbolic-ref", "-q", "--short", "HEAD"])
+        .run()
+        .ok()
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty());
+    Ok(Position {
+        branch: unborn,
         upstream: None,
         ahead: 0,
         behind: 0,
-    };
-    for line in status.lines() {
-        if let Some(name) = line.strip_prefix("# branch.head ") {
-            header.branch = (name != "(detached)").then(|| name.to_owned());
-        } else if let Some(name) = line.strip_prefix("# branch.upstream ") {
-            header.upstream = Some(name.to_owned());
-        } else if let Some(counts) = line.strip_prefix("# branch.ab ") {
-            let mut parts = counts.split_whitespace();
-            let number = |part: Option<&str>, sign: char| {
-                part.and_then(|text| text.strip_prefix(sign))
-                    .and_then(|text| text.parse().ok())
-                    .unwrap_or(0)
-            };
-            header.ahead = number(parts.next(), '+');
-            header.behind = number(parts.next(), '-');
-        }
-    }
-    header
+    })
 }
 
 /// The remote a push would go to: `origin`, else the first one listed.
@@ -79,18 +116,14 @@ fn pick_remote(remotes: &str) -> Option<String> {
 }
 
 pub fn read(root: &Path) -> Result<BranchSync, AppError> {
-    // No optional locks: an agent may be using the same worktree.
-    let status = git(root)
-        .args([
-            "--no-optional-locks",
-            "status",
-            "--porcelain=v2",
-            "--branch",
-            "--untracked-files=no",
-        ])
-        .run()?;
-    let header = parse_header(&status);
-    let remote = pick_remote(&git(root).arg("remote").run()?);
+    // Neither needs the other, so both run at once.
+    let (header, remotes) = std::thread::scope(|scope| {
+        let remotes = scope.spawn(|| git(root).arg("remote").run());
+        (read_position(root), remotes.join())
+    });
+    let header = header?;
+    let remotes = remotes.map_err(|_| AppError::TaskFailed("reading the remotes".to_owned()))??;
+    let remote = pick_remote(&remotes);
     let rewritten = header.ahead > 0
         && header.behind > 0
         && header
@@ -218,27 +251,91 @@ pub fn push(root: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::git_command::spawn_count;
     use crate::git::test_repository::{TestRepository, set_identity};
 
     #[test]
-    fn the_header_gives_branch_upstream_and_counts() {
-        let header = parse_header(
-            "# branch.oid abc\n# branch.head feat/x\n# branch.upstream origin/feat/x\n# branch.ab +2 -1\n",
-        );
-
-        assert_eq!(header.branch.as_deref(), Some("feat/x"));
-        assert_eq!(header.upstream.as_deref(), Some("origin/feat/x"));
-        assert_eq!((header.ahead, header.behind), (2, 1));
+    fn the_track_gives_the_distance_in_both_directions() {
+        assert_eq!(parse_track("ahead 2, behind 1"), (2, 1));
+        assert_eq!(parse_track("ahead 3"), (3, 0));
+        assert_eq!(parse_track("behind 4"), (0, 4));
+        assert_eq!(parse_track("gone"), (0, 0));
+        assert_eq!(parse_track(""), (0, 0));
     }
 
     #[test]
-    fn a_branch_with_no_upstream_or_a_detached_head_says_so() {
-        let unpublished = parse_header("# branch.oid abc\n# branch.head main\n");
-        assert_eq!(unpublished.upstream, None);
-        assert_eq!(unpublished.ahead, 0);
+    fn a_branch_with_no_upstream_a_gone_upstream_or_a_detached_head_says_so() {
+        let repo = TestRepository::new().with_origin();
+        assert_eq!(read(&repo.path).expect("read").upstream, None);
 
-        let detached = parse_header("# branch.oid abc\n# branch.head (detached)\n");
-        assert_eq!(detached.branch, None);
+        publish(&repo);
+        let published = read(&repo.path).expect("read");
+        assert_eq!(published.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((published.ahead, published.behind), (0, 0));
+
+        repo.commit_file("later.md", "x\n", "later");
+        assert_eq!(read(&repo.path).expect("read").ahead, 1);
+
+        // The remote branch disappears: the upstream is still configured, with nothing to compare.
+        repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
+        let gone = read(&repo.path).expect("read");
+        assert_eq!(gone.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((gone.ahead, gone.behind), (0, 0));
+
+        repo.git(&["checkout", "--quiet", "--detach"]);
+        assert_eq!(read(&repo.path).expect("read").branch, None);
+    }
+
+    #[test]
+    fn an_unborn_branch_is_not_mistaken_for_one_that_starts_with_its_name() {
+        let repo = TestRepository::new().with_origin();
+        repo.git(&["checkout", "--quiet", "-b", "feat/x"]);
+        repo.git(&["push", "--quiet", "--set-upstream", "origin", "feat/x"]);
+        // `feat` has no commit, so no ref: a lookup by pattern would find `feat/x` instead.
+        repo.git(&["checkout", "--quiet", "--orphan", "feat"]);
+
+        let sync = read(&repo.path).expect("read");
+        assert_eq!(sync.branch.as_deref(), Some("feat"));
+        assert_eq!(sync.upstream, None);
+    }
+
+    #[test]
+    fn a_branch_with_no_commit_yet_has_a_name_and_nothing_to_compare() {
+        let dir = tempfile::tempdir().expect("dir");
+        git(dir.path())
+            .args(["init", "--quiet", "-b", "main"])
+            .run()
+            .expect("init");
+
+        let sync = read(dir.path()).expect("read");
+        assert_eq!(sync.branch.as_deref(), Some("main"));
+        assert_eq!(sync.upstream, None);
+    }
+
+    #[test]
+    fn reading_the_branch_starts_two_git_processes_and_no_more() {
+        let repo = TestRepository::new().with_origin();
+        publish(&repo);
+        let before = spawn_count::started_in(&repo.path);
+
+        read(&repo.path).expect("read");
+
+        // The branches with their upstream, and the remotes.
+        assert_eq!(spawn_count::started_in(&repo.path) - before, 2);
+    }
+
+    #[test]
+    fn a_branch_among_many_is_found_by_the_star_that_marks_it() {
+        let repo = TestRepository::new().with_origin();
+        publish(&repo);
+        repo.git(&["branch", "other"]);
+        repo.git(&["branch", "main-two"]);
+        repo.git(&["checkout", "--quiet", "other"]);
+
+        let sync = read(&repo.path).expect("read");
+
+        assert_eq!(sync.branch.as_deref(), Some("other"));
+        assert_eq!(sync.upstream, None);
     }
 
     #[test]

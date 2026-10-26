@@ -30,7 +30,7 @@ import {
 } from "@/pull-request/create-remote-form";
 import { usePullRequestStore } from "@/pull-request/pull-request-store";
 import { copy } from "@/ui-copy";
-import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
+import { useSelectedWorktree } from "@/workspace/worktrees/use-selected-worktree";
 
 const text = copy.pullRequest.createRemote;
 

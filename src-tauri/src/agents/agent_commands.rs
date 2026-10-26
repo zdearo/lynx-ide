@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::blocking_task::run_blocking;
 use crate::config::config_store::ConfigStore;
 use crate::error::IpcError;
+use crate::process::blocking_task::run_blocking;
 
 use super::agent_catalog::{AgentEntry, catalog};
 use super::harness::HarnessId;

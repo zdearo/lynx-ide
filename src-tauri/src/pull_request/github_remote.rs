@@ -8,8 +8,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::app_image_environment;
-use crate::bounded_command::{BoundedError, run_bounded};
+use crate::process::app_image_environment;
+use crate::process::bounded_command::{BoundedError, run_bounded};
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Creating a repository and pushing a branch can take a while on a slow connection.

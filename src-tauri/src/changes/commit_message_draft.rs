@@ -9,10 +9,10 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::agents::agent_catalog::on_path;
-use crate::app_image_environment;
-use crate::bounded_command::{BoundedError, run_bounded};
 use crate::config::app_config::CommitMessageAgent;
 use crate::git::git_command::git;
+use crate::process::app_image_environment;
+use crate::process::bounded_command::{BoundedError, run_bounded};
 
 use super::commit_message_prompt::build_prompt;
 

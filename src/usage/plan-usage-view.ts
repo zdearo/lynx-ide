@@ -1,5 +1,5 @@
 import type { HarnessId, PlanUsage, PlanWindow, UsageConfig } from "@/bindings";
-import { TERMINAL_PRESETS } from "@/terminal/agent-presets";
+import { TERMINAL_PRESETS } from "@/agents/agent-presets";
 import { copy } from "@/ui-copy";
 
 export type UsageTone = "calm" | "close" | "full";

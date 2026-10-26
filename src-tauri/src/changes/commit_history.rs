@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::thread;
 
 use serde::Serialize;
 use specta::Type;
@@ -9,12 +10,13 @@ use specta::Type;
 use crate::error::AppError;
 use crate::git::git_command::git;
 
-use super::branch_sync;
 use super::change_list::ChangeKind;
 use super::file_diff::is_commit_hash;
 use super::line_counts::{LineCounts, parse_numstat};
 
 const MAX_COMMITS: u32 = 200;
+/// How far back to look for commits the remote lacks; the list never shows more than `MAX_COMMITS`.
+const UNPUSHED_LOOKBACK: u32 = 500;
 /// Unit separator: git prints it between fields, and no subject or name can contain it.
 const SEP: char = '\u{1f}';
 
@@ -125,10 +127,26 @@ pub fn list_files(root: &Path, hash: &str) -> Result<Vec<CommitFile>, AppError> 
 pub fn list(root: &Path, limit: u32) -> Result<Vec<CommitEntry>, AppError> {
     let limit = limit.clamp(1, MAX_COMMITS);
     let format = format!("--format=%H{SEP}%h{SEP}%an{SEP}%at{SEP}%s");
-    let log = match git(root)
-        .args(["log", "-n", &limit.to_string(), &format])
-        .run()
-    {
+    // The two reads are independent: git resolves `@{upstream}` itself, so the branch name is not
+    // needed first. Only the newest commits are listed, so only that many unpushed ones can matter.
+    let (log, unpushed) = thread::scope(|scope| {
+        let unpushed = scope.spawn(|| {
+            git(root)
+                .args([
+                    "rev-list",
+                    "-n",
+                    &UNPUSHED_LOOKBACK.to_string(),
+                    "HEAD",
+                    "^@{upstream}",
+                ])
+                .run()
+        });
+        let log = git(root)
+            .args(["log", "-n", &limit.to_string(), &format])
+            .run();
+        (log, unpushed.join())
+    });
+    let log = match log {
         Ok(text) => text,
         // A branch with no commit yet has nothing to list.
         Err(error) if error.stderr_contains("does not have any commits") => return Ok(Vec::new()),
@@ -136,15 +154,10 @@ pub fn list(root: &Path, limit: u32) -> Result<Vec<CommitEntry>, AppError> {
     };
     let mut commits = parse_log(&log);
 
-    let sync = branch_sync::read(root)?;
-    let unpushed: HashSet<String> = match &sync.upstream {
-        Some(upstream) => git(root)
-            .args(["rev-list", &format!("{upstream}..HEAD")])
-            .run()?
-            .lines()
-            .map(str::to_owned)
-            .collect(),
-        None => commits.iter().map(|commit| commit.hash.clone()).collect(),
+    let unpushed: HashSet<String> = match unpushed {
+        Ok(Ok(text)) => text.lines().map(str::to_owned).collect(),
+        // No upstream, or one whose branch is gone from the remote: nothing is known to be there.
+        _ => commits.iter().map(|commit| commit.hash.clone()).collect(),
     };
     for commit in &mut commits {
         commit.pushed = !unpushed.contains(&commit.hash);
@@ -155,6 +168,8 @@ pub fn list(root: &Path, limit: u32) -> Result<Vec<CommitEntry>, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::changes::branch_sync;
+    use crate::git::git_command::spawn_count;
     use crate::git::test_repository::TestRepository;
 
     #[test]
@@ -198,6 +213,30 @@ mod tests {
         let commits = list(&repo.path, 10).expect("list");
 
         assert!(commits.iter().all(|commit| !commit.pushed));
+    }
+
+    #[test]
+    fn an_upstream_gone_from_the_remote_still_lists_the_commits_as_not_pushed() {
+        let repo = TestRepository::new().with_origin();
+        branch_sync::push(&repo.path).expect("publish");
+        repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
+
+        let commits = list(&repo.path, 10).expect("list");
+
+        assert_eq!(commits.len(), 1);
+        assert!(!commits[0].pushed);
+    }
+
+    #[test]
+    fn listing_starts_two_git_processes_and_no_more() {
+        let repo = TestRepository::new().with_origin();
+        branch_sync::push(&repo.path).expect("publish");
+        let before = spawn_count::started_in(&repo.path);
+
+        list(&repo.path, 10).expect("list");
+
+        // The log and the commits the remote lacks; the branch is not read again.
+        assert_eq!(spawn_count::started_in(&repo.path) - before, 2);
     }
 
     #[test]

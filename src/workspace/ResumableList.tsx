@@ -8,7 +8,7 @@ import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { errorMessage } from "@/lib/error-message";
 import { copy } from "@/ui-copy";
-import { TERMINAL_PRESETS } from "@/terminal/agent-presets";
+import { TERMINAL_PRESETS } from "@/agents/agent-presets";
 import { launchLine, startTerminal } from "@/terminal/terminal-actions";
 import { useResumableStore } from "@/workspace/resumable-store";
 import { resumeCommand } from "@/workspace/resume-command";

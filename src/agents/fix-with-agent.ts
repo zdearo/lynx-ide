@@ -10,7 +10,7 @@ import { commands } from "@/bindings";
 import { useConfigStore } from "@/config/config-store";
 import { errorMessage } from "@/lib/error-message";
 import { unwrap } from "@/lib/ipc-result";
-import { visiblePresets } from "@/terminal/agent-presets";
+import { visiblePresets } from "@/agents/agent-presets";
 import { launchLine, startTerminal } from "@/terminal/terminal-actions";
 import { copy } from "@/ui-copy";
 

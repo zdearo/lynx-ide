@@ -5,8 +5,8 @@ use specta::Type;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
-use crate::blocking_task::run_blocking;
 use crate::error::{AppError, IpcError};
+use crate::process::blocking_task::run_blocking;
 
 use super::browser_service::BrowserService;
 use super::engine_files::EngineStatus;

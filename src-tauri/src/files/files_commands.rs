@@ -1,7 +1,7 @@
 use tauri::State;
 
-use crate::blocking_task::run_blocking;
 use crate::error::{AppError, IpcError};
+use crate::process::blocking_task::run_blocking;
 use crate::workspace::workspace_service::WorkspaceService;
 
 use super::directory_listing::{DirectoryListing, list_directory as list};

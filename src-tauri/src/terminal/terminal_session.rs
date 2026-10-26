@@ -15,10 +15,11 @@ use specta::Type;
 use crate::agents::activity::AgentStatus;
 use crate::agents::agent_monitor::{AgentInput, Foreground, ForegroundSource, MonitorLink};
 use crate::agents::harness::HarnessId;
-use crate::app_image_environment;
+use crate::process::app_image_environment;
 
 #[cfg(unix)]
 use super::foreground_job::command_line;
+use super::output_coalescer::coalesce;
 use super::scrollback_buffer::ScrollbackBuffer;
 use super::shell_resolution::Shell;
 use super::terminal_error::TerminalError;
@@ -27,6 +28,8 @@ use super::terminal_events::TerminalEventSink;
 use lynx_pty_daemon::process_group::hang_up_and_reap;
 
 const READ_BUFFER_BYTES: usize = 16 * 1024;
+/// Chunks the reader may get ahead of the thread that sends them on (about 4 MiB).
+const READ_QUEUE_CHUNKS: usize = 256;
 const SCROLLBACK_BYTES: usize = 1024 * 1024;
 /// How long the exit notice waits for the reader to drain the last output.
 const OUTPUT_DRAIN_GRACE: Duration = Duration::from_secs(1);
@@ -466,7 +469,8 @@ fn spawn_reader(
     sink: Arc<dyn TerminalEventSink>,
     input: Sender<AgentInput>,
 ) -> Result<(), TerminalError> {
-    let id = id.to_owned();
+    // Bounded, so a view that cannot keep up slows the program down instead of filling memory.
+    let (chunks, queue) = std::sync::mpsc::sync_channel::<String>(READ_QUEUE_CHUNKS);
     std::thread::Builder::new()
         .name(format!("pty-reader-{id}"))
         .spawn(move || {
@@ -481,10 +485,19 @@ fn spawn_reader(
                     Err(_) => break,
                 };
                 let text = decoder.push(&buffer[..read]);
-                if text.is_empty() {
-                    continue;
+                // The other side is gone when the send fails, and then nobody needs the output.
+                if !text.is_empty() && chunks.send(text).is_err() {
+                    break;
                 }
+            }
+        })
+        .map_err(TerminalError::Io)?;
 
+    let id = id.to_owned();
+    std::thread::Builder::new()
+        .name(format!("pty-output-{id}"))
+        .spawn(move || {
+            coalesce(&queue, |text| {
                 // The scrollback and the sequence number change together, so a snapshot
                 // always matches the last chunk it claims to contain.
                 let seq = {
@@ -497,7 +510,7 @@ fn spawn_reader(
                 // It has ended if the send fails, and then nobody needs the output.
                 let _ = input.send(AgentInput::Output(text.clone()));
                 sink.output(&id, seq, text);
-            }
+            });
             shared.mark_reader_done();
         })
         .map(|_| ())

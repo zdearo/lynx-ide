@@ -1,6 +1,7 @@
 export interface OutputChunk {
   seq: number;
-  data: string;
+  /** Text, or the bytes of text the terminal decodes itself. */
+  data: string | Uint8Array;
 }
 
 export interface TerminalSnapshotState {
@@ -26,7 +27,7 @@ export class TerminalStreamGate {
   private queued: StreamItem[] = [];
 
   constructor(
-    private readonly write: (data: string) => void,
+    private readonly write: (data: string | Uint8Array) => void,
     private readonly onExit: (exitCode: number | null) => void,
   ) {}
 

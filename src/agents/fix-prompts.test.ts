@@ -7,7 +7,7 @@ import {
   pickFixAgent,
   promptInstruction,
 } from "@/agents/fix-prompts";
-import { TERMINAL_PRESETS } from "@/terminal/agent-presets";
+import { TERMINAL_PRESETS } from "@/agents/agent-presets";
 
 const preset = (id: string) => {
   const found = TERMINAL_PRESETS.find((candidate) => candidate.id === id);

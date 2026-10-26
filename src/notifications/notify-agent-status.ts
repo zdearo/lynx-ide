@@ -2,10 +2,10 @@ import type { AgentStatusChanged } from "@/bindings";
 import { useConfigStore } from "@/config/config-store";
 import { agentNotification } from "@/notifications/agent-notification";
 import { sendSystemNotice } from "@/notifications/system-notification";
-import { TERMINAL_PRESETS } from "@/terminal/agent-presets";
+import { TERMINAL_PRESETS } from "@/agents/agent-presets";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
-import { worktreeLabel } from "@/workspace/worktree-label";
+import { worktreeLabel } from "@/workspace/worktrees/worktree-label";
 
 /** The repository and branch a worktree path belongs to, as one line. */
 function placeOf(worktreePath: string): string {

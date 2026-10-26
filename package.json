@@ -18,7 +18,10 @@
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml -p lynx-ide -p lynx-browser-protocol -p lynx-pty-daemon",
     "browser:engine": "bun scripts/browser-engine.mjs",
     "bindings": "cargo test --manifest-path src-tauri/Cargo.toml write_bindings -- --ignored",
-    "e2e": "node e2e/ui-smoke.mjs"
+    "e2e": "node e2e/ui-smoke.mjs",
+    "bench": "node scripts/bench.mjs",
+    "bench:backend": "cargo test --manifest-path src-tauri/Cargo.toml --profile perf -p lynx-ide perf_tests::bench -- --ignored --nocapture --test-threads=1",
+    "bench:frontend": "node e2e/perf-bench.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

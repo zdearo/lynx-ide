@@ -7,8 +7,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::app_image_environment;
-use crate::bounded_command::{BoundedError, run_bounded};
+use crate::process::app_image_environment;
+use crate::process::bounded_command::{BoundedError, run_bounded};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 const FIELDS: &str = "number,title,url,state,isDraft,reviewDecision,headRefName,baseRefName,mergeStateStatus,autoMergeRequest,statusCheckRollup,headRefOid";

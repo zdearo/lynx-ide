@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TerminalStreamGate } from "@/terminal/terminal-stream-gate";
 
 function setup() {
-  const written: string[] = [];
+  const written: Array<string | Uint8Array> = [];
   const exits: Array<number | null> = [];
   const gate = new TerminalStreamGate(
     (data) => written.push(data),
@@ -90,5 +90,16 @@ describe("TerminalStreamGate", () => {
     gate.attach(snapshot("A", 1));
     gate.attach(snapshot("A", 1));
     expect(written).toEqual(["A"]);
+  });
+
+  it("passes output bytes through untouched and skips a repeat by its sequence number", () => {
+    const { gate, written } = setup();
+    gate.attach(snapshot("old", 3));
+
+    const bytes = new TextEncoder().encode("ção");
+    gate.pushOutput({ seq: 3, data: new TextEncoder().encode("repeat") });
+    gate.pushOutput({ seq: 4, data: bytes });
+
+    expect(written).toEqual(["old", bytes]);
   });
 });

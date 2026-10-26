@@ -3,8 +3,8 @@ use std::sync::Arc;
 use lynx_browser_protocol::message::PageCommand;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
-use crate::blocking_task::run_blocking;
 use crate::error::{AppError, IpcError};
+use crate::process::blocking_task::run_blocking;
 
 use super::browser_error::BrowserError;
 use super::browser_service::BrowserService;

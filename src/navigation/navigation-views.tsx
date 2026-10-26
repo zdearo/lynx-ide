@@ -4,7 +4,7 @@ import type { IconComponent } from "@/components/icons/icon-component";
 
 import type { NavigationViewId } from "@/navigation/navigation-store";
 import { copy } from "@/ui-copy";
-import { ProjectsPanel } from "@/workspace/ProjectsPanel";
+import { ProjectsPanel } from "@/workspace/projects/ProjectsPanel";
 
 export interface NavigationView {
   id: NavigationViewId;

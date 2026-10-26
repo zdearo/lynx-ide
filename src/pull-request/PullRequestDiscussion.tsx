@@ -6,7 +6,7 @@ import {
   type DiscussionComment,
   type ReviewThread,
 } from "@/bindings";
-import { relativeTime } from "@/changes/commit-time";
+import { relativeTime } from "@/changes/commits/commit-time";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage } from "@/lib/error-message";

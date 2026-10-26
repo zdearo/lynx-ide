@@ -20,8 +20,8 @@ import { copy } from "@/ui-copy";
 import {
   useSelectedWorktree,
   type SelectedWorktree,
-} from "@/workspace/use-selected-worktree";
-import { worktreeLabel } from "@/workspace/worktree-label";
+} from "@/workspace/worktrees/use-selected-worktree";
+import { worktreeLabel } from "@/workspace/worktrees/worktree-label";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 // CodeMirror loads the first time a file opens, not at startup.

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use specta::Type;
 
-use crate::app_image_environment;
+use crate::process::app_image_environment;
 
 /// A harness version as `[major, minor, patch]`. Arrays of numbers compare in release order.
 pub type Version = [u32; 3];

@@ -2,10 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands, type AppConfig, type ConfigSnapshot } from "@/bindings";
 import { DEFAULT_TERMINAL_CONFIG, useConfigStore } from "@/config/config-store";
-import {
-  TERMINAL_PRESETS,
-  type TerminalPreset,
-} from "@/terminal/agent-presets";
+import { TERMINAL_PRESETS, type TerminalPreset } from "@/agents/agent-presets";
 import { startPreset } from "@/terminal/terminal-actions";
 import { session } from "@/test-support";
 

@@ -144,3 +144,6 @@ pub fn frame_sink(app: AppHandle) -> Arc<dyn FrameSink> {
         Arc::new(Nowhere)
     }
 }
+
+#[cfg(test)]
+mod browser_perf_tests;

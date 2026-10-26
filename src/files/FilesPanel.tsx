@@ -12,10 +12,17 @@ import { useEditorStore } from "@/editor/editor-store";
 import { useExplorerStore } from "@/files/explorer-store";
 import { FileRow } from "@/files/FileRow";
 import { visibleRows, type EntryRow } from "@/files/file-tree-rows";
+import {
+  indexesToDraw,
+  ROW_HEIGHT,
+  scrollRowIntoView,
+  useScrollWindow,
+  windowRange,
+} from "@/files/windowed-rows";
 import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
-import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
-import { worktreeLabel } from "@/workspace/worktree-label";
+import { useSelectedWorktree } from "@/workspace/worktrees/use-selected-worktree";
+import { worktreeLabel } from "@/workspace/worktrees/worktree-label";
 
 /** Moves keyboard focus to a row once React has drawn it. */
 function focusRow(container: HTMLElement | null, path: string) {
@@ -40,6 +47,11 @@ export function FilesPanel() {
   const marks = useMemo(() => changeMarks(changedFiles ?? []), [changedFiles]);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [treeElement, setTreeElement] = useState<HTMLDivElement | null>(null);
+  // The scroll box is the ScrollArea's viewport, which wraps the tree.
+  const viewport =
+    treeElement?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]') ??
+    null;
+  const scrollWindow = useScrollWindow(viewport);
 
   useEffect(() => {
     if (worktreePath) void useExplorerStore.getState().load(worktreePath, "");
@@ -77,6 +89,11 @@ export function FilesPanel() {
   const moveTo = (row: EntryRow | undefined) => {
     if (!row) return;
     store.select(path, row.path);
+    // The row may be outside the window, so it is brought into view before it can take focus.
+    scrollRowIntoView(
+      viewport,
+      rows.findIndex((candidate) => candidate.path === row.path),
+    );
     focusRow(treeElement, row.path);
   };
 
@@ -197,41 +214,58 @@ export function FilesPanel() {
             onKeyDown={onKeyDown}
             className="px-1.5 pb-2"
           >
-            {rows.map((row) =>
-              row.type === "entry" ? (
-                <FileRow
-                  key={row.path}
-                  row={row}
-                  worktreePath={path}
-                  selected={row.path === selectedPath}
-                  change={marks.files.get(row.path)}
-                  containsChanges={
-                    row.isDirectory && marks.folders.has(row.path)
-                  }
-                  focusable={row.path === tabStop}
-                  menuOpen={menuFor === row.path}
-                  onMenuOpenChange={(open) =>
-                    setMenuFor(open ? row.path : null)
-                  }
-                  onActivate={() => activate(row)}
-                  onOpen={() => openFile(row)}
-                />
-              ) : (
-                <p
-                  key={row.path}
-                  role="none"
-                  style={{ paddingLeft: 6 + row.depth * 12 + 20 }}
-                  className={cn(
-                    "h-6 truncate pr-2 text-meta leading-6",
-                    row.kind === "error"
-                      ? "text-destructive"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {row.text}
-                </p>
-              ),
-            )}
+            <div
+              role="none"
+              className="relative"
+              style={{ height: rows.length * ROW_HEIGHT }}
+            >
+              {indexesToDraw(
+                windowRange(scrollWindow, rows.length),
+                rows.findIndex((row) => row.path === tabStop),
+              ).map((index) => {
+                const row = rows[index];
+                return (
+                  <div
+                    key={row.path}
+                    role="none"
+                    className="absolute inset-x-0"
+                    style={{ top: index * ROW_HEIGHT }}
+                  >
+                    {row.type === "entry" ? (
+                      <FileRow
+                        row={row}
+                        worktreePath={path}
+                        selected={row.path === selectedPath}
+                        change={marks.files.get(row.path)}
+                        containsChanges={
+                          row.isDirectory && marks.folders.has(row.path)
+                        }
+                        focusable={row.path === tabStop}
+                        menuOpen={menuFor === row.path}
+                        onMenuOpenChange={(open) =>
+                          setMenuFor(open ? row.path : null)
+                        }
+                        onActivate={() => activate(row)}
+                        onOpen={() => openFile(row)}
+                      />
+                    ) : (
+                      <p
+                        role="none"
+                        style={{ paddingLeft: 6 + row.depth * 12 + 20 }}
+                        className={cn(
+                          "h-6 truncate pr-2 text-meta leading-6",
+                          row.kind === "error"
+                            ? "text-destructive"
+                            : "text-muted-foreground",
+                        )}
+                      >
+                        {row.text}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </ScrollArea>
       )}

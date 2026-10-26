@@ -16,7 +16,7 @@ import { errorMessage } from "@/lib/error-message";
 import { IpcRequestError } from "@/lib/ipc-result";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
-import { worktreeLabel } from "@/workspace/worktree-label";
+import { worktreeLabel } from "@/workspace/worktrees/worktree-label";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 /** Offers to remove the worktree and branch of a pull request that has been merged. */

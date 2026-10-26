@@ -1,13 +1,14 @@
 //! The changed files of a worktree, from `git status`.
 
 use std::path::Path;
+use std::thread;
 
 use serde::Serialize;
 use specta::Type;
 
 use crate::git::GitError;
 
-use super::line_counts::{LineCounts, attach as attach_line_counts};
+use super::line_counts::{LineCounts, attach as attach_line_counts, read_tracked};
 use crate::git::git_command::git;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
@@ -99,18 +100,23 @@ pub fn parse_status(output: &str) -> Vec<ChangedFile> {
 }
 
 pub fn list_changes(root: &Path) -> Result<Vec<ChangedFile>, GitError> {
-    // `--no-optional-locks`: a refresh must not fight an agent that is running git in the same worktree.
-    let output = git(root)
-        .args([
-            "--no-optional-locks",
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-        ])
-        .run()?;
-    let mut files = parse_status(&output);
-    attach_line_counts(root, &mut files);
+    // The counts need no list of files, so they are read while `status` runs.
+    let (output, counts) = thread::scope(|scope| {
+        let counts = scope.spawn(|| read_tracked(root));
+        // `--no-optional-locks`: a refresh must not fight an agent that is running git in the same worktree.
+        let output = git(root)
+            .args([
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ])
+            .run();
+        (output, counts.join().unwrap_or_default())
+    });
+    let mut files = parse_status(&output?);
+    attach_line_counts(root, &mut files, &counts);
     Ok(files)
 }
 
@@ -119,7 +125,20 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use crate::git::git_command::spawn_count;
     use crate::git::test_repository::TestRepository;
+
+    #[test]
+    fn a_refresh_of_the_changes_starts_three_git_processes_and_no_more() {
+        let repo = TestRepository::new();
+        fs::write(repo.path.join("new.txt"), "x\n").expect("write");
+        let before = spawn_count::started_in(&repo.path);
+
+        list_changes(&repo.path).expect("list");
+
+        // The status and the two line counts, side by side.
+        assert_eq!(spawn_count::started_in(&repo.path) - before, 3);
+    }
 
     #[test]
     fn reads_staged_unstaged_and_untracked_entries() {

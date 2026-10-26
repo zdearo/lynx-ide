@@ -16,9 +16,7 @@ use crate::config::config_events::ConfigChanged;
 use crate::files::files_commands as files;
 use crate::pull_request::pull_request_commands as pull_request;
 use crate::terminal::terminal_commands as terminal;
-use crate::terminal::terminal_events::{
-    AgentStatusChanged, TerminalCreated, TerminalExit, TerminalOutput,
-};
+use crate::terminal::terminal_events::{AgentStatusChanged, TerminalCreated, TerminalExit};
 use crate::updates::update_commands as updates;
 use crate::updates::update_events::UpdateStatusChanged;
 use crate::usage::usage_commands as usage;
@@ -80,7 +78,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             agents::agent_launch_line,
             terminal::list_resumable_sessions,
             terminal::prepare_quit,
-            terminal::terminal_snapshot,
+            terminal::terminal_attach,
             terminal::write_terminal,
             terminal::resize_terminal,
             terminal::mark_agent_seen,
@@ -137,7 +135,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             updates::restart_to_update,
         ])
         .events(collect_events![
-            TerminalOutput,
             TerminalCreated,
             TerminalExit,
             AgentStatusChanged,

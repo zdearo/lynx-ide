@@ -67,8 +67,18 @@ opt-level = 3
 panic = "abort"
 strip = true
 
+# Optimized like release but without LTO, so `bun run bench:backend` builds in minutes, not tens of minutes.
+[profile.perf]
+inherits = "release"
+lto = false
+codegen-units = 16
+panic = "unwind"
+strip = false
+
 [dev-dependencies]
 tempfile = "3.27.0"
+# The runtime without a window, to run real commands in tests.
+tauri = { version = "2", features = ["test"] }
 
 [target."cfg(unix)".dependencies]
 nix = { version = "0.31.3", features = ["signal"] }

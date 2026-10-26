@@ -36,7 +36,7 @@ import {
   withLaunchArgument,
   withLaunchMode,
   yoloFlag,
-} from "@/terminal/agent-presets";
+} from "@/agents/agent-presets";
 import { errorMessage } from "@/lib/error-message";
 import { unwrap } from "@/lib/ipc-result";
 import { copy } from "@/ui-copy";

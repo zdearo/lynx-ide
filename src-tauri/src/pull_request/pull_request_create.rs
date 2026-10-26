@@ -7,11 +7,11 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::app_image_environment;
-use crate::bounded_command::{BoundedError, run_bounded};
 use crate::changes::branch_sync;
 use crate::error::AppError;
 use crate::git::git_command::git;
+use crate::process::app_image_environment;
+use crate::process::bounded_command::{BoundedError, run_bounded};
 
 /// A push and a pull request on a slow connection can take a while.
 const CREATE_TIMEOUT: Duration = Duration::from_secs(180);

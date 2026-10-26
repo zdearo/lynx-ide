@@ -5,7 +5,7 @@ import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { copy } from "@/ui-copy";
-import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
+import { useSelectedWorktree } from "@/workspace/worktrees/use-selected-worktree";
 
 /** The browser tabs of the selected worktree, each with a picture of its page. */
 export function BrowserTabPanel() {

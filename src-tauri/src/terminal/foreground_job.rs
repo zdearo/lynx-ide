@@ -14,7 +14,7 @@ use crate::agents::agent_monitor::Foreground;
 #[cfg(any(windows, test))]
 use crate::agents::harness::harness_of_job;
 #[cfg(unix)]
-use crate::app_image_environment;
+use crate::process::app_image_environment;
 
 /// The arguments of a process, as it was started. None when the process no longer exists.
 #[cfg(unix)]

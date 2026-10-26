@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
 
-use crate::app_image_environment::{clean_command, launch_executable};
 use crate::error::{AppError, IpcError};
+use crate::process::app_image_environment::{clean_command, launch_executable};
 use crate::terminal::terminal_manager::TerminalManager;
 
 use super::update_service::UpdateService;

@@ -1,0 +1,167 @@
+{
+  "rounds": 3,
+  "runs": [
+    {
+      "transport": "channel",
+      "scenario": "flood",
+      "wallMs": 774.9999999999982,
+      "handlerMs": 0.999999999998181,
+      "worstStallMs": 56,
+      "latencyP50Ms": 127.56,
+      "latencyP95Ms": 130.75,
+      "megabytes": 13.1072
+    },
+    {
+      "transport": "events",
+      "scenario": "flood",
+      "wallMs": 622,
+      "handlerMs": 0,
+      "worstStallMs": 74.99999999999818,
+      "latencyP50Ms": 78.387,
+      "latencyP95Ms": 161.3395,
+      "megabytes": 13.1072
+    },
+    {
+      "transport": "channel",
+      "scenario": "typing",
+      "wallMs": 4044,
+      "handlerMs": 7.000000000005457,
+      "worstStallMs": 26,
+      "latencyP50Ms": 0.203,
+      "latencyP95Ms": 4.9545,
+      "megabytes": 0.0096
+    },
+    {
+      "transport": "events",
+      "scenario": "typing",
+      "wallMs": 4056,
+      "handlerMs": 13.000000000003638,
+      "worstStallMs": 44,
+      "latencyP50Ms": 0.2275,
+      "latencyP95Ms": 5.4745,
+      "megabytes": 0.0096
+    },
+    {
+      "transport": "events",
+      "scenario": "flood",
+      "wallMs": 425,
+      "handlerMs": 0,
+      "worstStallMs": 109.00000000000364,
+      "latencyP50Ms": 95.484,
+      "latencyP95Ms": 127.5535,
+      "megabytes": 13.1072
+    },
+    {
+      "transport": "channel",
+      "scenario": "flood",
+      "wallMs": 361,
+      "handlerMs": 1,
+      "worstStallMs": 33,
+      "latencyP50Ms": 45.065,
+      "latencyP95Ms": 82.4365,
+      "megabytes": 13.1072
+    },
+    {
+      "transport": "events",
+      "scenario": "typing",
+      "wallMs": 4056.0000000000036,
+      "handlerMs": 5,
+      "worstStallMs": 43.00000000000364,
+      "latencyP50Ms": 0.259,
+      "latencyP95Ms": 5.4045,
+      "megabytes": 0.0096
+    },
+    {
+      "transport": "channel",
+      "scenario": "typing",
+      "wallMs": 4050.9999999999964,
+      "handlerMs": 11.000000000007276,
+      "worstStallMs": 39,
+      "latencyP50Ms": 0.229,
+      "latencyP95Ms": 5.9955,
+      "megabytes": 0.0096
+    },
+    {
+      "transport": "channel",
+      "scenario": "flood",
+      "wallMs": 370.9999999999927,
+      "handlerMs": 0,
+      "worstStallMs": 27,
+      "latencyP50Ms": 32.79275,
+      "latencyP95Ms": 48.64225,
+      "megabytes": 13.1072
+    },
+    {
+      "transport": "events",
+      "scenario": "flood",
+      "wallMs": 412.9999999999927,
+      "handlerMs": 0,
+      "worstStallMs": 80,
+      "latencyP50Ms": 77.92725,
+      "latencyP95Ms": 108.7255,
+      "megabytes": 13.1072
+    },
+    {
+      "transport": "channel",
+      "scenario": "typing",
+      "wallMs": 4050,
+      "handlerMs": 7.999999999992724,
+      "worstStallMs": 48,
+      "latencyP50Ms": 0.18725,
+      "latencyP95Ms": 5.11025,
+      "megabytes": 0.0096
+    },
+    {
+      "transport": "events",
+      "scenario": "typing",
+      "wallMs": 4052.9999999999927,
+      "handlerMs": 9.999999999992724,
+      "worstStallMs": 37.000000000007276,
+      "latencyP50Ms": 0.23725,
+      "latencyP95Ms": 5.309,
+      "megabytes": 0.0096
+    }
+  ],
+  "summary": [
+    {
+      "transport": "events",
+      "scenario": "flood",
+      "wallMs": 425,
+      "handlerMs": 0,
+      "worstStallMs": 80,
+      "latencyP50Ms": 78.39,
+      "latencyP95Ms": 127.55,
+      "megabytes": 13.11
+    },
+    {
+      "transport": "events",
+      "scenario": "typing",
+      "wallMs": 4056,
+      "handlerMs": 10,
+      "worstStallMs": 43,
+      "latencyP50Ms": 0.24,
+      "latencyP95Ms": 5.4,
+      "megabytes": 0.01
+    },
+    {
+      "transport": "channel",
+      "scenario": "flood",
+      "wallMs": 371,
+      "handlerMs": 1,
+      "worstStallMs": 33,
+      "latencyP50Ms": 45.06,
+      "latencyP95Ms": 82.44,
+      "megabytes": 13.11
+    },
+    {
+      "transport": "channel",
+      "scenario": "typing",
+      "wallMs": 4050,
+      "handlerMs": 8,
+      "worstStallMs": 39,
+      "latencyP50Ms": 0.2,
+      "latencyP95Ms": 5.11,
+      "megabytes": 0.01
+    }
+  ]
+}

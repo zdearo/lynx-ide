@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
-use crate::blocking_task::run_blocking;
 use crate::error::IpcError;
+use crate::process::blocking_task::run_blocking;
 use crate::workspace::workspace_service::WorkspaceService;
 
 use super::worktree_watcher::{ChangeSink, WorktreeWatcher};

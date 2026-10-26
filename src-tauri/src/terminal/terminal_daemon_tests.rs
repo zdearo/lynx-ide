@@ -31,7 +31,7 @@ fn start_daemon_of(dir: &Path, version: &'static str) {
             &folder,
             &Options {
                 idle: Duration::from_secs(30),
-                prepare: crate::app_image_environment::clean_terminal,
+                prepare: crate::process::app_image_environment::clean_terminal,
                 version,
             },
         );

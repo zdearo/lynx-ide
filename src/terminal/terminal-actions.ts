@@ -5,7 +5,7 @@ import { useConfigStore } from "@/config/config-store";
 import { useDialogStore } from "@/dialog-store";
 import { copy } from "@/ui-copy";
 import { errorMessage } from "@/lib/error-message";
-import type { TerminalPreset } from "@/terminal/agent-presets";
+import type { TerminalPreset } from "@/agents/agent-presets";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 

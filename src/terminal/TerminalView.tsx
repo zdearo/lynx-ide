@@ -2,9 +2,7 @@ import { useEffect, useRef } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-
-import { commands, events, type TerminalConfig } from "@/bindings";
+import { commands, type TerminalConfig } from "@/bindings";
 import { useTerminalConfig } from "@/config/config-store";
 import { cn } from "@/lib/utils";
 import { unwrap } from "@/lib/ipc-result";
@@ -19,6 +17,8 @@ import {
   type WebglRendererSlot,
 } from "@/terminal/terminal-renderer";
 import { useTerminalStore } from "@/terminal/terminal-store";
+import { terminalExitHub } from "@/terminal/terminal-event-hub";
+import { attachTerminalOutput } from "@/terminal/terminal-output-stream";
 import { TerminalStreamGate } from "@/terminal/terminal-stream-gate";
 
 interface TerminalViewProps {
@@ -80,13 +80,6 @@ function mountTerminal(
   };
 
   let disposed = false;
-  const unlisteners: UnlistenFn[] = [];
-  const keepListener = (pending: Promise<UnlistenFn>) => {
-    void pending.then((unlisten) => {
-      if (disposed) unlisten();
-      else unlisteners.push(unlisten);
-    });
-  };
 
   const gate = new TerminalStreamGate(
     (data) => terminal.write(data),
@@ -97,19 +90,17 @@ function mountTerminal(
     },
   );
 
-  // Listen before asking for the snapshot so no output falls in the gap.
-  keepListener(
-    events.terminalOutput.listen(({ payload }) => {
-      if (payload.id === terminalId) gate.pushOutput(payload);
-    }),
-  );
-  keepListener(
-    events.terminalExit.listen(({ payload }) => {
-      if (payload.id === terminalId) gate.pushExit(payload.exitCode);
-    }),
+  // Exit is an event, so it is subscribed before attaching: attaching is what returns the snapshot.
+  const exit = terminalExitHub.subscribe(terminalId, (payload) =>
+    gate.pushExit(payload.exitCode),
   );
 
-  unwrap(commands.terminalSnapshot(terminalId))
+  exit.ready
+    .then(() =>
+      unwrap(
+        attachTerminalOutput(terminalId, (chunk) => gate.pushOutput(chunk)),
+      ),
+    )
     .then((snapshot) => {
       if (disposed) return;
       gate.attach(snapshot);
@@ -167,7 +158,7 @@ function mountTerminal(
       bell.dispose();
       container.removeEventListener("animationend", endFlash);
       container.removeEventListener("mouseup", copyOnRelease);
-      unlisteners.forEach((unlisten) => unlisten());
+      exit.unsubscribe();
       webgl.dispose();
       terminal.dispose();
     },

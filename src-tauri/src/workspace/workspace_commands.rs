@@ -1,8 +1,8 @@
 use tauri::State;
 
-use crate::blocking_task::run_blocking;
 use crate::error::IpcError;
 use crate::git::worktree_manager::RepoRefs;
+use crate::process::blocking_task::run_blocking;
 
 use super::linked_folders::LinkedFolderPreview;
 use super::workspace_models::{Folder, RemoveWorktreeResult, Repo, WorktreeInfo};

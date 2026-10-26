@@ -5,8 +5,8 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::app_image_environment;
-use crate::bounded_command::{BoundedError, run_bounded};
+use crate::process::app_image_environment;
+use crate::process::bounded_command::{BoundedError, run_bounded};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
@@ -23,6 +23,32 @@ pub enum GitError {
 impl GitError {
     pub fn stderr_contains(&self, needle: &str) -> bool {
         matches!(self, GitError::Failed { stderr, .. } if stderr.contains(needle))
+    }
+}
+
+/// How many git processes a test started in each directory, so a test can say "this takes two".
+/// Keyed by directory because tests run side by side, each in a repository of its own.
+#[cfg(test)]
+pub mod spawn_count {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock, PoisonError};
+
+    static COUNTS: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
+
+    fn counts() -> std::sync::MutexGuard<'static, HashMap<PathBuf, usize>> {
+        COUNTS
+            .get_or_init(Mutex::default)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn record(cwd: &Path) {
+        *counts().entry(cwd.to_path_buf()).or_default() += 1;
+    }
+
+    pub fn started_in(cwd: &Path) -> usize {
+        counts().get(cwd).copied().unwrap_or(0)
     }
 }
 
@@ -97,6 +123,9 @@ impl GitCommand<'_> {
                 format!("directory does not exist: {}", self.cwd.display()),
             )));
         }
+
+        #[cfg(test)]
+        spawn_count::record(self.cwd);
 
         let mut command = Command::new("git");
         command

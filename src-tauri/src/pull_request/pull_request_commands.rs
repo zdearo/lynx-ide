@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::blocking_task::run_blocking;
 use crate::changes::commit_message_prompt::style_text;
 use crate::config::ConfigStore;
 use crate::error::{AppError, IpcError};
+use crate::process::blocking_task::run_blocking;
 use crate::workspace::workspace_models::RemoveWorktreeResult;
 use crate::workspace::workspace_service::WorkspaceService;
 

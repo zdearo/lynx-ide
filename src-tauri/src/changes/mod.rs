@@ -11,3 +11,6 @@ pub mod commit_message_draft;
 pub mod commit_message_prompt;
 pub mod file_diff;
 pub mod line_counts;
+
+#[cfg(test)]
+mod changes_perf_tests;

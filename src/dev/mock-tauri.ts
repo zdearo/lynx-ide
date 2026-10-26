@@ -458,9 +458,35 @@ function configIssue(config: AppConfig): string | null {
 const MOCK_PICTURE =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
+/** A big workspace for `e2e/perf-bench.mjs`: many repos, and one folder with thousands of files. */
+function seedBenchmark(seeded: ReturnType<typeof seedRepos>): void {
+  for (let i = 3; i <= 40; i++) {
+    const repo: Repo = {
+      id: `r${i}`,
+      name: `service-${i}`,
+      path: `/home/dev/service-${i}`,
+      folderId: null,
+      linkedRootId: null,
+      missing: false,
+    };
+    seeded.repos.push(repo);
+    seeded.worktrees[repo.id] = [
+      worktree(repo.path, repo.name, "main", null, true),
+      ...[1, 2, 3].map((n) =>
+        worktree(repo.path, `task-${n}`, `task/${n}`, "origin/main"),
+      ),
+    ];
+  }
+  MOCK_FILES[""].push(dir("big"));
+  MOCK_FILES["big"] = Array.from({ length: 5000 }, (_, i) =>
+    file(`module-${String(i).padStart(4, "0")}.ts`),
+  );
+}
+
 export function installMockTauri(scenario: string): void {
   const seeded =
     scenario === "empty" ? { repos: [], worktrees: {} } : seedRepos();
+  if (scenario === "bench") seedBenchmark(seeded);
   let configSnapshot: ConfigSnapshot = {
     config: structuredClone(DEFAULT_CONFIG),
     issues:
@@ -794,6 +820,26 @@ export function installMockTauri(scenario: string): void {
   }
   Object.assign(window, { Notification: MockSystemNotification });
 
+  // Output reaches the page the way the backend sends it: raw bytes through the attached channel.
+  const outputChannels = new Map<string, { channel: number; index: number }>();
+  function sendOutput(id: string, seq: number, data: string) {
+    const target = outputChannels.get(id);
+    if (!target) return;
+    const text = new TextEncoder().encode(data);
+    const frame = new Uint8Array(4 + text.length);
+    new DataView(frame.buffer).setUint32(0, seq, true);
+    frame.set(text, 4);
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { runCallback(id: number, data: unknown): void };
+      }
+    ).__TAURI_INTERNALS__;
+    internals.runCallback(target.channel, {
+      message: frame.buffer,
+      index: target.index++,
+    });
+  }
+
   function addSession(
     path: string,
     command: string | null,
@@ -834,6 +880,13 @@ export function installMockTauri(scenario: string): void {
         AGENT_TRANSCRIPT,
         secondsAgo,
       );
+    }
+  }
+
+  if (scenario === "bench") {
+    // Every session keeps a mounted terminal, so each one listens to the output events.
+    for (let i = 0; i < 12; i++) {
+      addSession("/home/dev/lynx-ide-worktrees/feat-auth", null, true, "");
     }
   }
 
@@ -1758,8 +1811,13 @@ export function installMockTauri(scenario: string): void {
           );
           return structuredClone(sessions.find((s) => s.id === id));
         }
-        case "terminal_snapshot": {
+        case "terminal_attach": {
           const id = String(args.id);
+          // A real channel arrives as `__CHANNEL__:<callback id>`; its messages are numbered from 0.
+          const channel = Number(
+            /(\d+)/.exec(JSON.stringify(args.onOutput))?.[1],
+          );
+          outputChannels.set(id, { channel, index: 0 });
           const session = sessions.find((s) => s.id === id);
           if (!session)
             throw {
@@ -1779,7 +1837,7 @@ export function installMockTauri(scenario: string): void {
           seq.set(id, next);
           const echoed = String(args.data).replace(/\r/g, "\r\n");
           transcripts.set(id, (transcripts.get(id) ?? "") + echoed);
-          void emit("terminal-output", { id, seq: next, data: echoed });
+          sendOutput(id, next, echoed);
           return null;
         }
         case "resize_terminal":
@@ -1873,6 +1931,19 @@ export function installMockTauri(scenario: string): void {
           });
         }
       },
+      /** Output arriving from the backend: `chunks` events of `bytes` each, in bursts so the page can breathe. */
+      async flood(id: string, chunks: number, bytes: number) {
+        const line = `${"x".repeat(Math.max(1, bytes - 2))}\r\n`;
+        for (let sent = 0; sent < chunks;) {
+          for (let burst = 0; burst < 20 && sent < chunks; burst++, sent++) {
+            const next = (seq.get(id) ?? 0) + 1;
+            seq.set(id, next);
+            sendOutput(id, next, line);
+          }
+          await new Promise((resolve) => setTimeout(resolve));
+        }
+      },
+      sessionIds: () => sessions.map((session) => session.id),
       notifications: () => structuredClone(sentNotifications),
       /** Whether the agent's browser tools were added together with its hooks. */
       browserToolsOn: (harness: string) => browserToolsOn.has(harness),

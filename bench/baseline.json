@@ -1,0 +1,51 @@
+{
+  "label": "baseline",
+  "date": "2026-10-23T17:55:44.154Z",
+  "commit": "13f1c58",
+  "results": {
+    "echo_latency": {
+      "max_ms": 0.71,
+      "p50_ms": 0.42,
+      "p95_ms": 0.62,
+      "samples": 40
+    },
+    "idle_sessions": {
+      "cpu_ms_per_s": 0,
+      "sessions": 20,
+      "threads": 62,
+      "wakeups_per_s": 0.1
+    },
+    "output_flood": {
+      "avg_bytes_per_event": 300.97,
+      "cpu_ms": 1220,
+      "events": 201850,
+      "events_per_s": 524030.62,
+      "output_mb": 60.75,
+      "payload_mb": 75.74,
+      "seconds": 0.37,
+      "threads": 20
+    },
+    "ui_startup": {
+      "ms": 4750,
+      "scriptMs": 3326.16,
+      "taskMs": 3885.68,
+      "domNodes": 13210,
+      "heapMb": 64.96
+    },
+    "ui_flood": {
+      "ms": 1272,
+      "scriptMs": 830.08,
+      "taskMs": 946.06,
+      "longTasks": 0,
+      "worstTaskMs": 0,
+      "heapMb": 62.8
+    },
+    "ui_files": {
+      "ms": 29647,
+      "taskMs": 16240.39,
+      "rows": 5031,
+      "domNodes": 70644,
+      "worstTaskMs": 14678
+    }
+  }
+}

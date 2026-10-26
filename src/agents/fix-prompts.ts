@@ -1,6 +1,6 @@
 import type { CommitMessageAgent, HarnessId } from "@/bindings";
 import { quotePathForShell } from "@/files/shell-quote";
-import type { TerminalPreset } from "@/terminal/agent-presets";
+import type { TerminalPreset } from "@/agents/agent-presets";
 
 /** The agents Lynx knows how to hand a first prompt to, with how each takes it. */
 const PROMPT_AGENTS: readonly HarnessId[] = ["claude", "codex", "opencode"];

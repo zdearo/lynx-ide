@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::blocking_task::run_blocking;
 use crate::error::{AppError, IpcError};
+use crate::process::blocking_task::run_blocking;
 
 use super::app_config::AppConfig;
 use super::config_store::{ConfigError, ConfigSnapshot, ConfigStore};

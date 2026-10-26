@@ -31,8 +31,8 @@ import {
   type PullRequestBadge,
 } from "@/pull-request/pull-request-view";
 import { copy } from "@/ui-copy";
-import { useSelectedWorktree } from "@/workspace/use-selected-worktree";
-import { worktreeLabel } from "@/workspace/worktree-label";
+import { useSelectedWorktree } from "@/workspace/worktrees/use-selected-worktree";
+import { worktreeLabel } from "@/workspace/worktrees/worktree-label";
 
 /** GitHub's own numbers move slowly; a minute is fresh enough without hammering the API. */
 const POLL_MS = 60_000;

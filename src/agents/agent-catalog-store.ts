@@ -3,7 +3,7 @@ import { create } from "zustand";
 
 import { commands, type AgentEntry, type HarnessId } from "@/bindings";
 import { unwrap } from "@/lib/ipc-result";
-import { visiblePresets, type TerminalPreset } from "@/terminal/agent-presets";
+import { visiblePresets, type TerminalPreset } from "@/agents/agent-presets";
 
 interface AgentCatalogState {
   /** Null until the first load finishes. */

@@ -11,7 +11,7 @@ const SettingsDialog = lazy(() =>
   })),
 );
 const AddProjectDialog = lazy(() =>
-  import("@/workspace/AddProjectDialog").then((m) => ({
+  import("@/workspace/projects/AddProjectDialog").then((m) => ({
     default: m.AddProjectDialog,
   })),
 );
@@ -41,26 +41,30 @@ const CustomCommandDialog = lazy(() =>
   })),
 );
 const FolderDialog = lazy(() =>
-  import("@/workspace/FolderDialog").then((m) => ({ default: m.FolderDialog })),
+  import("@/workspace/projects/FolderDialog").then((m) => ({
+    default: m.FolderDialog,
+  })),
 );
 const MoveDialog = lazy(() =>
-  import("@/workspace/MoveDialog").then((m) => ({ default: m.MoveDialog })),
+  import("@/workspace/projects/MoveDialog").then((m) => ({
+    default: m.MoveDialog,
+  })),
 );
 const QuitDialog = lazy(() =>
   import("@/terminal/QuitDialog").then((m) => ({ default: m.QuitDialog })),
 );
 const DeleteFolderDialog = lazy(() =>
-  import("@/workspace/DeleteFolderDialog").then((m) => ({
+  import("@/workspace/projects/DeleteFolderDialog").then((m) => ({
     default: m.DeleteFolderDialog,
   })),
 );
 const UnlinkFolderDialog = lazy(() =>
-  import("@/workspace/UnlinkFolderDialog").then((m) => ({
+  import("@/workspace/projects/UnlinkFolderDialog").then((m) => ({
     default: m.UnlinkFolderDialog,
   })),
 );
 const NewWorktreeDialog = lazy(() =>
-  import("@/workspace/NewWorktreeDialog").then((m) => ({
+  import("@/workspace/worktrees/NewWorktreeDialog").then((m) => ({
     default: m.NewWorktreeDialog,
   })),
 );
@@ -70,12 +74,12 @@ const CleanUpMergedDialog = lazy(() =>
   })),
 );
 const RemoveWorktreeDialog = lazy(() =>
-  import("@/workspace/RemoveWorktreeDialog").then((m) => ({
+  import("@/workspace/worktrees/RemoveWorktreeDialog").then((m) => ({
     default: m.RemoveWorktreeDialog,
   })),
 );
 const RemoveRepoDialog = lazy(() =>
-  import("@/workspace/RemoveRepoDialog").then((m) => ({
+  import("@/workspace/projects/RemoveRepoDialog").then((m) => ({
     default: m.RemoveRepoDialog,
   })),
 );
@@ -83,19 +87,19 @@ const RemoveRepoDialog = lazy(() =>
 // Once the app is idle, fetch the dialogs' code, so the first open does not wait for it.
 const DIALOG_MODULES = [
   () => import("@/settings/SettingsDialog"),
-  () => import("@/workspace/AddProjectDialog"),
+  () => import("@/workspace/projects/AddProjectDialog"),
   () => import("@/terminal/CloseTerminalDialog"),
   () => import("@/editor/CloseFileDialog"),
   () => import("@/pull-request/CreateRemoteDialog"),
   () => import("@/changes/DiscardDialog"),
   () => import("@/terminal/CustomCommandDialog"),
-  () => import("@/workspace/FolderDialog"),
-  () => import("@/workspace/MoveDialog"),
-  () => import("@/workspace/DeleteFolderDialog"),
-  () => import("@/workspace/UnlinkFolderDialog"),
-  () => import("@/workspace/NewWorktreeDialog"),
-  () => import("@/workspace/RemoveWorktreeDialog"),
-  () => import("@/workspace/RemoveRepoDialog"),
+  () => import("@/workspace/projects/FolderDialog"),
+  () => import("@/workspace/projects/MoveDialog"),
+  () => import("@/workspace/projects/DeleteFolderDialog"),
+  () => import("@/workspace/projects/UnlinkFolderDialog"),
+  () => import("@/workspace/worktrees/NewWorktreeDialog"),
+  () => import("@/workspace/worktrees/RemoveWorktreeDialog"),
+  () => import("@/workspace/projects/RemoveRepoDialog"),
 ];
 
 function prefetchDialogs(): void {

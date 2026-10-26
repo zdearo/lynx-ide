@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::blocking_task::run_blocking;
 use crate::config::ConfigStore;
 use crate::error::IpcError;
+use crate::process::blocking_task::run_blocking;
 
 use super::plan_usage::PlanUsage;
 use super::plan_usage_service::PlanUsageService;

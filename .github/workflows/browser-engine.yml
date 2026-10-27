@@ -71,14 +71,7 @@ jobs:
       - name: Build the package
         run: bun run browser:engine -- --bundle --out engine-package
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: browser-engine-${{ matrix.name }}
-          path: engine-package/*
-          # The package reaches users through the release bucket, not through this artifact.
-          retention-days: 1
-
-      # Always runs: a package that the app would refuse must not get as far as the bucket.
+      # A package the app would refuse must not get as far as the bucket.
       - name: Check the package
         run: bun scripts/engine-publish.mjs --package engine-package --out engine-out
 

@@ -162,7 +162,7 @@ O endpoint e a chave pública ficam no `tauri.conf.json`. O endpoint é `https:/
 
 Na tela (`settings/UpdatesSettings.tsx`, aba Updates), uma nova versão aparece como aviso no app, uma vez por versão (`updates/notify-update.ts`). Com a janela fora de frente e `notifications.onUpdate` ligado, sai também uma notificação do sistema. Reiniciar fecha terminais e agentes, por isso pede confirmação.
 
-Publicação: o job `publish` de `.github/workflows/build.yml` e `scripts/release-manifest.mjs`. O script monta o manifesto e o valida com o mesmo `validateManifest` do Worker antes de qualquer upload. Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` e `CLOUDFLARE_API_TOKEN`; variável: `CLOUDFLARE_ACCOUNT_ID`. Com `createUpdaterArtifacts` ligado, `tauri build` precisa de `TAURI_SIGNING_PRIVATE_KEY` no ambiente.
+Publicação: o job `publish` de `.github/workflows/build.yml` e `scripts/release-manifest.mjs`. O script monta o manifesto e o valida com o mesmo `validateManifest` do Worker antes de qualquer upload. Os instaladores não passam por artefato do GitHub (a cota de armazenamento já travou releases): os jobs de build os sobem para o bucket privado `lynx-releases-staging`, em `<run_id>/`, junto de um `files-<OS>.txt` com os nomes; o job `publish` os baixa de lá e os apaga no fim. Regra de 7 dias no bucket para o que sobrar. Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` e `CLOUDFLARE_API_TOKEN`; variável: `CLOUDFLARE_ACCOUNT_ID`. Com `createUpdaterArtifacts` ligado, `tauri build` precisa de `TAURI_SIGNING_PRIVATE_KEY` no ambiente.
 
 ## Arquivos
 

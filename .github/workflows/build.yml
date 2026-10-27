@@ -134,20 +134,30 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun run tauri build
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lynx-${{ runner.os }}
-          path: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/rpm/*.rpm
-            src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/bundle/appimage/*.AppImage.sig
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/nsis/*.exe.sig
-            src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: error
-          # Read only by the publish job of the same run; a day covers a re-run of a failed release.
-          retention-days: 1
+      # The installers go to a private bucket, not to GitHub artifacts: artifact storage has a quota,
+      # and a full quota stops every release. The publish job reads them back and removes them, and
+      # the bucket's seven-day rule removes whatever a run left behind.
+      - name: Stage the installers
+        shell: bash
+        working-directory: services/update-worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bundle=../../src-tauri/target/release/bundle
+          shopt -s nullglob
+          files=($bundle/deb/*.deb $bundle/rpm/*.rpm $bundle/appimage/*.AppImage $bundle/appimage/*.AppImage.sig $bundle/nsis/*.exe $bundle/nsis/*.exe.sig $bundle/msi/*.msi)
+          test "${#files[@]}" -gt 0
+          list="../../files-${{ runner.os }}.txt"
+          : > "$list"
+          for file in "${files[@]}"; do
+            name=$(basename "$file")
+            node ./node_modules/wrangler/bin/wrangler.js r2 object put "lynx-releases-staging/$GITHUB_RUN_ID/$name" --file "$file" --remote
+            echo "$name" >> "$list"
+          done
+          node ./node_modules/wrangler/bin/wrangler.js r2 object put "lynx-releases-staging/$GITHUB_RUN_ID/$(basename "$list")" --file "$list" --remote
 
   # Finds out what this run has to do: whether it releases the app, and whether the push changed what
   # the browser engine is made of. Only a push to main can change the engine; tags and manual runs
@@ -241,16 +251,24 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: lynx-*
-          merge-multiple: true
-          path: dist
+      - name: Install the upload tool
+        working-directory: services/update-worker
+        run: bun install --frozen-lockfile
 
-      # Artifacts keep their folders (appimage/, nsis/), so move the installers up to dist/ itself.
-      - name: Flatten the installers
+      # Each package job listed its installers in files-<OS>.txt beside them, in the staging bucket.
+      - name: Fetch the staged installers
+        shell: bash
+        working-directory: services/update-worker
         run: |
-          find dist -mindepth 2 -type f -exec mv {} dist/ \;
+          set -euo pipefail
+          mkdir -p ../../dist ../../staged
+          for os in Linux Windows; do
+            node ./node_modules/wrangler/bin/wrangler.js r2 object get "lynx-releases-staging/$GITHUB_RUN_ID/files-$os.txt" --file "../../staged/files-$os.txt" --remote
+            while IFS= read -r name; do
+              [ -n "$name" ] || continue
+              node ./node_modules/wrangler/bin/wrangler.js r2 object get "lynx-releases-staging/$GITHUB_RUN_ID/$name" --file "../../dist/$name" --remote
+            done < "../../staged/files-$os.txt"
+          done
 
       # The manifest may only move forward, so read what the stable channel serves now.
       # A 404 means no release has been published yet.
@@ -313,11 +331,6 @@ jobs:
           done
           echo "the engines speak protocol $app, like this app"
 
-      - name: Install the upload tool
-        if: steps.decide.outputs.mode == 'publish'
-        working-directory: services/update-worker
-        run: bun install --frozen-lockfile
-
       # Installers first, then the archived manifest, and the stable pointer last: nobody should read
       # a pointer to files that are not there yet.
       - name: Upload the installers and the manifest
@@ -342,3 +355,18 @@ jobs:
           version=$(jq -r .version out/manifest.json)
           offered=$(curl -fsS "https://updates.zdearo.dev/api/update/linux/x86_64/0.0.0?channel=stable&run=$GITHUB_RUN_ID" | jq -r .version)
           test "$offered" = "$version"
+
+      # Best effort: anything this misses is removed by the bucket's seven-day rule.
+      - name: Remove the staged installers
+        if: always()
+        shell: bash
+        working-directory: services/update-worker
+        run: |
+          for os in Linux Windows; do
+            list="../../staged/files-$os.txt"
+            [ -f "$list" ] || continue
+            while IFS= read -r name; do
+              [ -n "$name" ] && node ./node_modules/wrangler/bin/wrangler.js r2 object delete "lynx-releases-staging/$GITHUB_RUN_ID/$name" --remote || true
+            done < "$list"
+            node ./node_modules/wrangler/bin/wrangler.js r2 object delete "lynx-releases-staging/$GITHUB_RUN_ID/files-$os.txt" --remote || true
+          done

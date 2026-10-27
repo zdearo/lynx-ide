@@ -286,7 +286,7 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
           disabled={busyElsewhere}
           aria-busy={generating}
           className={cn(
-            "absolute top-1/2 right-1 size-6 -translate-y-1/2",
+            "absolute top-1/2 right-1 size-6 -translate-y-1/2 active:not-aria-[haspopup]:-translate-y-1/2",
             stagedCount === 0 && "opacity-60",
           )}
           onClick={() => void generate()}

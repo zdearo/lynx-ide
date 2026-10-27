@@ -197,7 +197,7 @@ function PullRequestDetails({
 
   async function openOnGitHub() {
     try {
-      await unwrap(commands.openPullRequestUrl(pullRequest.url));
+      await unwrap(commands.openLink(pullRequest.url));
     } catch (error) {
       toast.error(copy.pullRequest.openFailed, {
         description: errorMessage(error),

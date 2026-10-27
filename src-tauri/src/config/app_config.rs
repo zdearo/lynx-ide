@@ -274,6 +274,44 @@ impl Default for UsageConfig {
     }
 }
 
+/// Bots Lynx runs itself. Each provider is switched on here; its login is kept outside this file.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BotsConfig {
+    pub chatgpt: ChatGptBotsConfig,
+    pub decider: DeciderBotsConfig,
+    pub memory: MemoryBotsConfig,
+}
+
+/// Whether channels ask the Jev decision model who answers a message that names nobody. Off until the
+/// user turns it on and saves a key, which is kept outside this file.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DeciderBotsConfig {
+    pub enabled: bool,
+}
+
+/// Whether a bot's conversations are read, now and then, for facts worth remembering. It costs one
+/// short call to the bot's CLI per quiet conversation, so it can be turned off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryBotsConfig {
+    pub capture: bool,
+}
+
+impl Default for MemoryBotsConfig {
+    fn default() -> Self {
+        Self { capture: true }
+    }
+}
+
+/// Whether bots may use the ChatGPT plan the user signed in with. Off until the user turns it on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatGptBotsConfig {
+    pub enabled: bool,
+}
+
 /// The effective settings: what `~/.lynx/config.json` says, with defaults for the rest.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -287,6 +325,7 @@ pub struct AppConfig {
     pub browser: BrowserConfig,
     pub usage: UsageConfig,
     pub updates: UpdatesConfig,
+    pub bots: BotsConfig,
 }
 
 /// One thing wrong with the config, addressed by its dotted key (`terminal.fontSize`).
@@ -484,6 +523,9 @@ impl AppConfig {
             "updates.checkAutomatically" => {
                 self.updates.check_automatically = defaults.updates.check_automatically;
             }
+            "bots.chatgpt.enabled" => self.bots.chatgpt.enabled = defaults.bots.chatgpt.enabled,
+            "bots.decider.enabled" => self.bots.decider.enabled = defaults.bots.decider.enabled,
+            "bots.memory.capture" => self.bots.memory.capture = defaults.bots.memory.capture,
             "browser.agentAccess" => self.browser.agent_access = defaults.browser.agent_access,
             "browser.allowedSites" => self.browser.allowed_sites = defaults.browser.allowed_sites,
             "usage.visible" => self.usage.visible = defaults.usage.visible,
@@ -592,6 +634,23 @@ pub fn parse_config(value: &Value, home: &Path) -> (AppConfig, Vec<ConfigIssue>)
         && let Some(value) = flag(updates, "checkAutomatically", "updates", &mut issues)
     {
         config.updates.check_automatically = value;
+    }
+    if let Some(bots) = section(root, "bots", &mut issues) {
+        if let Some(chatgpt) = section(bots, "chatgpt", &mut issues)
+            && let Some(value) = flag(chatgpt, "enabled", "bots.chatgpt", &mut issues)
+        {
+            config.bots.chatgpt.enabled = value;
+        }
+        if let Some(decider) = section(bots, "decider", &mut issues)
+            && let Some(value) = flag(decider, "enabled", "bots.decider", &mut issues)
+        {
+            config.bots.decider.enabled = value;
+        }
+        if let Some(memory) = section(bots, "memory", &mut issues)
+            && let Some(value) = flag(memory, "capture", "bots.memory", &mut issues)
+        {
+            config.bots.memory.capture = value;
+        }
     }
     if let Some(browser) = section(root, "browser", &mut issues) {
         config.browser.agent_access =
@@ -1407,6 +1466,46 @@ mod tests {
         let (config, issues) = parse(json!({ "updates": { "checkAutomatically": "no" } }));
         assert_eq!(keys(&issues), ["updates.checkAutomatically"]);
         assert!(config.updates.check_automatically);
+    }
+
+    #[test]
+    fn bots_stay_off_until_the_user_turns_them_on() {
+        let (config, issues) = parse(json!({}));
+        assert!(issues.is_empty());
+        assert!(!config.bots.chatgpt.enabled);
+
+        let (config, issues) = parse(json!({ "bots": { "chatgpt": { "enabled": true } } }));
+        assert!(issues.is_empty());
+        assert!(config.bots.chatgpt.enabled);
+    }
+
+    #[test]
+    fn memory_capture_is_on_by_default_and_a_bad_value_keeps_it() {
+        assert!(parse(json!({})).0.bots.memory.capture);
+        let (config, _) = parse(json!({ "bots": { "memory": { "capture": false } } }));
+        assert!(!config.bots.memory.capture);
+
+        let (config, issues) = parse(json!({ "bots": { "memory": { "capture": 1 } } }));
+        assert_eq!(keys(&issues), ["bots.memory.capture"]);
+        assert!(config.bots.memory.capture);
+    }
+
+    #[test]
+    fn the_decider_switch_is_read_and_a_bad_one_keeps_the_default() {
+        let (config, issues) = parse(json!({ "bots": { "decider": { "enabled": true } } }));
+        assert!(issues.is_empty());
+        assert!(config.bots.decider.enabled);
+
+        let (config, issues) = parse(json!({ "bots": { "decider": { "enabled": 1 } } }));
+        assert_eq!(keys(&issues), ["bots.decider.enabled"]);
+        assert!(!config.bots.decider.enabled);
+    }
+
+    #[test]
+    fn an_invalid_bots_flag_is_reported_and_keeps_the_default() {
+        let (config, issues) = parse(json!({ "bots": { "chatgpt": { "enabled": "yes" } } }));
+        assert_eq!(keys(&issues), ["bots.chatgpt.enabled"]);
+        assert!(!config.bots.chatgpt.enabled);
     }
 
     #[test]

@@ -5,6 +5,10 @@ use tauri_specta::{Builder, collect_commands, collect_events};
 
 use crate::agents::agent_commands as agents;
 use crate::app_info;
+use crate::bots::bots_commands as bots;
+use crate::bots::bots_events::{
+    BotReplyDelta, ChannelStatus, ChatGptAuthChanged, ChatMessageAdded,
+};
 use crate::browser::{
     BrowserAgentActivity, BrowserAgentReleased, BrowserEngineProgress, BrowserPagesChanged,
     BrowserStateChanged, BrowserThumbnailChanged, browser_commands as browser,
@@ -14,6 +18,7 @@ use crate::changes::changes_commands as changes;
 use crate::config::config_commands as config;
 use crate::config::config_events::ConfigChanged;
 use crate::files::files_commands as files;
+use crate::links;
 use crate::pull_request::pull_request_commands as pull_request;
 use crate::terminal::terminal_commands as terminal;
 use crate::terminal::terminal_events::{AgentStatusChanged, TerminalCreated, TerminalExit};
@@ -29,6 +34,53 @@ pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             app_info::app_info,
+            bots::bots_chatgpt_status,
+            bots::bots_chatgpt_sign_in,
+            bots::bots_chatgpt_sign_out,
+            bots::bots_list,
+            bots::bots_create,
+            bots::bots_get,
+            bots::bots_conversation,
+            bots::bots_chat,
+            bots::bots_update_instructions,
+            bots::bots_delete,
+            bots::bots_grants,
+            bots::bots_approve_access,
+            bots::bots_deny_access,
+            bots::bots_revoke_access,
+            bots::bots_worker_grants,
+            bots::bots_revoke_workers,
+            bots::bots_workers,
+            bots::bots_update_setup,
+            bots::bots_jev_status,
+            bots::bots_jev_save_key,
+            bots::bots_jev_clear_key,
+            bots::bots_jev_test,
+            bots::bots_allowed_commands,
+            bots::bots_allow_commands,
+            bots::bots_disallow_command,
+            bots::bots_running_commands,
+            bots::bots_stop_command,
+            bots::bots_memory,
+            bots::bots_memory_save,
+            bots::bots_threads,
+            bots::bots_thread_create,
+            bots::bots_thread_rename,
+            bots::bots_thread_delete,
+            bots::bots_stop,
+            bots::channels_stop,
+            bots::bots_skills,
+            bots::bots_skill_add,
+            bots::bots_skill_remove,
+            bots::bots_mcp_servers,
+            bots::bots_mcp_add,
+            bots::bots_mcp_remove,
+            bots::channels_update_members,
+            bots::channels_delete,
+            bots::channels_list,
+            bots::channels_create,
+            bots::channels_conversation,
+            bots::channels_chat,
             browser::browser_open,
             browser::browser_navigate,
             browser::browser_back,
@@ -113,9 +165,9 @@ pub fn builder() -> Builder<tauri::Wry> {
             changes::force_push_branch,
             changes::list_commits,
             changes::list_commit_files,
+            links::open_link,
             pull_request::get_pull_request,
             pull_request::clean_up_merged_worktree,
-            pull_request::open_pull_request_url,
             pull_request::get_check_log,
             pull_request::get_pull_request_discussion,
             pull_request::comment_on_pull_request,
@@ -149,6 +201,10 @@ pub fn builder() -> Builder<tauri::Wry> {
             BrowserAgentReleased,
             BrowserEngineProgress,
             UpdateStatusChanged,
+            ChatGptAuthChanged,
+            BotReplyDelta,
+            ChannelStatus,
+            ChatMessageAdded,
         ])
 }
 

@@ -15,6 +15,9 @@ const AddProjectDialog = lazy(() =>
     default: m.AddProjectDialog,
   })),
 );
+const BotWizard = lazy(() =>
+  import("@/bots/BotWizard").then((m) => ({ default: m.BotWizard })),
+);
 const CloseTerminalDialog = lazy(() =>
   import("@/terminal/CloseTerminalDialog").then((m) => ({
     default: m.CloseTerminalDialog,
@@ -122,6 +125,7 @@ export function DialogHost() {
   const settingsOpen = useNavigationStore((state) => state.settingsOpen);
   const settingsSection = useNavigationStore((state) => state.settingsSection);
   const addProjectOpen = useDialogStore((state) => state.addProjectOpen);
+  const botWizardOpen = useDialogStore((state) => state.botWizardOpen);
   const closeTerminalId = useDialogStore((state) => state.closeTerminalId);
   const closeFileTarget = useDialogStore((state) => state.closeFileTarget);
   const createRemoteFor = useDialogStore((state) => state.createRemoteFor);
@@ -147,6 +151,7 @@ export function DialogHost() {
     <Suspense fallback={null}>
       {settingsOpen && <SettingsDialog key={settingsSection ?? "default"} />}
       {addProjectOpen && <AddProjectDialog />}
+      {botWizardOpen && <BotWizard />}
       {closeTerminalId !== null && <CloseTerminalDialog />}
       {closeFileTarget !== null && <CloseFileDialog />}
       {createRemoteFor !== null && <CreateRemoteDialog />}

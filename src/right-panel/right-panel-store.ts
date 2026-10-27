@@ -1,7 +1,14 @@
 import { create } from "zustand";
 
-/** The tabs of the right-hand panel. */
-export type RightPanelTabId = "files" | "changes" | "pull-request" | "browser";
+/** The tabs of the right-hand panel. The bot tabs show in the Bots view instead of the others. */
+export type RightPanelTabId =
+  | "files"
+  | "changes"
+  | "pull-request"
+  | "browser"
+  | "bot-details"
+  | "bot-agents"
+  | "bot-browser";
 
 const DOCKED_OPEN_KEY = "lynx-ide.rightPanelOpen";
 

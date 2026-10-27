@@ -1,5 +1,7 @@
 mod agents;
 mod app_info;
+mod app_log;
+mod bots;
 mod browser;
 mod changes;
 mod config;
@@ -7,8 +9,10 @@ mod error;
 mod files;
 mod git;
 mod ipc;
+mod links;
 mod orchestration;
 mod persistence;
+mod private_file;
 mod process;
 mod pull_request;
 mod terminal;
@@ -91,6 +95,10 @@ pub fn run() {
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
 
             let user_home = app.path().home_dir()?;
+            // The log starts first, so what follows is recorded. Without it the app still runs.
+            if let Err(error) = app_log::init(&lynx_home(user_home.clone())) {
+                eprintln!("lynx: could not start the log: {error}");
+            }
             let executable = app_image_environment::launch_executable(std::env::current_exe().ok());
             let hook_targets = HookTargets::from_environment(&user_home, executable.as_deref());
             // Agents turned on before the browser tools existed get them too; this waits on the
@@ -113,6 +121,48 @@ pub fn run() {
             ));
             Arc::clone(&updates).start_schedule(Arc::clone(&config));
             app.manage(updates);
+
+            // The ChatGPT sign-in keeps its credentials beside the config, never inside it.
+            let chatgpt_login = Arc::new(bots::chatgpt_login::ChatGptLogin::new(
+                app.handle().clone(),
+                lynx_home(app.path().home_dir()?)
+                    .join("bots")
+                    .join("chatgpt.json"),
+            ));
+            app.manage(chatgpt_login);
+
+            // Every bot has its own folder under Lynx's data. Each bot's Claude runs from there, and
+            // the user's home is kept out of its memory.
+            let bots_dir = lynx_home(app.path().home_dir()?).join("bots");
+            app.manage(Arc::new(bots::bot_folder::BotsRoot(bots_dir.clone())));
+            let claude_cli = Arc::new(bots::claude_cli::ClaudeCli::new(
+                bots_dir.clone(),
+                app.path().home_dir()?,
+            ));
+            app.manage(Arc::clone(&claude_cli));
+            let bot_chat = Arc::new(bots::bot_chat::BotChat::new(
+                bots_dir.clone(),
+                Arc::clone(&claude_cli),
+            ));
+            // Read per turn, so the switch in the settings applies without a restart.
+            let capture_config = Arc::clone(&config);
+            bot_chat.attach_capture(Arc::new(move || {
+                capture_config.config().bots.memory.capture
+            }));
+            app.manage(bot_chat);
+            let channels_dir = lynx_home(app.path().home_dir()?).join("channels");
+            let channel_chat = Arc::new(bots::channel_chat::ChannelChat::new(
+                bots_dir.clone(),
+                channels_dir,
+                claude_cli,
+            ));
+            // Jev picks who answers when the user turned it on and saved a key; both are read per message.
+            let decider_config = Arc::clone(&config);
+            channel_chat.attach_decider(Arc::new(bots::jev_decider::JevDecider::new(
+                bots_dir.join("jev.key"),
+                Arc::new(move || decider_config.config().bots.decider.enabled),
+            )));
+            app.manage(channel_chat);
 
             let database_file = app.path().app_data_dir()?.join("app.db");
             let worktrees_config = Arc::clone(&config);
@@ -148,6 +198,23 @@ pub fn run() {
                 let _ =
                     hook_hub.publish_address(&lynx_home(app.path().home_dir()?).join("hub.json"));
             }
+            // A bot's Claude reaches the app through the hub, started from this executable. The registered
+            // repositories are what it may ask to read.
+            let registered: Arc<dyn bots::bot_access::RegisteredRepos> = Arc::new(
+                workspace::registered_repos::RegisteredWorkspaces(app.handle().clone()),
+            );
+            app.manage(Arc::clone(&registered));
+            if let Some(executable) =
+                app_image_environment::launch_executable(std::env::current_exe().ok())
+            {
+                app.state::<Arc<bots::claude_cli::ClaudeCli>>().attach(
+                    bots::bot_bridge::BotBridge::new(
+                        hook_hub.clone(),
+                        executable,
+                        Arc::clone(&registered),
+                    ),
+                );
+            }
             // Orchestration shares the terminals' database. It reads terminals, worktrees and
             // settings from the managed services when a call needs them.
             let terminal_database = Arc::new(AppDatabase::open(&database_file)?);
@@ -159,15 +226,46 @@ pub fn run() {
                     Arc::clone(&config),
                 )),
             ));
-            hook_hub.set_tool_handler(Arc::new(orchestration::router::ToolRouter::new(
-                Arc::new(browser::AgentToolBridge::new(
+            app.manage(Arc::clone(&orchestration));
+            let announce = bots::bots_commands::announce_message(app.handle().clone());
+            let bot_chat = Arc::clone(&*app.state::<Arc<bots::bot_chat::BotChat>>());
+            bot_chat.attach_announce(Arc::clone(&announce));
+            let bot_chat_for_commands = Arc::clone(&bot_chat);
+            let bot_processes = Arc::new(bots::bot_processes::BotProcesses::new(
+                Arc::new(bots::app_command_host::AppCommandHost::new(
                     app.handle().clone(),
-                    browser_service,
-                    Arc::clone(&config),
-                    owners.clone(),
                 )),
-                orchestration,
-            )));
+                lynx_home(app.path().home_dir()?).join("bots"),
+            ));
+            app.manage(Arc::clone(&bot_processes));
+            // A command a bot left running that ends by itself wakes the bot, as a finished worker does.
+            let waking = Arc::clone(&bot_chat_for_commands);
+            bot_processes.on_ended(Arc::new(move |bot: &str, label: &str, note: &str| {
+                waking.wake(bot, label, note);
+                bots::bot_chat::BotChat::kick(
+                    Arc::clone(&waking),
+                    bot.to_owned(),
+                    label.to_owned(),
+                );
+            }));
+            let bot_tools = Arc::new(bots::bot_tools::BotTools::new(
+                bot_chat,
+                Arc::clone(&registered),
+                announce,
+                bot_processes,
+            ));
+            hook_hub.set_tool_handler(Arc::new(
+                orchestration::router::ToolRouter::new(
+                    Arc::new(browser::AgentToolBridge::new(
+                        app.handle().clone(),
+                        browser_service,
+                        Arc::clone(&config),
+                        owners.clone(),
+                    )),
+                    orchestration,
+                )
+                .with_bots(bot_tools),
+            ));
 
             let output_channels = Arc::new(terminal::output_channels::OutputChannels::default());
             app.manage(Arc::clone(&output_channels));

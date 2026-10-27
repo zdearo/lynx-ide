@@ -5,11 +5,13 @@ import { CodeBranchGlyph18 } from "@/components/icons/CodeBranchGlyph18";
 import { GlobeGlyph18 } from "@/components/icons/GlobeGlyph18";
 import { FolderGlyph18 } from "@/components/icons/FolderGlyph18";
 import { FolderTreeGlyph18 } from "@/components/icons/FolderTreeGlyph18";
+import { LockGlyph18 } from "@/components/icons/LockGlyph18";
 import type { IconComponent } from "@/components/icons/icon-component";
 import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
 import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 import { TerminalGlyph18 } from "@/components/icons/TerminalGlyph18";
 import { AgentsSettings } from "@/settings/AgentsSettings";
+import { BotsSettings } from "@/settings/BotsSettings";
 import { BrowserSettings } from "@/settings/BrowserSettings";
 import { GitSettings } from "@/settings/GitSettings";
 import { NotificationsSettings } from "@/settings/NotificationsSettings";
@@ -39,6 +41,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     label: copy.settings.agents.title,
     icon: SparkleGlyph18,
     panel: AgentsSettings,
+  },
+  {
+    id: "bots",
+    label: copy.settings.bots.title,
+    icon: LockGlyph18,
+    panel: BotsSettings,
   },
   {
     id: "worktrees",

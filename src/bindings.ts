@@ -6,6 +6,108 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 /** Commands */
 export const commands = {
 	appInfo: () => __TAURI_INVOKE<AppInfo>("app_info"),
+	botsChatgptStatus: () => __TAURI_INVOKE<ChatGptStatus>("bots_chatgpt_status"),
+	/**  Opens the browser and returns at once. The outcome comes later as an event. */
+	botsChatgptSignIn: () => __TAURI_INVOKE<ChatGptStatus>("bots_chatgpt_sign_in"),
+	/**  Ends the session at OpenAI, a network call, so it runs off the main thread. */
+	botsChatgptSignOut: () => typedError<ChatGptStatus, IpcError>(__TAURI_INVOKE("bots_chatgpt_sign_out")),
+	/**  Every bot in the bots folder, by name. */
+	botsList: () => typedError<BotSummary[], IpcError>(__TAURI_INVOKE("bots_list")),
+	/**  Makes a bot from the form. Its folder and files are written before the answer comes back. */
+	botsCreate: (bot: NewBot) => typedError<BotSummary, IpcError>(__TAURI_INVOKE("bots_create", { bot })),
+	/**  One bot's settings, instructions and folder, for the details tab. */
+	botsGet: (id: string) => typedError<BotDetail, IpcError>(__TAURI_INVOKE("bots_get", { id })),
+	/**  One thread of a bot, oldest message first. */
+	botsConversation: (id: string, thread: string) => typedError<ChatMessage_Serialize[], IpcError>(__TAURI_INVOKE("bots_conversation", { id, thread })),
+	/**
+	 *  Sends the user's message to a bot and waits for its answer. Each piece of the answer goes out as a
+	 *  `BotReplyDelta` event while it is written. Off the main thread: an answer takes seconds.
+	 */
+	botsChat: (id: string, thread: string, text: string) => typedError<BotReply, IpcError>(__TAURI_INVOKE("bots_chat", { id, thread, text })),
+	/**  Replaces what a bot is told to do. Its next answer already uses the new instructions. */
+	botsUpdateInstructions: (id: string, instructions: string) => typedError<BotDetail, IpcError>(__TAURI_INVOKE("bots_update_instructions", { id, instructions })),
+	/**  Removes a bot with its conversation. Refused while the bot is answering. */
+	botsDelete: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("bots_delete", { id })),
+	/**  The repositories a bot may read, as the person granted them. */
+	botsGrants: (id: string) => typedError<Grant[], IpcError>(__TAURI_INVOKE("bots_grants", { id })),
+	/**
+	 *  Approves a bot's request to read a repository: the bot may read it from now on, and it is woken to
+	 *  go on with its task. Refused while the bot is answering; the grant then applies to its next answer.
+	 */
+	botsApproveAccess: (id: string, thread: string, messageId: string) => typedError<BotReply, IpcError>(__TAURI_INVOKE("bots_approve_access", { id, thread, messageId })),
+	/**  Refuses a bot's request to read a repository. The bot sees the refusal in the conversation. */
+	botsDenyAccess: (id: string, thread: string, messageId: string) => typedError<null, IpcError>(__TAURI_INVOKE("bots_deny_access", { id, thread, messageId })),
+	/**  Takes back a repository a bot could read. Returns what it can still read. */
+	botsRevokeAccess: (id: string, repoId: string) => typedError<Grant[], IpcError>(__TAURI_INVOKE("bots_revoke_access", { id, repoId })),
+	/**  The repositories where a bot may start agents. */
+	botsWorkerGrants: (id: string) => typedError<Grant[], IpcError>(__TAURI_INVOKE("bots_worker_grants", { id })),
+	/**  Takes back the right to start agents in a repository. Returns where the bot still may. */
+	botsRevokeWorkers: (id: string, repoId: string) => typedError<Grant[], IpcError>(__TAURI_INVOKE("bots_revoke_workers", { id, repoId })),
+	/**  The workers a bot started, and whether each still runs, for the bot's agents tab. */
+	botsWorkers: (id: string) => typedError<WorkerRow[], IpcError>(__TAURI_INVOKE("bots_workers", { id })),
+	/**  Changes a bot's engine, model and team. Its name, colour and instructions stay as they are. */
+	botsUpdateSetup: (id: string, setup: BotSetup) => typedError<BotDetail, IpcError>(__TAURI_INVOKE("bots_update_setup", { id, setup })),
+	/**  Whether a Jev key is saved. */
+	botsJevStatus: () => typedError<JevStatus, IpcError>(__TAURI_INVOKE("bots_jev_status")),
+	/**  Saves the Jev key, replacing the old one. */
+	botsJevSaveKey: (key: string) => typedError<JevStatus, IpcError>(__TAURI_INVOKE("bots_jev_save_key", { key })),
+	/**  Forgets the Jev key. */
+	botsJevClearKey: () => typedError<JevStatus, IpcError>(__TAURI_INVOKE("bots_jev_clear_key")),
+	/**  Asks Jev a fixed question with the saved key, to show whether it works and how long it takes. */
+	botsJevTest: () => typedError<JevTest, IpcError>(__TAURI_INVOKE("bots_jev_test")),
+	/**  The command patterns a bot may run, for the details tab. */
+	botsAllowedCommands: (id: string) => typedError<string[], IpcError>(__TAURI_INVOKE("bots_allowed_commands", { id })),
+	/**  Lets a bot run the command patterns, one per entry. Returns the patterns after it. */
+	botsAllowCommands: (id: string, patterns: string[]) => typedError<string[], IpcError>(__TAURI_INVOKE("bots_allow_commands", { id, patterns })),
+	/**  Takes a command pattern back from a bot. Returns the patterns after it. */
+	botsDisallowCommand: (id: string, pattern: string) => typedError<string[], IpcError>(__TAURI_INVOKE("bots_disallow_command", { id, pattern })),
+	/**  The commands a bot left running, and the end of what each printed, for the Agents tab. */
+	botsRunningCommands: (id: string) => typedError<RunningCommand[], IpcError>(__TAURI_INVOKE("bots_running_commands", { id })),
+	/**  Stops a command a bot left running. */
+	botsStopCommand: (id: string, session: string) => typedError<null, IpcError>(__TAURI_INVOKE("bots_stop_command", { id, session })),
+	/**  The bot's memory, and how much of it loads each turn. */
+	botsMemory: (id: string) => typedError<MemoryView, IpcError>(__TAURI_INVOKE("bots_memory", { id })),
+	/**  Replaces the bot's memory with what the person wrote. */
+	botsMemorySave: (id: string, text: string) => typedError<MemoryView, IpcError>(__TAURI_INVOKE("bots_memory_save", { id, text })),
+	/**  The threads of a bot, the most recently active first. A bot with none gets its first. */
+	botsThreads: (id: string) => typedError<ThreadSummary[], IpcError>(__TAURI_INVOKE("bots_threads", { id })),
+	/**  Starts a new thread with a bot. */
+	botsThreadCreate: (id: string) => typedError<ThreadSummary, IpcError>(__TAURI_INVOKE("bots_thread_create", { id })),
+	/**  Gives a thread a title; a blank one makes it untitled again. */
+	botsThreadRename: (id: string, thread: string, title: string) => typedError<ThreadSummary, IpcError>(__TAURI_INVOKE("bots_thread_rename", { id, thread, title })),
+	/**  Removes a thread with its conversation. Refused while the bot is answering. */
+	botsThreadDelete: (id: string, thread: string) => typedError<null, IpcError>(__TAURI_INVOKE("bots_thread_delete", { id, thread })),
+	/**  Stops the answer a bot is writing in a thread. What it had written stays there, marked as stopped. */
+	botsStop: (id: string, thread: string) => typedError<boolean, IpcError>(__TAURI_INVOKE("bots_stop", { id, thread })),
+	/**  Stops the answer of a channel: who is writing, and who was waiting. What was written stays. */
+	channelsStop: (id: string) => typedError<boolean, IpcError>(__TAURI_INVOKE("channels_stop", { id })),
+	/**  The skills a bot has, for the details tab. */
+	botsSkills: (id: string) => typedError<BotSkill[], IpcError>(__TAURI_INVOKE("bots_skills", { id })),
+	/**  Copies a skill folder the person picked into the bot. Returns the bot's skills after it. */
+	botsSkillAdd: (id: string, path: string) => typedError<BotSkill[], IpcError>(__TAURI_INVOKE("bots_skill_add", { id, path })),
+	/**  Takes a skill out of the bot. Returns the bot's skills after it. */
+	botsSkillRemove: (id: string, name: string) => typedError<BotSkill[], IpcError>(__TAURI_INVOKE("bots_skill_remove", { id, name })),
+	/**  The MCP servers a bot has, by name and where each runs. Their secrets are not listed. */
+	botsMcpServers: (id: string) => typedError<BotMcpServer[], IpcError>(__TAURI_INVOKE("bots_mcp_servers", { id })),
+	/**  Adds the MCP servers in a `{"mcpServers": {...}}` config to a bot. Returns the bot's servers after it. */
+	botsMcpAdd: (id: string, config: string) => typedError<BotMcpServer[], IpcError>(__TAURI_INVOKE("bots_mcp_add", { id, config })),
+	/**  Takes an MCP server out of a bot. Returns the bot's servers after it. */
+	botsMcpRemove: (id: string, name: string) => typedError<BotMcpServer[], IpcError>(__TAURI_INVOKE("bots_mcp_remove", { id, name })),
+	/**  Replaces a channel's members, and returns the channel as it now is. */
+	channelsUpdateMembers: (id: string, members: string[]) => typedError<ChannelSummary, IpcError>(__TAURI_INVOKE("channels_update_members", { id, members })),
+	/**  Removes a channel with its conversation. Refused while the channel is answering. */
+	channelsDelete: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("channels_delete", { id })),
+	/**  Every channel, by name. */
+	channelsList: () => typedError<ChannelSummary[], IpcError>(__TAURI_INVOKE("channels_list")),
+	/**  Makes a channel with its members. */
+	channelsCreate: (channel: NewChannel) => typedError<ChannelSummary, IpcError>(__TAURI_INVOKE("channels_create", { channel })),
+	/**  The conversation of a channel, oldest message first. */
+	channelsConversation: (id: string) => typedError<ChatMessage_Serialize[], IpcError>(__TAURI_INVOKE("channels_conversation", { id })),
+	/**
+	 *  Sends the person's message to a channel. While the members answer, the channel's events go out as
+	 *  they happen: each message saved, the status of the answer, and the pieces of each reply.
+	 */
+	channelsChat: (id: string, text: string) => typedError<null, IpcError>(__TAURI_INVOKE("channels_chat", { id, text })),
 	/**
 	 *  Starts the browser engine if needed and optionally opens an address in the shown page. The
 	 *  engine's start-up blocks for a moment, so this runs off the async runtime.
@@ -184,6 +286,8 @@ export const commands = {
 	listCommits: (worktreePath: string, limit: number) => typedError<CommitEntry[], IpcError>(__TAURI_INVOKE("list_commits", { worktreePath, limit })),
 	/**  The files one commit touched, against its first parent. */
 	listCommitFiles: (worktreePath: string, hash: string) => typedError<CommitFile[], IpcError>(__TAURI_INVOKE("list_commit_files", { worktreePath, hash })),
+	/**  Opens a link in the browser. Only `https` links are opened. */
+	openLink: (url: string) => typedError<null, IpcError>(__TAURI_INVOKE("open_link", { url })),
 	/**  The pull request of a worktree's branch, or `None` when the branch has none. */
 	getPullRequest: (worktreePath: string) => typedError<{
 	number: number,
@@ -210,8 +314,6 @@ export const commands = {
 	 *  stop it, as in any safe removal.
 	 */
 	cleanUpMergedWorktree: (repoId: string, worktreePath: string) => typedError<RemoveWorktreeResult, IpcError>(__TAURI_INVOKE("clean_up_merged_worktree", { repoId, worktreePath })),
-	/**  Opens a pull request's page in the browser. Only `https` links are opened. */
-	openPullRequestUrl: (url: string) => typedError<null, IpcError>(__TAURI_INVOKE("open_pull_request_url", { url })),
 	/**  The log of the GitHub Actions job a check points at. Only its end is returned. */
 	getCheckLog: (worktreePath: string, detailsUrl: string, failedOnly: boolean) => typedError<CheckLog, IpcError>(__TAURI_INVOKE("get_check_log", { worktreePath, detailsUrl, failedOnly })),
 	/**  The conversation, reviews and inline threads of a pull request. */
@@ -265,12 +367,16 @@ export const commands = {
 /** Events */
 export const events = {
 	agentStatusChanged: makeEvent<AgentStatusChanged>("agent-status-changed"),
+	botReplyDelta: makeEvent<BotReplyDelta>("bot-reply-delta"),
 	browserAgentActivity: makeEvent<BrowserAgentActivity>("browser-agent-activity"),
 	browserAgentReleased: makeEvent<BrowserAgentReleased>("browser-agent-released"),
 	browserEngineProgress: makeEvent<BrowserEngineProgress>("browser-engine-progress"),
 	browserPagesChanged: makeEvent<BrowserPagesChanged>("browser-pages-changed"),
 	browserStateChanged: makeEvent<BrowserStateChanged>("browser-state-changed"),
 	browserThumbnailChanged: makeEvent<BrowserThumbnailChanged>("browser-thumbnail-changed"),
+	channelStatus: makeEvent<ChannelStatus>("channel-status"),
+	chatGptAuthChanged: makeEvent<ChatGptAuthChanged>("chat-gpt-auth-changed"),
+	chatMessageAdded: makeEvent<ChatMessageAdded_Deserialize>("chat-message-added"),
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	terminalCreated: makeEvent<TerminalCreated>("terminal-created"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
@@ -280,6 +386,19 @@ export const events = {
 };
 
 /* Types */
+/**  A bot's request, as the chat shows it. */
+export type AccessRequest = {
+	kind?: RequestKind,
+	/**  What is asked: the project's name, or the command patterns. */
+	items?: string[],
+	/**  The project asked for, when the kind is `project`. */
+	repoId?: string | null,
+	state?: AccessState,
+};
+
+/**  Where an access request stands. A request is answered once: pending becomes approved or denied. */
+export type AccessState = "pending" | "approved" | "denied";
+
 /**  How far an agent may go in the page. */
 export type AgentBrowserAccess = 
 /**  The agent gets no browser tools at all. */
@@ -331,6 +450,7 @@ export type AppConfig = {
 	browser: BrowserConfig,
 	usage: UsageConfig,
 	updates: UpdatesConfig,
+	bots: BotsConfig,
 };
 
 export type AppInfo = {
@@ -338,8 +458,79 @@ export type AppInfo = {
 	version: string,
 };
 
+/**  Who wrote a message. */
+export type Author = "user" | "bot" | 
+/**  A reply that did not come: kept for the user to see, never sent back to the engine. */
+"error";
+
 /**  What a bell from a program does. Sound is left out: the terminal engine only reports the bell. */
 export type BellStyle = "none" | "visual";
+
+/**  A bot as its details tab shows it: the summary, the instructions the user wrote, and its folder. */
+export type BotDetail = {
+	id: string,
+	name: string,
+	color: string,
+	provider: string,
+	model: string | null,
+	instructions: string,
+	folder: string,
+	team: string | null,
+};
+
+/**  A server as the details tab lists it. Its environment and headers stay out of it. */
+export type BotMcpServer = {
+	name: string,
+	kind: McpKind,
+	/**  The command the server starts, or the address it is called at. */
+	target: string,
+};
+
+/**  The bot's answer, or the reason there is none. `ok` says which. */
+export type BotReply = {
+	ok: boolean,
+	text: string,
+};
+
+/**
+ *  A piece of a reply, as its engine writes it. `thread` is the chat it belongs to (`bot:<id>` for a
+ *  bot's own chat, `channel:<id>` for a channel) and `author` the bot writing it.
+ */
+export type BotReplyDelta = {
+	thread: string,
+	author: string,
+	text: string,
+};
+
+/**  What the details tab changes in a bot's setup: the engine, the model it names, and its team. */
+export type BotSetup = {
+	provider: string,
+	model: string | null,
+	team: string | null,
+};
+
+/**  A skill as the details tab lists it. */
+export type BotSkill = {
+	name: string,
+	description: string,
+};
+
+/**  A bot as the bots screen lists it. */
+export type BotSummary = {
+	id: string,
+	name: string,
+	color: string,
+	provider: string,
+	model: string | null,
+	team: string | null,
+};
+
+/**  Bots Lynx runs itself. Each provider is switched on here; its login is kept outside this file. */
+export type BotsConfig = {
+	chatgpt: ChatGptBotsConfig,
+	decider: DeciderBotsConfig,
+	memory: MemoryBotsConfig,
+};
 
 /**  A branch against its remote. `upstream` is `None` for a branch that was never pushed. */
 export type BranchSync = {
@@ -465,6 +656,98 @@ export type ChangedFile = {
 	unstagedLines: LineCounts | null,
 };
 
+/**
+ *  Where a channel's answer stands: `routing` while the router picks who answers, `answering` while a
+ *  member writes (`author`), and `idle` once nothing is left. `waiting` are the members still to answer.
+ */
+export type ChannelStatus = {
+	thread: string,
+	phase: string,
+	author: string | null,
+	waiting: string[],
+};
+
+/**  A channel as the sidebar lists it. */
+export type ChannelSummary = {
+	id: string,
+	name: string,
+	members: string[],
+};
+
+/**  The ChatGPT sign-in changed: an attempt started, ended, or a sign-out finished. */
+export type ChatGptAuthChanged = {
+	status: ChatGptStatus,
+};
+
+/**  Whether bots may use the ChatGPT plan the user signed in with. Off until the user turns it on. */
+export type ChatGptBotsConfig = {
+	enabled: boolean,
+};
+
+export type ChatGptPhase = "signedOut" | "signingIn" | "signedIn" | "failed";
+
+/**  Where the ChatGPT sign-in stands, as the settings screen shows it. */
+export type ChatGptStatus = {
+	phase: ChatGptPhase,
+	/**  The account signed in, when there is one. */
+	email: string | null,
+	/**  Why the last attempt or sign-out did not finish cleanly, in words. */
+	detail: string | null,
+};
+
+/**
+ *  One message of a conversation. `at` is when it was written, in seconds since the Unix epoch.
+ *  `speaker` is the bot that wrote a message in a channel; a bot's own chat leaves it empty.
+ */
+export type ChatMessage = ChatMessage_Serialize | ChatMessage_Deserialize;
+
+/**  A message was saved to a channel's conversation, so the chat shows it as soon as it is written. */
+export type ChatMessageAdded = ChatMessageAdded_Serialize | ChatMessageAdded_Deserialize;
+
+/**  A message was saved to a channel's conversation, so the chat shows it as soon as it is written. */
+export type ChatMessageAdded_Deserialize = {
+	thread: string,
+	message: ChatMessage_Deserialize,
+};
+
+/**  A message was saved to a channel's conversation, so the chat shows it as soon as it is written. */
+export type ChatMessageAdded_Serialize = {
+	thread: string,
+	message: ChatMessage_Serialize,
+};
+
+/**
+ *  One message of a conversation. `at` is when it was written, in seconds since the Unix epoch.
+ *  `speaker` is the bot that wrote a message in a channel; a bot's own chat leaves it empty.
+ */
+export type ChatMessage_Deserialize = {
+	id: string,
+	author: Author,
+	text: string,
+	at: number,
+	speaker?: string | null,
+	/**  Set on a message that asks the person for access to a repository. */
+	request?: AccessRequest | null,
+	/**  The person stopped this answer: its text is what had been written until then. */
+	stopped?: boolean,
+};
+
+/**
+ *  One message of a conversation. `at` is when it was written, in seconds since the Unix epoch.
+ *  `speaker` is the bot that wrote a message in a channel; a bot's own chat leaves it empty.
+ */
+export type ChatMessage_Serialize = {
+	id: string,
+	author: Author,
+	text: string,
+	at: number,
+	speaker: string | null,
+	/**  Set on a message that asks the person for access to a repository. */
+	request?: AccessRequest | null,
+	/**  The person stopped this answer: its text is what had been written until then. */
+	stopped?: boolean,
+};
+
 export type CheckLog = {
 	text: string,
 	/**  The start of the log was cut: only its end is shown. */
@@ -560,6 +843,14 @@ export type DaemonStatus = {
 	state: DaemonState,
 	/**  Running sessions that the daemon holds. */
 	sessions: number,
+};
+
+/**
+ *  Whether channels ask the Jev decision model who answers a message that names nobody. Off until the
+ *  user turns it on and saves a key, which is kept outside this file.
+ */
+export type DeciderBotsConfig = {
+	enabled: boolean,
 };
 
 /**  What a file's diff compares. Every source gives the two texts the interface shows side by side. */
@@ -694,6 +985,12 @@ export type GitHubAccount = {
 	organizations: string[],
 };
 
+/**  A repository the person let a bot read. The name is kept from the approval, for the screen. */
+export type Grant = {
+	id: string,
+	name: string,
+};
+
 export type HarnessId = "claude" | "codex" | "opencode" | "omp";
 
 export type HookInstallState = "notInstalled" | "partial" | "installed" | "error";
@@ -713,7 +1010,19 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "orchestration" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "update" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "orchestration" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "update" | "invalidBot" | "internal";
+
+/**  Whether a Jev key is saved. The key itself never leaves the backend. */
+export type JevStatus = {
+	configured: boolean,
+};
+
+/**  What the Settings test reports: whether the key works, and how long Jev took. */
+export type JevTest = {
+	ok: boolean,
+	latencyMs: number,
+	reason: string | null,
+};
 
 export type LastCommitMessage = {
 	summary: string,
@@ -740,6 +1049,28 @@ export type LinkedFolderPreview = {
 	truncated: boolean,
 };
 
+/**  How a server is reached: a command it starts, or an address it is called at. */
+export type McpKind = "command" | "url";
+
+/**
+ *  Whether a bot's conversations are read, now and then, for facts worth remembering. It costs one
+ *  short call to the bot's CLI per quiet conversation, so it can be turned off.
+ */
+export type MemoryBotsConfig = {
+	capture: boolean,
+};
+
+/**  The memory as the details tab shows it. */
+export type MemoryView = {
+	text: string,
+	lines: number,
+	bytes: number,
+	/**  How many lines load into the prompt. */
+	loadedLines: number,
+	maxLines: number,
+	maxBytes: number,
+};
+
 export type MergeMethod = "merge" | "squash" | "rebase";
 
 /**  Whether GitHub would let the pull request merge now, from `mergeStateStatus`. */
@@ -752,6 +1083,22 @@ export type MergeState =
 "conflicting" | 
 /**  A draft, or checks are still running or failing. */
 "unstable" | "unknown";
+
+/**  What the form asks for when a bot is created. */
+export type NewBot = {
+	name: string,
+	color: string,
+	provider: string,
+	model: string | null,
+	instructions: string,
+	team: string | null,
+};
+
+/**  What the form asks for when a channel is made. */
+export type NewChannel = {
+	name: string,
+	members: string[],
+};
 
 /**  When Lynx sends a system notification, while the window is not in front. */
 export type NotificationsConfig = {
@@ -897,6 +1244,18 @@ export type RepoRefs = {
 
 export type RepoVisibility = "private" | "public";
 
+/**
+ *  What a bot asks the person for. The card in the chat is the same for every kind: it lists the
+ *  items, and the person approves or refuses. Only what approving does depends on the kind.
+ */
+export type RequestKind = 
+/**  Read a registered project. */
+"project" | 
+/**  Run commands that match patterns like `minha-cli *`. */
+"commands" | 
+/**  Start agents, which run without asking for permission, in a registered project. */
+"workers";
+
 /**  An ended agent session that can be resumed in its worktree. */
 export type ResumableSession = {
 	id: string,
@@ -928,6 +1287,17 @@ export type ReviewThread = {
 };
 
 export type ReviewVerdict = "approved" | "changesRequested" | "commented" | "dismissed" | "pending";
+
+/**  A command a bot started, as the Agents tab shows it. */
+export type RunningCommand = {
+	session: string,
+	command: string,
+	running: boolean,
+	/**  Unix seconds. */
+	startedAt: number,
+	/**  The last lines it printed. */
+	output: string,
+};
 
 export type TerminalConfig = {
 	/**  CSS font list tried before the bundled fonts; `None` uses the bundled ones. */
@@ -989,6 +1359,14 @@ export type TerminalSnapshot = {
 	exitCode: number | null,
 };
 
+/**  A thread as the screen lists it. Times are Unix seconds; `title` is empty until it has one. */
+export type ThreadSummary = {
+	id: string,
+	title: string,
+	createdAt: number,
+	updatedAt: number,
+};
+
 /**  Where an update stands. The screen shows each case in its own words. */
 export type UpdatePhase = 
 /**  This copy cannot replace itself, so Lynx does not look for updates. */
@@ -1047,6 +1425,18 @@ export type UsageLayout = "compact" | "detailed";
 export type WindowKind = "session" | "weekly" | "monthly" | 
 /**  A window of a length Lynx does not name; the minutes still say how long it is. */
 "other";
+
+/**  One worker a coordinator started, as a bot's agents tab shows it. */
+export type WorkerRow = {
+	runTitle: string,
+	taskSpec: string,
+	harness: HarnessId,
+	worktreePath: string,
+	sessionId: string,
+	state: string,
+	running: boolean,
+	agentStatus: string | null,
+};
 
 /**  Files changed in the watched worktree. Sent once a burst of changes has settled. */
 export type WorktreeChanged = {

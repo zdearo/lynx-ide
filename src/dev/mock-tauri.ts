@@ -9,11 +9,21 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import type {
   AgentStatus,
   AppConfig,
+  BotDetail,
+  BotSetup,
+  BotSummary,
   BrowserPageInfo,
   BrowserState,
+  ChannelSummary,
+  ChatGptStatus,
+  ChatMessage,
+  RunningCommand,
+  ThreadSummary,
   ConfigSnapshot,
   Folder,
   HarnessId,
+  NewBot,
+  NewChannel,
   PlanUsage,
   Repo,
   TerminalInfo,
@@ -417,6 +427,11 @@ const DEFAULT_CONFIG: AppConfig = {
   agents: { launchMode: "manual", launchArguments: {} },
   notifications: { onDone: true, onNeedsYou: true, onUpdate: true },
   updates: { checkAutomatically: true },
+  bots: {
+    chatgpt: { enabled: false },
+    decider: { enabled: false },
+    memory: { capture: true },
+  },
   browser: { agentAccess: "full", allowedSites: [] },
   usage: {
     visible: true,
@@ -503,6 +518,60 @@ export function installMockTauri(scenario: string): void {
   };
   const fileContents = new Map<string, { content: string; hash: string }>();
   let writeCounter = 0;
+  // The ChatGPT sign-in in miniature: the browser step is skipped, and the answer comes a moment later.
+  // The bots in miniature: the list starts empty, as a new install does, and makes are kept here.
+  let mockBots: BotSummary[] = [];
+  let mockChannels: ChannelSummary[] = [];
+  const mockChannelConversations = new Map<string, ChatMessage[]>();
+  // The instructions and the conversation of each mock bot, by id, as the backend keeps them.
+  const mockInstructions = new Map<string, string>();
+  // A conversation is kept by its thread's id.
+  const mockConversations = new Map<string, ChatMessage[]>();
+  const mockThreads = new Map<string, ThreadSummary[]>();
+  // The bots writing a slow reply, and the ones the person asked to stop.
+  const mockSlow = new Set<string>();
+  const mockStopRequested = new Set<string>();
+  const newMockThread = (): ThreadSummary => {
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      id: crypto.randomUUID().replaceAll("-", ""),
+      title: "",
+      createdAt: now,
+      updatedAt: now,
+    };
+  };
+  const threadsOfMockBot = (bot: string): ThreadSummary[] => {
+    let list = mockThreads.get(bot);
+    if (!list) {
+      list = [newMockThread()];
+      mockThreads.set(bot, list);
+    }
+    return list;
+  };
+  const mockGrants = new Map<string, { id: string; name: string }[]>();
+  let mockJevKey = false;
+  const mockCommands = new Map<string, string[]>();
+  const mockWorkerGrants = new Map<string, { id: string; name: string }[]>();
+  const mockRunning = new Map<string, RunningCommand[]>();
+  const mockSkills = new Map<string, { name: string; description: string }[]>();
+  const mockMcp = new Map<
+    string,
+    { name: string; kind: "command" | "url"; target: string }[]
+  >();
+  let chatGptStatus: ChatGptStatus = {
+    phase: "signedOut",
+    email: null,
+    detail: null,
+  };
+  async function finishMockSignIn() {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    chatGptStatus = {
+      phase: "signedIn",
+      email: "dev@example.com",
+      detail: null,
+    };
+    void emit("chat-gpt-auth-changed", { status: chatGptStatus });
+  }
   // The update flow in miniature: a check finds 0.1.1, and an install reports its download.
   let updateStatus: UpdateStatus = {
     currentVersion: "0.1.0",
@@ -1224,7 +1293,7 @@ export function installMockTauri(scenario: string): void {
           if (thread) thread.resolved = Boolean(args.resolved);
           return null;
         }
-        case "open_pull_request_url":
+        case "open_link":
           await delay(40);
           return null;
         case "draft_commit_message":
@@ -1363,6 +1432,668 @@ export function installMockTauri(scenario: string): void {
           return ["/bin/bash", "/bin/zsh", "/usr/bin/fish"];
         case "get_config":
           return structuredClone(configSnapshot);
+        case "bots_chatgpt_status":
+          return structuredClone(chatGptStatus);
+        case "bots_chatgpt_sign_in":
+          chatGptStatus = { phase: "signingIn", email: null, detail: null };
+          void finishMockSignIn();
+          return structuredClone(chatGptStatus);
+        case "bots_chatgpt_sign_out":
+          chatGptStatus = { phase: "signedOut", email: null, detail: null };
+          return structuredClone(chatGptStatus);
+        case "bots_list":
+          return structuredClone(mockBots);
+        case "bots_create": {
+          const bot = args.bot as NewBot;
+          const name = bot.name.trim();
+          const created: BotSummary = {
+            id: name
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, ""),
+            name,
+            color: bot.color,
+            provider: bot.provider,
+            model: bot.model,
+            team: bot.team,
+          };
+          mockBots = [...mockBots, created].sort((a, b) =>
+            a.name.localeCompare(b.name),
+          );
+          mockInstructions.set(created.id, bot.instructions);
+          return structuredClone(created);
+        }
+        case "bots_get": {
+          const id = String(args.id);
+          const bot = mockBots.find((candidate) => candidate.id === id);
+          if (!bot) {
+            throw {
+              kind: "invalidBot",
+              message: "there is no bot with that id",
+            };
+          }
+          const detail: BotDetail = {
+            ...structuredClone(bot),
+            instructions: mockInstructions.get(id) ?? "",
+            folder: `/home/mock/.lynx/bots/${id}`,
+          };
+          return detail;
+        }
+        case "bots_update_instructions": {
+          const id = String(args.id);
+          const bot = mockBots.find((candidate) => candidate.id === id);
+          if (!bot) {
+            throw {
+              kind: "invalidBot",
+              message: "there is no bot with that id",
+            };
+          }
+          mockInstructions.set(id, String(args.instructions).trim());
+          const detail: BotDetail = {
+            ...structuredClone(bot),
+            instructions: mockInstructions.get(id) ?? "",
+            folder: `/home/mock/.lynx/bots/${id}`,
+          };
+          return detail;
+        }
+        case "bots_update_setup": {
+          const id = String(args.id);
+          const setup = args.setup as BotSetup;
+          const bot = mockBots.find((candidate) => candidate.id === id);
+          if (!bot) {
+            throw {
+              kind: "invalidBot",
+              message: "there is no bot with that id",
+            };
+          }
+          bot.provider = setup.provider;
+          bot.model = setup.model;
+          bot.team = setup.team;
+          const detail: BotDetail = {
+            ...structuredClone(bot),
+            instructions: mockInstructions.get(id) ?? "",
+            folder: `/home/mock/.lynx/bots/${id}`,
+          };
+          return detail;
+        }
+        case "bots_delete": {
+          const id = String(args.id);
+          mockBots = mockBots.filter((candidate) => candidate.id !== id);
+          mockInstructions.delete(id);
+          for (const thread of mockThreads.get(id) ?? [])
+            mockConversations.delete(thread.id);
+          mockThreads.delete(id);
+          return null;
+        }
+        case "bots_workers":
+          return [];
+        case "bots_grants":
+          return structuredClone(mockGrants.get(String(args.id)) ?? []);
+        case "bots_approve_access": {
+          const id = String(args.id);
+          const turn = (mockConversations.get(String(args.thread)) ?? []).find(
+            (message) => message.id === String(args.messageId),
+          );
+          if (!turn?.request || turn.request.state !== "pending") {
+            throw {
+              kind: "invalidBot",
+              message:
+                "there is no access request waiting for an answer with that id",
+            };
+          }
+          turn.request = { ...turn.request, state: "approved" };
+          const items = turn.request.items ?? [];
+          if (turn.request.kind === "workers") {
+            mockWorkerGrants.set(id, [
+              ...(mockWorkerGrants.get(id) ?? []),
+              { id: turn.request.repoId ?? "", name: items[0] ?? "" },
+            ]);
+          } else if (turn.request.kind === "commands") {
+            mockCommands.set(id, [
+              ...new Set([...(mockCommands.get(id) ?? []), ...items]),
+            ]);
+          } else {
+            mockGrants.set(id, [
+              ...(mockGrants.get(id) ?? []),
+              { id: turn.request.repoId ?? "", name: items[0] ?? "" },
+            ]);
+          }
+          // The bot goes on once it is approved, and its answer is kept in the conversation.
+          const answer =
+            turn.request.kind === "workers"
+              ? `Certo! Vou lançar agentes em ${items[0] ?? ""}.`
+              : `Obrigado! Vou usar ${items.join(", ")}.`;
+          (mockConversations.get(String(args.thread)) ?? []).push({
+            id: crypto.randomUUID(),
+            author: "bot",
+            text: answer,
+            at: Math.floor(Date.now() / 1000),
+            speaker: id,
+          });
+          return { ok: true, text: answer };
+        }
+        case "bots_deny_access": {
+          const turn = (mockConversations.get(String(args.thread)) ?? []).find(
+            (message) => message.id === String(args.messageId),
+          );
+          if (!turn?.request || turn.request.state !== "pending") {
+            throw {
+              kind: "invalidBot",
+              message:
+                "there is no access request waiting for an answer with that id",
+            };
+          }
+          turn.request = { ...turn.request, state: "denied" };
+          return null;
+        }
+        case "bots_revoke_access": {
+          const id = String(args.id);
+          const kept = (mockGrants.get(id) ?? []).filter(
+            (grant) => grant.id !== String(args.repoId),
+          );
+          mockGrants.set(id, kept);
+          return structuredClone(kept);
+        }
+        case "bots_jev_status":
+          return { configured: mockJevKey };
+        case "bots_jev_save_key":
+          mockJevKey = true;
+          return { configured: true };
+        case "bots_jev_clear_key":
+          mockJevKey = false;
+          return { configured: false };
+        case "bots_jev_test":
+          return mockJevKey
+            ? { ok: true, latencyMs: 340, reason: null }
+            : { ok: false, latencyMs: 0, reason: "no key saved" };
+        case "bots_worker_grants":
+          return structuredClone(mockWorkerGrants.get(String(args.id)) ?? []);
+        case "bots_revoke_workers": {
+          const id = String(args.id);
+          const kept = (mockWorkerGrants.get(id) ?? []).filter(
+            (grant) => grant.id !== String(args.repoId),
+          );
+          mockWorkerGrants.set(id, kept);
+          return structuredClone(kept);
+        }
+        case "bots_running_commands":
+          return structuredClone(mockRunning.get(String(args.id)) ?? []);
+        case "bots_stop_command": {
+          const id = String(args.id);
+          mockRunning.set(
+            id,
+            (mockRunning.get(id) ?? []).map((one) =>
+              one.session === String(args.session)
+                ? { ...one, running: false }
+                : one,
+            ),
+          );
+          return null;
+        }
+        case "bots_allowed_commands":
+          return structuredClone(mockCommands.get(String(args.id)) ?? []);
+        case "bots_allow_commands": {
+          const id = String(args.id);
+          const patterns = (args.patterns as string[]).map((p) => p.trim());
+          const refused = patterns.find(
+            (p) => !p || /^(\*|(ba|z|fi)?sh|sudo|env)(\s|$)/.test(p),
+          );
+          if (refused !== undefined || patterns.length === 0) {
+            throw {
+              kind: "invalidBot",
+              message: `that command pattern is not allowed: "${refused ?? ""}" would allow everything`,
+            };
+          }
+          const next = [
+            ...new Set([...(mockCommands.get(id) ?? []), ...patterns]),
+          ];
+          mockCommands.set(id, next);
+          return structuredClone(next);
+        }
+        case "bots_disallow_command": {
+          const id = String(args.id);
+          const kept = (mockCommands.get(id) ?? []).filter(
+            (pattern) => pattern !== String(args.pattern),
+          );
+          mockCommands.set(id, kept);
+          return structuredClone(kept);
+        }
+        case "bots_skills":
+          return structuredClone(mockSkills.get(String(args.id)) ?? []);
+        case "bots_skill_add": {
+          const id = String(args.id);
+          // The mock names the skill after the folder the picker returned.
+          const name = String(args.path).split("/").pop() ?? "skill";
+          const skills = mockSkills.get(id) ?? [];
+          if (skills.some((skill) => skill.name === name)) {
+            throw {
+              kind: "invalidBot",
+              message: "the bot already has a skill with that name",
+            };
+          }
+          const next = [...skills, { name, description: `Skill ${name}` }];
+          mockSkills.set(id, next);
+          return structuredClone(next);
+        }
+        case "bots_skill_remove": {
+          const id = String(args.id);
+          const kept = (mockSkills.get(id) ?? []).filter(
+            (skill) => skill.name !== String(args.name),
+          );
+          mockSkills.set(id, kept);
+          return structuredClone(kept);
+        }
+        case "bots_mcp_servers":
+          return structuredClone(mockMcp.get(String(args.id)) ?? []);
+        case "bots_mcp_add": {
+          const id = String(args.id);
+          let parsed: {
+            mcpServers?: Record<string, { command?: string; url?: string }>;
+          };
+          try {
+            parsed = JSON.parse(String(args.config));
+          } catch {
+            throw {
+              kind: "invalidBot",
+              message: "the MCP servers are not valid: it is not valid JSON",
+            };
+          }
+          const servers = new Map(
+            (mockMcp.get(id) ?? []).map((server) => [server.name, server]),
+          );
+          for (const [name, entry] of Object.entries(parsed.mcpServers ?? {})) {
+            servers.set(name, {
+              name,
+              kind: entry.url ? "url" : "command",
+              target: entry.url ?? entry.command ?? "",
+            });
+          }
+          const next = [...servers.values()].sort((a, b) =>
+            a.name.localeCompare(b.name),
+          );
+          mockMcp.set(id, next);
+          return structuredClone(next);
+        }
+        case "bots_mcp_remove": {
+          const id = String(args.id);
+          const kept = (mockMcp.get(id) ?? []).filter(
+            (server) => server.name !== String(args.name),
+          );
+          mockMcp.set(id, kept);
+          return structuredClone(kept);
+        }
+        case "channels_update_members": {
+          const id = String(args.id);
+          const channel = mockChannels.find((candidate) => candidate.id === id);
+          if (!channel) {
+            throw {
+              kind: "invalidBot",
+              message: "there is no channel with that id",
+            };
+          }
+          channel.members = [...new Set(args.members as string[])];
+          return structuredClone(channel);
+        }
+        case "channels_delete": {
+          const id = String(args.id);
+          if (!mockChannels.some((candidate) => candidate.id === id)) {
+            throw {
+              kind: "invalidBot",
+              message: "there is no channel with that id",
+            };
+          }
+          mockChannels = mockChannels.filter(
+            (candidate) => candidate.id !== id,
+          );
+          mockChannelConversations.delete(id);
+          return null;
+        }
+        case "channels_list":
+          return structuredClone(mockChannels);
+        case "channels_create": {
+          const channel = args.channel as NewChannel;
+          const name = channel.name.trim();
+          const created: ChannelSummary = {
+            id: name
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, ""),
+            name,
+            members: channel.members,
+          };
+          mockChannels = [...mockChannels, created].sort((a, b) =>
+            a.name.localeCompare(b.name),
+          );
+          return structuredClone(created);
+        }
+        case "channels_conversation":
+          return structuredClone(
+            mockChannelConversations.get(String(args.id)) ?? [],
+          );
+        case "channels_chat": {
+          const id = String(args.id);
+          const channel = mockChannels.find((candidate) => candidate.id === id);
+          if (!channel) {
+            throw {
+              kind: "invalidBot",
+              message: "there is no channel with that id",
+            };
+          }
+          const thread = `channel:${id}`;
+          const text = String(args.text).trim();
+          const log = mockChannelConversations.get(id) ?? [];
+          mockChannelConversations.set(id, log);
+          // The backend's order: the person's message, the routing, then each member in turn.
+          const person: ChatMessage = {
+            id: crypto.randomUUID(),
+            author: "user",
+            text,
+            at: Math.floor(Date.now() / 1000),
+            speaker: null,
+          };
+          log.push(person);
+          void emit("chat-message-added", { thread, message: person });
+          void emit("channel-status", {
+            thread,
+            phase: "routing",
+            author: null,
+            waiting: [],
+          });
+          const members = channel.members.filter((memberId) =>
+            mockBots.some((candidate) => candidate.id === memberId),
+          );
+          for (const [index, memberId] of members.entries()) {
+            const member = mockBots.find(
+              (candidate) => candidate.id === memberId,
+            );
+            if (!member) continue;
+            const waiting = members.slice(index + 1);
+            void emit("channel-status", {
+              thread,
+              phase: "answering",
+              author: member.id,
+              waiting,
+            });
+            const reply = `Oi, sou ${member.name}.`;
+            for (const piece of reply.split(/(?<=\s)/)) {
+              await delay(60);
+              void emit("bot-reply-delta", {
+                thread,
+                author: member.id,
+                text: piece,
+              });
+            }
+            const saved: ChatMessage = {
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: reply,
+              at: Math.floor(Date.now() / 1000),
+              speaker: member.id,
+            };
+            log.push(saved);
+            void emit("chat-message-added", { thread, message: saved });
+          }
+          void emit("channel-status", {
+            thread,
+            phase: "idle",
+            author: null,
+            waiting: [],
+          });
+          return null;
+        }
+        case "bots_conversation":
+          return structuredClone(
+            mockConversations.get(String(args.thread)) ?? [],
+          );
+        case "bots_threads":
+          return structuredClone(
+            [...threadsOfMockBot(String(args.id))].sort(
+              (a, b) => b.updatedAt - a.updatedAt,
+            ),
+          );
+        case "bots_thread_create": {
+          const created = newMockThread();
+          threadsOfMockBot(String(args.id)).unshift(created);
+          return structuredClone(created);
+        }
+        case "bots_thread_rename": {
+          const found = threadsOfMockBot(String(args.id)).find(
+            (thread) => thread.id === String(args.thread),
+          );
+          if (!found) {
+            throw {
+              kind: "invalidBot",
+              message: "there is no thread with that id",
+            };
+          }
+          found.title = String(args.title).trim();
+          return structuredClone(found);
+        }
+        case "bots_thread_delete": {
+          const id = String(args.id);
+          if (mockSlow.has(`${id}:${String(args.thread)}`)) {
+            throw {
+              kind: "invalidBot",
+              message:
+                "the bot is answering: change it once its reply is written",
+            };
+          }
+          mockThreads.set(
+            id,
+            threadsOfMockBot(id).filter(
+              (thread) => thread.id !== String(args.thread),
+            ),
+          );
+          mockConversations.delete(String(args.thread));
+          return null;
+        }
+        case "channels_stop":
+          return false;
+        case "bots_stop": {
+          const slow = `${String(args.id)}:${String(args.thread)}`;
+          if (!mockSlow.has(slow)) return false;
+          mockStopRequested.add(slow);
+          return true;
+        }
+        case "bots_chat": {
+          const id = String(args.id);
+          const thread = String(args.thread);
+          const bot = mockBots.find((candidate) => candidate.id === id);
+          if (!bot) {
+            throw {
+              kind: "invalidBot",
+              message: "there is no bot with that id",
+            };
+          }
+          const text = String(args.text).trim();
+          const log = mockConversations.get(thread) ?? [];
+          // The first message titles the thread, as the backend does.
+          const titled = threadsOfMockBot(id).find((one) => one.id === thread);
+          if (titled && log.length === 0 && !titled.title)
+            titled.title = text.slice(0, 40);
+          log.push({
+            id: crypto.randomUUID(),
+            author: "user",
+            text,
+            at: Math.floor(Date.now() / 1000),
+          });
+          mockConversations.set(thread, log);
+          // Asking to read a registered repository leaves a request in the chat, as the backend does.
+          if (text.includes("acesso ao lynx")) {
+            // The backend keeps the answer under the question and the request after it.
+            const answer = "Pedi à pessoa para ler o lynx.";
+            log.push({
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: answer,
+              at: Math.floor(Date.now() / 1000),
+            });
+            const request: ChatMessage = {
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: "Preciso ler o código do lynx para responder.",
+              at: Math.floor(Date.now() / 1000),
+              speaker: id,
+              request: {
+                kind: "project",
+                items: ["lynx"],
+                repoId: "lynx",
+                state: "pending",
+              },
+            };
+            log.push(request);
+            void emit("chat-message-added", {
+              thread: `bot:${id}:${thread}`,
+              message: request,
+            });
+            return { ok: true, text: answer };
+          }
+          // A slow reply the person can stop: what was written stays, marked as stopped.
+          if (text.includes("demora")) {
+            void emit("bot-reply-delta", {
+              thread: `bot:${id}:${thread}`,
+              author: id,
+              text: "Começando a escrever",
+            });
+            const slow = `${id}:${thread}`;
+            mockSlow.add(slow);
+            const started = Date.now();
+            while (
+              !mockStopRequested.has(slow) &&
+              Date.now() - started < 8000
+            ) {
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            mockSlow.delete(slow);
+            mockStopRequested.delete(slow);
+            log.push({
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: "Começando a escrever",
+              at: Math.floor(Date.now() / 1000),
+              stopped: true,
+            });
+            return { ok: true, text: "Começando a escrever" };
+          }
+          // A reply with a block of code, to copy from.
+          if (text.includes("mostra um comando")) {
+            const answer =
+              "Rode isto:\n\n```bash\nminha-cli serve --port 8080\n```\n\nDepois abra o navegador.";
+            log.push({
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: answer,
+              at: Math.floor(Date.now() / 1000),
+            });
+            return { ok: true, text: answer };
+          }
+          // A command the bot leaves running shows in its Agents tab.
+          if (text.includes("deixa rodando")) {
+            mockRunning.set(id, [
+              {
+                session: "t1",
+                command: "minha-cli serve",
+                running: true,
+                startedAt: Math.floor(Date.now() / 1000),
+                output: "listening on 8080",
+              },
+            ]);
+            const answer = "Iniciei minha-cli serve.";
+            log.push({
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: answer,
+              at: Math.floor(Date.now() / 1000),
+            });
+            return { ok: true, text: answer };
+          }
+          // Asking to start agents leaves the same card, for one project.
+          if (text.includes("lançar um agente")) {
+            const answer = "Pedi à pessoa: lançar agentes em lynx";
+            log.push({
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: answer,
+              at: Math.floor(Date.now() / 1000),
+            });
+            const request: ChatMessage = {
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: "Vou pedir a um agente para revisar o PR.",
+              at: Math.floor(Date.now() / 1000),
+              speaker: id,
+              request: {
+                kind: "workers",
+                items: ["lynx"],
+                repoId: "lynx",
+                state: "pending",
+              },
+            };
+            log.push(request);
+            void emit("chat-message-added", {
+              thread: `bot:${id}:${thread}`,
+              message: request,
+            });
+            return { ok: true, text: answer };
+          }
+          // Asking to run commands leaves the same kind of card, listing the patterns.
+          if (text.includes("rodar a cli")) {
+            const answer = "Pedi à pessoa: rodar minha-cli *, git status";
+            log.push({
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: answer,
+              at: Math.floor(Date.now() / 1000),
+            });
+            const request: ChatMessage = {
+              id: crypto.randomUUID(),
+              author: "bot",
+              text: "Preciso rodar a CLI para fazer a tarefa.",
+              at: Math.floor(Date.now() / 1000),
+              speaker: id,
+              request: {
+                kind: "commands",
+                items: ["minha-cli *", "git status"],
+                repoId: null,
+                state: "pending",
+              },
+            };
+            log.push(request);
+            void emit("chat-message-added", {
+              thread: `bot:${id}:${thread}`,
+              message: request,
+            });
+            return { ok: true, text: answer };
+          }
+          // A reply that does not come is kept as an error line, as the backend keeps it.
+          if (text.includes("falhar")) {
+            const failure = "Claude did not answer.";
+            log.push({
+              id: crypto.randomUUID(),
+              author: "error",
+              text: failure,
+              at: Math.floor(Date.now() / 1000),
+            });
+            return { ok: false, text: failure };
+          }
+          // The engine writes its reply in pieces, and so does the mock, with Markdown in it.
+          const reply = `Oi! Sou ${bot.name}. Você disse: "${text}".\n\n**Hoje:**\n- Reunião às 10h\n- Revisar o PR\n\nVeja [a agenda](https://example.com/agenda).`;
+          for (const piece of reply.split(/(?<=\s)/)) {
+            await delay(60);
+            void emit("bot-reply-delta", {
+              thread: `bot:${id}:${thread}`,
+              author: id,
+              text: piece,
+            });
+          }
+          log.push({
+            id: crypto.randomUUID(),
+            author: "bot",
+            text: reply,
+            at: Math.floor(Date.now() / 1000),
+          });
+          return { ok: true, text: reply };
+        }
         case "update_config": {
           const next = args.config as AppConfig;
           if (configSnapshot.fileBroken) {

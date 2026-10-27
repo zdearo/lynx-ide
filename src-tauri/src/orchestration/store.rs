@@ -127,6 +127,32 @@ impl AppDatabase {
         row.map(run_from).transpose()
     }
 
+    /// Every run started by a coordinator session that begins with `prefix`, newest first. A bot's
+    /// threads are separate coordinators, `bot:<bot>:<thread>`, so all of a bot's runs share the prefix.
+    pub fn runs_of_coordinators_starting(&self, prefix: &str) -> Result<Vec<Run>, DatabaseError> {
+        let connection = self.lock();
+        let mut statement = connection.prepare(&format!(
+            "SELECT {RUN_COLUMNS} FROM orchestration_runs
+             WHERE substr(coordinator_session, 1, length(?1)) = ?1
+             ORDER BY created_at DESC, rowid DESC"
+        ))?;
+        let rows = statement.query_map([prefix], run_row)?;
+        rows.map(|row| run_from(row?)).collect()
+    }
+
+    /// The run with this id, if there is one.
+    pub fn run(&self, id: &str) -> Result<Option<Run>, DatabaseError> {
+        let row = self
+            .lock()
+            .query_row(
+                &format!("SELECT {RUN_COLUMNS} FROM orchestration_runs WHERE id = ?1"),
+                [id],
+                run_row,
+            )
+            .optional()?;
+        row.map(run_from).transpose()
+    }
+
     pub fn insert_task(&self, task: &Task) -> Result<(), DatabaseError> {
         let depends_on =
             serde_json::to_string(&task.depends_on).map_err(|_| corrupt("dependencies"))?;

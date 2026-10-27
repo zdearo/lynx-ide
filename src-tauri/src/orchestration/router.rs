@@ -1,4 +1,4 @@
-//! Sends each tool call an agent makes to the handler that runs it: `lynx_*` tools to the
+//! Sends each tool call to the handler that runs it: `bot_*` tools to the bots, `lynx_*` tools to the
 //! orchestration, every other tool to the browser.
 
 use std::sync::Arc;
@@ -6,6 +6,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::agents::hook_hub::ToolHandler;
+use crate::bots::bot_tools;
 
 use super::service::Orchestration;
 use super::tools::{self, PREFIX};
@@ -13,6 +14,9 @@ use super::tools::{self, PREFIX};
 pub struct ToolRouter {
     browser: Arc<dyn ToolHandler>,
     orchestration: Arc<Orchestration>,
+    /// Handles the `bot_*` tools. Absent until the bots are connected, and their calls then fall
+    /// through to the browser, which answers them as unknown.
+    bots: Option<Arc<dyn ToolHandler>>,
 }
 
 impl ToolRouter {
@@ -20,13 +24,25 @@ impl ToolRouter {
         Self {
             browser,
             orchestration,
+            bots: None,
         }
+    }
+
+    pub fn with_bots(mut self, bots: Arc<dyn ToolHandler>) -> Self {
+        self.bots = Some(bots);
+        self
     }
 }
 
 impl ToolHandler for ToolRouter {
     fn call(&self, session_id: &str, agent: &str, tool: &str, arguments: Value) -> Value {
-        if tool.starts_with(PREFIX) {
+        if let Some(bots) = self
+            .bots
+            .as_ref()
+            .filter(|_| tool.starts_with(bot_tools::PREFIX))
+        {
+            bots.call(session_id, agent, tool, arguments)
+        } else if tool.starts_with(PREFIX) {
             tools::call(&self.orchestration, session_id, tool, &arguments)
         } else {
             self.browser.call(session_id, agent, tool, arguments)
@@ -68,7 +84,7 @@ mod tests {
         fn prompt_file(&self, _text: &str) -> Result<String, String> {
             Err("no files".to_owned())
         }
-        fn launch_line(&self, _harness: HarnessId) -> String {
+        fn launch_line(&self, _harness: HarnessId, _unattended: bool) -> String {
             String::new()
         }
         fn start(&self, _worktree: &str, _command: &str) -> Result<String, String> {

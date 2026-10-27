@@ -86,6 +86,8 @@ pub enum AppError {
     Browser(#[from] crate::browser::BrowserError),
     #[error(transparent)]
     Update(#[from] crate::updates::update_service::UpdateError),
+    #[error(transparent)]
+    Bot(#[from] crate::bots::bot_folder::BotError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
 }
@@ -148,6 +150,7 @@ pub enum IpcErrorKind {
     BrowserEngineOutdated,
     Browser,
     Update,
+    InvalidBot,
     Internal,
 }
 
@@ -227,6 +230,7 @@ impl From<AppError> for IpcError {
             }
             AppError::Browser(_) => IpcErrorKind::Browser,
             AppError::Update(_) => IpcErrorKind::Update,
+            AppError::Bot(_) => IpcErrorKind::InvalidBot,
             AppError::TaskFailed(_) => IpcErrorKind::Internal,
         };
         Self {

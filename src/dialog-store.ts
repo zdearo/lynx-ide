@@ -24,6 +24,8 @@ interface DialogState {
   quitSessions: number | null;
   unlinkFolderTarget: Folder | null;
   addProjectOpen: boolean;
+  /** The wizard that makes a bot, in steps. */
+  botWizardOpen: boolean;
   /** Terminal session the user is asked to confirm closing. */
   closeTerminalId: string | null;
   /** A file with unsaved changes the user is asked to confirm closing. */
@@ -49,6 +51,7 @@ interface DialogState {
   askQuit: (sessions: number | null) => void;
   askUnlinkFolder: (folder: Folder | null) => void;
   askAddProject: (open: boolean) => void;
+  askBotWizard: (open: boolean) => void;
   askCloseTerminal: (id: string | null) => void;
   askCloseFile: (target: { worktreePath: string; path: string } | null) => void;
   askCreateRemote: (worktreePath: string | null) => void;
@@ -67,6 +70,7 @@ export const useDialogStore = create<DialogState>((set) => ({
   quitSessions: null,
   unlinkFolderTarget: null,
   addProjectOpen: false,
+  botWizardOpen: false,
   closeTerminalId: null,
   closeFileTarget: null,
   createRemoteFor: null,
@@ -82,6 +86,7 @@ export const useDialogStore = create<DialogState>((set) => ({
   askQuit: (quitSessions) => set({ quitSessions }),
   askUnlinkFolder: (unlinkFolderTarget) => set({ unlinkFolderTarget }),
   askAddProject: (addProjectOpen) => set({ addProjectOpen }),
+  askBotWizard: (botWizardOpen) => set({ botWizardOpen }),
   askCloseTerminal: (closeTerminalId) => set({ closeTerminalId }),
   askCloseFile: (closeFileTarget) => set({ closeFileTarget }),
   askCreateRemote: (createRemoteFor) => set({ createRemoteFor }),

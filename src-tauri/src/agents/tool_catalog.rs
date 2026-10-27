@@ -1,7 +1,9 @@
-//! Every tool an agent can call through the MCP server: the browser's and the orchestration's.
+//! Every tool an agent can call through the MCP server: the browser's and the orchestration's. A bot
+//! is offered its own tools instead.
 
 use serde_json::Value;
 
+use crate::bots::bot_tools;
 use crate::browser::agent_tool_definitions;
 use crate::orchestration::tools;
 
@@ -9,6 +11,15 @@ pub fn list() -> Vec<Value> {
     let mut all = agent_tool_definitions::list();
     all.extend(tools::definitions());
     all
+}
+
+/// The tools a session is offered. A bot's session (`bot:<id>`) gets the bot tools, and an agent gets
+/// `list`.
+pub fn list_for(caller: Option<&str>) -> Vec<Value> {
+    match caller {
+        Some(session) if session.starts_with("bot:") => bot_tools::definitions(),
+        _ => list(),
+    }
 }
 
 pub fn instructions() -> String {

@@ -31,6 +31,11 @@ function withAgents(agents: AppConfig["agents"]) {
       agents,
       notifications: { onDone: true, onNeedsYou: true, onUpdate: true },
       updates: { checkAutomatically: true },
+      bots: {
+        chatgpt: { enabled: false },
+        decider: { enabled: false },
+        memory: { capture: true },
+      },
       browser: { agentAccess: "full", allowedSites: [] },
       usage: {
         visible: true,

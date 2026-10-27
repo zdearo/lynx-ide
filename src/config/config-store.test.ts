@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands, type ConfigSnapshot } from "@/bindings";
 import {
+  DEFAULT_BOTS_CONFIG,
   DEFAULT_TERMINAL_CONFIG,
   friendlyConfigError,
   useConfigStore,
@@ -23,6 +24,11 @@ function snapshot(fontSize: number): ConfigSnapshot {
       agents: { launchMode: "manual", launchArguments: {} },
       notifications: { onDone: true, onNeedsYou: true, onUpdate: true },
       updates: { checkAutomatically: true },
+      bots: {
+        chatgpt: { enabled: false },
+        decider: { enabled: false },
+        memory: { capture: true },
+      },
       browser: { agentAccess: "full", allowedSites: [] },
       usage: {
         visible: true,
@@ -93,6 +99,16 @@ describe("config store", () => {
     expect(useConfigStore.getState().snapshot?.config.terminal.fontSize).toBe(
       20,
     );
+  });
+});
+
+describe("bots defaults", () => {
+  it("keeps the ChatGPT plan off until the user turns it on", () => {
+    expect(DEFAULT_BOTS_CONFIG).toEqual({
+      chatgpt: { enabled: false },
+      decider: { enabled: false },
+      memory: { capture: true },
+    });
   });
 });
 

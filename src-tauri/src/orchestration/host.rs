@@ -2,6 +2,7 @@
 //! from the managed services when a call needs them.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
@@ -10,14 +11,23 @@ use crate::agents::activity::AgentStatus;
 use crate::agents::agent_prompt_file;
 use crate::agents::harness::HarnessId;
 use crate::agents::launch_line::launch_line;
+use crate::bots::bot_bridge::{bot_of_session, parse_session};
+use crate::bots::bot_chat::BotChat;
 use crate::browser::{PageOwner, SessionOwners};
 use crate::config::ConfigStore;
-use crate::config::app_config::OrchestrationConfig;
+use crate::config::app_config::{LaunchMode, OrchestrationConfig};
 use crate::terminal::terminal_manager::TerminalManager;
 use crate::workspace::workspace_events::WorktreeCreated;
 use crate::workspace::workspace_service::WorkspaceService;
 
 use super::service::WorkerHost;
+
+/// What a bot is told when something in its runs changed: it looks at its workers and tells the person.
+const WAKE_NOTE: &str = "Algo mudou nas suas tarefas: um worker terminou, precisa de uma resposta ou parou. Chame lynx_check com waitSeconds 0 para ver o que aconteceu e relate à pessoa.";
+
+/// How often, and how many times, a worker's screen is looked at for its prompt before giving up (30 s).
+const SUBMIT_POLL: Duration = Duration::from_millis(500);
+const SUBMIT_TRIES: u32 = 60;
 
 /// Workers are terminals of the app, in worktrees of the app's projects.
 pub struct AppWorkers {
@@ -38,6 +48,25 @@ impl AppWorkers {
     fn terminals(&self) -> tauri::State<'_, TerminalManager> {
         self.app.state::<TerminalManager>()
     }
+
+    /// A bot works in the first project it was let read: its main folder is where its runs start.
+    fn bot_project(&self, bot: &str) -> Option<String> {
+        let chat = self.app.state::<Arc<BotChat>>();
+        // A project where it may start agents wins over one it only reads.
+        let reads = chat.grants(bot).ok()?;
+        let starts = chat.worker_grants(bot).unwrap_or_default();
+        let first = reads
+            .iter()
+            .find(|read| starts.iter().any(|start| start.id == read.id))
+            .or_else(|| reads.first())?;
+        self.app
+            .state::<WorkspaceService>()
+            .list_repos()
+            .ok()?
+            .into_iter()
+            .find(|repo| repo.id == first.id)
+            .map(|repo| repo.path)
+    }
 }
 
 impl WorkerHost for AppWorkers {
@@ -46,10 +75,42 @@ impl WorkerHost for AppWorkers {
     }
 
     fn worktree_of(&self, session: &str) -> Option<String> {
+        if let Some(bot) = bot_of_session(session) {
+            return self.bot_project(bot);
+        }
         match self.owners.get(session)? {
             PageOwner::Workspace { worktree_path } => Some(worktree_path),
             PageOwner::Bot { .. } => None,
         }
+    }
+
+    fn notify(&self, coordinator: &str) {
+        let Some((bot, label)) = parse_session(coordinator) else {
+            return;
+        };
+        let chat = Arc::clone(&*self.app.state::<Arc<BotChat>>());
+        let (bot, label) = (bot.to_owned(), label.to_owned());
+        chat.wake(&bot, &label, WAKE_NOTE);
+        BotChat::kick(chat, bot, label);
+    }
+
+    fn submit_when_shown(&self, session: &str, text: &str) {
+        let app = self.app.clone();
+        let session = session.to_owned();
+        let text = text.to_owned();
+        std::thread::spawn(move || {
+            for _ in 0..SUBMIT_TRIES {
+                std::thread::sleep(SUBMIT_POLL);
+                let terminals = app.state::<TerminalManager>();
+                let Ok(snapshot) = terminals.snapshot(&session) else {
+                    return;
+                };
+                if drawn_twice(&visible_text(&snapshot.data), &text) {
+                    let _ = terminals.write(&session, "\r");
+                    return;
+                }
+            }
+        });
     }
 
     fn new_worktree(&self, from: &str, name: &str) -> Result<String, String> {
@@ -80,13 +141,42 @@ impl WorkerHost for AppWorkers {
             .map_err(|error| error.to_string())
     }
 
-    fn launch_line(&self, harness: HarnessId) -> String {
+    fn launch_line(&self, harness: HarnessId, unattended: bool) -> String {
         let config = self.config.config();
-        launch_line(
-            harness,
-            config.agents.launch_mode,
-            &config.agents.launch_arguments,
-        )
+        let mode = if unattended {
+            LaunchMode::Yolo
+        } else {
+            config.agents.launch_mode
+        };
+        launch_line(harness, mode, &config.agents.launch_arguments)
+    }
+
+    fn allow_start(&self, coordinator: &str, worktree: &str) -> Result<(), String> {
+        let Some(bot) = bot_of_session(coordinator) else {
+            return Ok(());
+        };
+        let repo = self
+            .app
+            .state::<WorkspaceService>()
+            .repo_id_of_worktree(worktree);
+        let allowed = self
+            .app
+            .state::<Arc<BotChat>>()
+            .worker_grants(bot)
+            .is_ok_and(|grants| {
+                repo.is_some_and(|repo| grants.iter().any(|grant| grant.id == repo))
+            });
+        if allowed {
+            Ok(())
+        } else {
+            Err("Você ainda não pode lançar agentes neste projeto. Peça à pessoa com bot_request, kind \"workers\" e o projeto em items; diga no motivo o que os agentes vão fazer, porque eles rodam sem pedir permissão a ninguém.".to_owned())
+        }
+    }
+
+    fn send(&self, session: &str, text: &str) -> Result<(), String> {
+        self.terminals()
+            .write(session, &format!("{text}\r"))
+            .map_err(|error| error.to_string())
     }
 
     fn start(&self, worktree: &str, command: &str) -> Result<String, String> {
@@ -159,14 +249,38 @@ pub fn visible_text(data: &str) -> String {
     out
 }
 
+/// Whether `text` is on screen twice. The shell echoes the command that starts an agent, and the agent
+/// draws the same text in its input once it is ready. Spaces are ignored, since a screen wraps lines.
+pub fn drawn_twice(screen: &str, text: &str) -> bool {
+    let squeezed = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let wanted = squeezed(text);
+    !wanted.is_empty() && squeezed(screen).matches(&wanted).count() >= 2
+}
+
 #[cfg(test)]
 mod tests {
-    use super::visible_text;
+    use super::{drawn_twice, visible_text};
 
     #[test]
     fn escape_sequences_are_dropped_and_the_text_kept() {
         assert_eq!(visible_text("\u{1b}[31mred\u{1b}[0m text"), "red text");
         assert_eq!(visible_text("\u{1b}]0;title\u{7}line\r\n"), "line\r\n");
         assert_eq!(visible_text("a\u{7}b"), "ab", "a bell is not text");
+    }
+
+    #[test]
+    fn a_prompt_counts_once_the_agent_draws_it_too() {
+        let text = "Read /w/p.md and follow the instructions in it.";
+        let echoed = "$ opencode --prompt 'Read /w/p.md and follow the instructions in it.'\n";
+        assert!(
+            !drawn_twice(echoed, text),
+            "the echoed command alone is not enough"
+        );
+
+        let drawn = format!("{echoed}Read /w/p.md and follow the\ninstructions in it.");
+        assert!(
+            drawn_twice(&drawn, text),
+            "a line break in the input does not hide it"
+        );
     }
 }

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use super::hook_hub::{SESSION_ENV, TOKEN_HEADER, TOOL_PATH};
 use super::hub_address;
-use super::tool_catalog::{instructions, list};
+use super::tool_catalog::{instructions, list_for};
 
 pub const FLAG: &str = "--mcp";
 const SERVER_NAME: &str = "lynx";
@@ -26,6 +26,10 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
 pub trait ToolTransport {
     /// The MCP `tools/call` result for the call, or why it could not be made.
     fn call(&self, tool: &str, arguments: &Value) -> Result<Value, String>;
+    /// The session this process serves, when it has one. A bot's session starts with `bot:`.
+    fn caller(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Runs the server when the arguments ask for it and returns the exit code. None means the app
@@ -84,7 +88,7 @@ fn answer(message: &Value, transport: &impl ToolTransport) -> Option<Value> {
             "instructions": instructions(),
         }),
         "ping" => json!({}),
-        "tools/list" => json!({ "tools": list() }),
+        "tools/list" => json!({ "tools": list_for(transport.caller()) }),
         "tools/call" => call_tool(params, transport),
         other => return Some(failure(id, -32601, &format!("method not found: {other}"))),
     };
@@ -143,6 +147,10 @@ const NOT_IN_LYNX: &str = "The Lynx browser is only available to agents started 
 const NOT_RUNNING: &str = "Could not reach Lynx. Check that the app is still open.";
 
 impl ToolTransport for LoopbackTransport {
+    fn caller(&self) -> Option<&str> {
+        self.session.as_deref()
+    }
+
     fn call(&self, tool: &str, arguments: &Value) -> Result<Value, String> {
         let session = self.session.as_ref().ok_or(NOT_IN_LYNX)?;
         let hub = hub_address::current().ok_or(NOT_RUNNING)?;

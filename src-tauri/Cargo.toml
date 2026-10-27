@@ -27,7 +27,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["specta"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+log = { version = "0.4", features = ["std"] }
 specta = "=2.0.0-rc.25"
 specta-typescript = "0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
@@ -51,6 +52,7 @@ tiny-skia = "0.11"
 fontdue = "0.9"
 tauri-plugin-updater = "2.14.0"
 base64 = "0.22"
+ring = "0.17"
 image = { version = "0.25", default-features = false, features = ["png"] }
 anyhow = "1"
 lynx-pty-daemon = { version = "0.1.0", path = "crates/pty-daemon" }

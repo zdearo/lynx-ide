@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
-/** The views the primary bar can show in the side panel. Only one so far. */
-export type NavigationViewId = "projects";
+/** The views the primary bar can show in the side panel. */
+export type NavigationViewId = "projects" | "bots";
 
 const ACTIVE_VIEW_KEY = "lynx-ide.activeView";
 const PANEL_COLLAPSED_KEY = "lynx-ide.panelCollapsed";

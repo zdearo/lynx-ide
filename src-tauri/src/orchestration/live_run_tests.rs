@@ -78,7 +78,7 @@ impl WorkerHost for LiveHost {
             .map_err(|error| error.to_string())
     }
 
-    fn launch_line(&self, harness: HarnessId) -> String {
+    fn launch_line(&self, harness: HarnessId, _unattended: bool) -> String {
         launch_line(harness, self.mode, &self.launch)
     }
 

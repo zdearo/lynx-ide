@@ -36,6 +36,10 @@ struct FakeHost {
     output: Mutex<String>,
     count: Mutex<u32>,
     stopped: Mutex<Vec<String>>,
+    /// Why starting a worker is refused, when it is.
+    refuse: Mutex<Option<String>>,
+    /// What was typed into the workers, as (session, text).
+    sent: Mutex<Vec<(String, String)>>,
 }
 
 impl FakeHost {
@@ -93,8 +97,28 @@ impl WorkerHost for FakeHost {
         Ok("/tmp/lynx-prompts/task.md".to_owned())
     }
 
-    fn launch_line(&self, harness: HarnessId) -> String {
-        harness_name(harness).to_owned()
+    fn launch_line(&self, harness: HarnessId, unattended: bool) -> String {
+        let name = harness_name(harness);
+        if unattended {
+            format!("{name} --yolo")
+        } else {
+            name.to_owned()
+        }
+    }
+
+    fn allow_start(&self, _coordinator: &str, worktree: &str) -> Result<(), String> {
+        match self.refuse.lock().expect("lock").as_deref() {
+            Some(reason) if worktree.starts_with("/repo") => Err(reason.to_owned()),
+            _ => Ok(()),
+        }
+    }
+
+    fn send(&self, session: &str, text: &str) -> Result<(), String> {
+        self.sent
+            .lock()
+            .expect("lock")
+            .push((session.to_owned(), text.to_owned()));
+        Ok(())
     }
 
     fn start(&self, worktree: &str, command: &str) -> Result<String, String> {
@@ -845,4 +869,132 @@ fn a_worker_waiting_for_an_answer_is_said_once_for_each_wait() {
         0,
         "a worker that waits is not closed"
     );
+}
+
+/// A bot as coordinator, with a run in `/repo/app`, and a host that refuses to start workers with
+/// `refuse` as the reason, when it is given.
+fn bot_coordinator(refuse: Option<&str>) -> (Orchestration, Arc<FakeHost>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = Arc::new(AppDatabase::open(&dir.path().join("app.db")).expect("database"));
+    let host = FakeHost::with_project("bot:ada");
+    *host.refuse.lock().expect("lock") = refuse.map(str::to_owned);
+    let host = Arc::new(host);
+    let orchestration = Orchestration::new(database, Arc::clone(&host) as Arc<dyn WorkerHost>);
+    orchestration.start_run("bot:ada", "Audit").expect("run");
+    (orchestration, host, dir)
+}
+
+#[test]
+fn a_worker_a_bot_starts_never_stops_to_ask_for_permission_but_an_agents_may() {
+    let (orchestration, host, _dir) = bot_coordinator(None);
+    let task = orchestration
+        .create_task("bot:ada", "Audite", vec![])
+        .expect("task");
+    orchestration
+        .start_worker(
+            "bot:ada",
+            &task.id,
+            HarnessId::Claude,
+            WorkerWorktree::New,
+            None,
+        )
+        .expect("started");
+    assert!(
+        host.started_commands()[0].1.starts_with("claude --yolo"),
+        "{:?}",
+        host.started_commands()
+    );
+
+    let agent = project();
+    start(&agent, &task_of(&agent));
+    assert!(
+        !agent.host.started_commands()[0].1.contains("--yolo"),
+        "an agent coordinator keeps the user's launch mode"
+    );
+}
+
+fn task_of(setup: &Setup) -> Task {
+    task(setup, "Audite")
+}
+
+#[test]
+fn a_bot_that_may_not_start_workers_here_is_told_how_to_ask_and_nothing_starts() {
+    let (orchestration, host, _dir) = bot_coordinator(Some("peça com bot_request"));
+    let task = orchestration
+        .create_task("bot:ada", "Audite", vec![])
+        .expect("task");
+
+    let refused = orchestration.start_worker(
+        "bot:ada",
+        &task.id,
+        HarnessId::Claude,
+        WorkerWorktree::New,
+        None,
+    );
+
+    assert_eq!(
+        refused.map(|_| ()),
+        Err(OrchestrationError::Host("peça com bot_request".to_owned()))
+    );
+    assert!(host.started_commands().is_empty(), "no terminal was opened");
+    let tasks = orchestration.workers_of_bot("ada").expect("workers");
+    assert!(tasks.is_empty());
+}
+
+#[test]
+fn a_coordinator_answers_a_worker_that_waits_in_one_clean_line() {
+    let setup = project();
+    let worker = start(&setup, &task(&setup, "Audite"));
+
+    setup
+        .orchestration
+        .reply_worker("coordinator", &worker.id, "  sim, pode seguir  ")
+        .expect("answered");
+    assert_eq!(
+        *setup.host.sent.lock().expect("lock"),
+        [(worker.session_id.clone(), "sim, pode seguir".to_owned())]
+    );
+
+    for bad in [
+        "",
+        "   ",
+        "linha um\nlinha dois",
+        "com \u{1b}[31m escape",
+        &"x".repeat(2001),
+    ] {
+        assert!(
+            matches!(
+                setup
+                    .orchestration
+                    .reply_worker("coordinator", &worker.id, bad),
+                Err(OrchestrationError::InvalidText(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        setup.host.sent.lock().expect("lock").len(),
+        1,
+        "only the clean answer went"
+    );
+}
+
+#[test]
+fn only_the_workers_of_the_coordinators_own_run_can_be_answered_and_only_while_they_run() {
+    let setup = project();
+    let worker = start(&setup, &task(&setup, "Audite"));
+
+    assert!(matches!(
+        setup
+            .orchestration
+            .reply_worker("coordinator", "no-such-worker", "sim"),
+        Err(OrchestrationError::UnknownWorker(_))
+    ));
+    setup.host.end(&worker.session_id);
+    assert!(matches!(
+        setup
+            .orchestration
+            .reply_worker("coordinator", &worker.id, "sim"),
+        Err(OrchestrationError::Host(_))
+    ));
 }

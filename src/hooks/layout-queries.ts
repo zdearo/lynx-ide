@@ -1,0 +1,5 @@
+/** The window width from which the side panels dock beside the terminal, and below which they are drawers. */
+export const WIDE_LAYOUT_QUERY = "(min-width: 900px)";
+
+/** The window width from which a bot's threads sit beside its chat, and below which they open over it. */
+export const THREADS_DOCKED_QUERY = "(min-width: 1100px)";

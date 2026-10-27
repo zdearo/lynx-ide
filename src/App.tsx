@@ -5,12 +5,15 @@ import { events } from "@/bindings";
 import { useBrowserStore } from "@/browser/browser-store";
 import { useAgentCatalogStore } from "@/agents/agent-catalog-store";
 import { DialogHost } from "@/dialog-host";
+import { useBotChatStore } from "@/bots/bot-chat-store";
+import { useChatGptAuthStore } from "@/bots/chatgpt-auth-store";
 import { useConfigStore } from "@/config/config-store";
 import { useExplorerStore } from "@/files/explorer-store";
 import { useRightPanelStore } from "@/right-panel/right-panel-store";
 import { Toaster } from "@/components/ui/sonner";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { WIDE_LAYOUT_QUERY } from "@/hooks/layout-queries";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { errorMessage } from "@/lib/error-message";
 import { handleTerminalExit } from "@/terminal/terminal-actions";
@@ -41,8 +44,6 @@ import {
 import { useNavigationStore } from "@/navigation/navigation-store";
 import { useQuitGuard } from "@/quit-guard";
 
-/** Below this width the sidebar becomes a drawer so the terminal keeps the room. */
-const WIDE_LAYOUT_QUERY = "(min-width: 900px)";
 /** The right panel only docks beside the terminal when there is room for both. */
 const DOCK_RIGHT_QUERY = "(min-width: 1280px)";
 const REFRESH_ON_FOCUS_MS = 2000;
@@ -88,6 +89,7 @@ function App() {
       useConfigStore.getState().load(),
       useAgentCatalogStore.getState().load(),
       useUpdateStore.getState().load(),
+      useChatGptAuthStore.getState().load(),
     ]).catch((error: unknown) => {
       toast.error(copy.sidebar.loadError, { description: errorMessage(error) });
     });
@@ -160,6 +162,31 @@ function App() {
       },
     );
 
+    const unlistenChatGpt = events.chatGptAuthChanged.listen(({ payload }) => {
+      useChatGptAuthStore.getState().apply(payload.status);
+    });
+
+    // A bot's reply comes in pieces while it is written; the chat shows them as they arrive.
+    // A channel reports its status, and each message it saves, as it goes.
+    const unlistenChannelStatus = events.channelStatus.listen(({ payload }) => {
+      useBotChatStore.getState().status(payload.thread, {
+        phase: payload.phase,
+        author: payload.author,
+        waiting: payload.waiting,
+      });
+    });
+    const unlistenMessageAdded = events.chatMessageAdded.listen(
+      ({ payload }) => {
+        useBotChatStore.getState().added(payload.thread, payload.message);
+      },
+    );
+
+    const unlistenBotReply = events.botReplyDelta.listen(({ payload }) => {
+      useBotChatStore
+        .getState()
+        .delta(payload.thread, payload.author, payload.text);
+    });
+
     const unlistenConfig = events.configChanged.listen(({ payload }) => {
       useConfigStore.getState().apply(payload.snapshot);
     });
@@ -190,6 +217,10 @@ function App() {
       void unlistenAgentStatus.then((unlisten) => unlisten());
       void unlistenWorktree.then((unlisten) => unlisten());
       void unlistenWorktreeCreated.then((unlisten) => unlisten());
+      void unlistenChatGpt.then((unlisten) => unlisten());
+      void unlistenBotReply.then((unlisten) => unlisten());
+      void unlistenChannelStatus.then((unlisten) => unlisten());
+      void unlistenMessageAdded.then((unlisten) => unlisten());
       void unlistenConfig.then((unlisten) => unlisten());
       void unlistenUpdate.then((unlisten) => unlisten());
       void unlistenBrowser.then((unlisten) => unlisten());

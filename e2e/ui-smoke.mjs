@@ -315,8 +315,9 @@ await session("?mock=full", 1200, 760, async (p) => {
     "dialog closes immediately and a progress row appears",
     (await p.getByText("Creating feature/payments…").count()) === 1,
   );
-  await p.waitForTimeout(1500);
+  // The worktree appears once Git has made it, which takes a moment under load.
   const created = p.getByRole("button", { name: /^feature\/payments/ });
+  await created.waitFor({ timeout: 5000 });
   check(
     "created worktree appears and becomes selected",
     (await created.count()) === 1 &&
@@ -3502,6 +3503,11 @@ await session("?mock=full", 1400, 800, async (p) => {
   await settle(p, 500);
   await p.getByRole("dialog").waitFor();
   const dialog = p.getByRole("dialog");
+  // The account and the suggested name load from GitHub after the dialog opens.
+  await dialog
+    .getByRole("combobox", { name: "Account" })
+    .filter({ hasText: "zdearo" })
+    .waitFor({ timeout: 5000 });
   check(
     "the dialog opens with the signed-in account, the folder name and private selected",
     (
@@ -4745,6 +4751,863 @@ await session("?mock=full", 1400, 800, async (p) => {
       (await p.getByText("Open terminals and agents will close").count()) === 1,
   );
   await p.keyboard.press("Escape");
+});
+
+// Bots: the ChatGPT sign-in waits for the browser, comes back signed in, and signing out forgets
+// the account. The plan switch starts off and saves when it is turned on.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.keyboard.press("Control+,");
+  await p.waitForTimeout(300);
+  await p.getByRole("tab", { name: "Bots", exact: true }).click();
+  await p.waitForTimeout(300);
+  const signIn = p.getByRole("button", {
+    name: "Sign in with ChatGPT",
+    exact: true,
+  });
+  const plan = p.getByRole("switch", { name: "Use the ChatGPT plan" });
+  check(
+    "the Bots page offers the ChatGPT sign-in, and the plan starts off",
+    (await signIn.count()) === 1 && !(await plan.isChecked()),
+  );
+
+  await signIn.click();
+  await p.waitForTimeout(300);
+  check(
+    "signing in waits for the browser",
+    (await p.getByText("Waiting for the sign-in in your browser…").count()) ===
+      1,
+  );
+
+  await p.waitForTimeout(1400);
+  check(
+    "the answer comes back signed in as the account",
+    (await p.getByText("Signed in as dev@example.com.").count()) === 1 &&
+      (await p
+        .getByRole("button", { name: "Sign out", exact: true })
+        .count()) === 1,
+  );
+
+  // Jev picks who answers in a channel. It starts off, with no key, and the key is only ever written.
+  const jev = p.getByRole("switch", { name: "Let Jev choose who answers" });
+  check(
+    "Jev starts off with no key saved",
+    !(await jev.isChecked()) &&
+      (await p.getByText("No key saved.", { exact: true }).count()) === 1,
+  );
+  await p.getByLabel("Jev API key", { exact: true }).fill("jev_secret");
+  await p.getByRole("button", { name: "Save key", exact: true }).click();
+  await p
+    .getByText("A key is saved. It is never shown again.", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check(
+    "a saved key is never shown back",
+    (await p.getByLabel("Jev API key", { exact: true }).inputValue()) === "",
+  );
+  await p.getByRole("button", { name: "Test", exact: true }).click();
+  await p
+    .getByText("Jev answered in 340 ms.", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check("the test says how long Jev took", true);
+  await jev.click();
+  await p.waitForTimeout(300);
+  check("Jev can be turned on once a key is saved", await jev.isChecked());
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the Bots page",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await p.getByRole("button", { name: "Sign out", exact: true }).click();
+  await p.waitForTimeout(300);
+  check(
+    "signing out forgets the account",
+    (await p.getByText("Not signed in.").count()) === 1,
+  );
+
+  await plan.click();
+  await p.waitForTimeout(300);
+  check("turning the plan on sticks", await plan.isChecked());
+});
+
+// Bots: with no bot the Bots view says so and offers the wizard. The wizard makes a bot in steps, and
+// the new bot is picked, so the main area becomes its chat: a reply comes back after the bot's status
+// says it is thinking. The side panel then shows the bot's own tabs, not the worktree's.
+await session("?mock=full", 1400, 800, async (p) => {
+  await p.getByRole("button", { name: "Bots", exact: true }).click();
+  await p.waitForTimeout(400);
+  check(
+    "with no bot yet, the Bots view says so and the main area asks for a pick",
+    (await p.getByText("No bots yet.", { exact: true }).count()) === 1 &&
+      (await p
+        .getByText("Pick a bot in the list to talk to it.", { exact: true })
+        .count()) === 1,
+  );
+
+  await p.getByRole("button", { name: "New bot", exact: true }).click();
+  const wizard = p.getByRole("dialog", { name: "Create a bot", exact: true });
+  await wizard.waitFor();
+  const next = wizard.getByRole("button", { name: "Next", exact: true });
+  check(
+    "the wizard starts on the name step, and Next waits for a name",
+    (await wizard.getByText("Step 1 of 4", { exact: true }).count()) === 1 &&
+      (await next.isDisabled()),
+  );
+  await wizard
+    .getByRole("textbox", { name: "Name", exact: true })
+    .fill("Bento");
+  await wizard
+    .getByRole("textbox", { name: "Team", exact: true })
+    .fill("infra");
+  await wizard.getByRole("button", { name: "Sky", exact: true }).click();
+  await next.click();
+
+  check(
+    "the engine step offers Claude, and the other engines wait",
+    (await wizard
+      .getByRole("radio", { name: "Claude (CLI)", exact: true })
+      .getAttribute("aria-checked")) === "true" &&
+      (await wizard.getByRole("radio", { name: /ChatGPT/ }).isDisabled()),
+  );
+  await next.click();
+
+  // The label wraps a hint, so its accessible name starts with "Instructions".
+  await wizard
+    .getByRole("textbox", { name: /^Instructions/ })
+    .fill("Você organiza a rotina.");
+  await next.click();
+  check(
+    "the review shows what the bot will be before it is added",
+    (await wizard.getByText("Step 4 of 4", { exact: true }).count()) === 1 &&
+      (await wizard
+        .getByText("Você organiza a rotina.", { exact: true })
+        .count()) === 1,
+  );
+  await wizard
+    .getByRole("button", { name: "Add to the team", exact: true })
+    .click();
+  await wizard.waitFor({ state: "detached" });
+
+  const message = p.getByRole("textbox", {
+    name: "Message Bento",
+    exact: true,
+  });
+  check(
+    "the new bot is listed and picked, so the main area is its chat",
+    (await p
+      .getByRole("list", { name: "Bots" })
+      .getByRole("button", { name: /Bento/ })
+      .getAttribute("aria-current")) === "true" &&
+      (await message.count()) === 1,
+  );
+
+  check(
+    "the bot's team shows beside it in the Agents list",
+    (await p
+      .getByRole("list", { name: "Bots" })
+      .getByText("infra", { exact: true })
+      .count()) === 1,
+  );
+  await message.fill("Oi, tudo bem?");
+  await message.press("Enter");
+  const working = p.getByRole("status").getByText("Working…", { exact: true });
+  await working.waitFor({ timeout: 1000 });
+  check(
+    "while the bot has not written anything yet, its reply row says it is working",
+    await working.isVisible(),
+  );
+  await p
+    .getByText("Oi! Sou Bento.", { exact: false })
+    .first()
+    .waitFor({ timeout: 2000 });
+  check(
+    "the reply is shown as it is written: the first words arrive before the end, and Working gives way",
+    (await working.count()) === 0 &&
+      (await p.getByText("Revisar o PR").count()) === 0,
+  );
+  await p.getByText("Revisar o PR").waitFor({ timeout: 5000 });
+  check(
+    "the finished reply stays in the conversation, once the status is gone",
+    (await p.locator('[role="log"]').getByRole("status").count()) === 0 &&
+      (await p.getByText("Oi! Sou Bento.", { exact: false }).count()) >= 1,
+  );
+
+  const bold = await p.locator("strong", { hasText: "Hoje:" }).count();
+  const items = await p.locator("li", { hasText: "Revisar o PR" }).count();
+  const shown = await p.locator('[role="log"]').innerText();
+  check(
+    "markdown in a reply is rendered, not shown as its symbols",
+    bold === 1 && items === 1 && !shown.includes("**"),
+  );
+
+  const first = await p.locator('[role="log"] > article').first().boundingBox();
+  const last = await p.locator('[role="log"] > article').last().boundingBox();
+  const area = await p
+    .locator('[role="log"]')
+    .locator("xpath=../..")
+    .boundingBox();
+  const box = await message.boundingBox();
+  check(
+    "the conversation starts from the bottom: the newest message sits just above the box to write in",
+    first !== null &&
+      last !== null &&
+      area !== null &&
+      box !== null &&
+      box.y - (last.y + last.height) < 80 &&
+      first.y - area.y > 150,
+  );
+
+  // A bot asks to read a registered repository: the request is a card in the chat. Approving it grants the
+  // read, and the bot answers in the same conversation.
+  await message.fill("preciso de acesso ao lynx");
+  await message.press("Enter");
+  const approve = p.getByRole("button", { name: "Approve", exact: true });
+  await approve.waitFor({ timeout: 3000 });
+  check(
+    "a request to read a repository is a card with approve and refuse",
+    (await p
+      .getByText("Wants to read this project", { exact: true })
+      .count()) === 1 &&
+      (await p
+        .getByRole("listitem")
+        .filter({ hasText: /^lynx$/ })
+        .count()) === 1 &&
+      (await p.getByRole("button", { name: "Refuse", exact: true }).count()) ===
+        1,
+  );
+  await approve.click();
+  await p
+    .getByText("Obrigado! Vou usar lynx.", { exact: true })
+    .waitFor({ timeout: 3000 });
+  check(
+    "approving grants the read, and the bot answers in the same conversation",
+    (await p.getByText("Access granted", { exact: true }).count()) === 1 &&
+      (await p
+        .getByRole("button", { name: "Approve", exact: true })
+        .count()) === 0,
+  );
+
+  // A block of code in a reply names its language and copies by a button; a whole message copies too.
+  await p.evaluate(() => {
+    window.__copied = [];
+    navigator.clipboard.writeText = async (text) => {
+      window.__copied.push(text);
+    };
+  });
+  await message.fill("mostra um comando");
+  await message.press("Enter");
+  await p
+    .getByText("Depois abra o navegador.", { exact: true })
+    .waitFor({ timeout: 3000 });
+  check(
+    "a block of code in a reply names its language",
+    (await p.getByText("bash", { exact: true }).count()) === 1,
+  );
+  await p.getByRole("button", { name: "Copy code", exact: true }).click();
+  check(
+    "the copy button copies the block's code, and says it did",
+    (await p.evaluate(() => window.__copied)).join("|") ===
+      "minha-cli serve --port 8080" &&
+      (await p.getByRole("button", { name: "Copied", exact: true }).count()) ===
+        1,
+    JSON.stringify(await p.evaluate(() => window.__copied)),
+  );
+  await p
+    .getByRole("button", { name: "Copy message", exact: true })
+    .last()
+    .click();
+  const copied = await p.evaluate(() => window.__copied);
+  check(
+    "a message copies as the text the bot wrote",
+    copied.length === 2 &&
+      copied[1].startsWith("Rode isto:") &&
+      copied[1].includes("```bash\nminha-cli serve --port 8080\n```"),
+    JSON.stringify(copied),
+  );
+  await p.evaluate(() => delete navigator.clipboard.writeText);
+
+  // The same card carries any other request: here the bot asks to run command patterns.
+  await message.fill("preciso rodar a cli");
+  await message.press("Enter");
+  await p
+    .getByText("Wants to run these commands", { exact: true })
+    .waitFor({ timeout: 3000 });
+  check(
+    "a request to run commands is the same card, listing each pattern",
+    (await p
+      .getByRole("listitem")
+      .filter({ hasText: /^minha-cli \*$/ })
+      .count()) === 1 &&
+      (await p
+        .getByRole("listitem")
+        .filter({ hasText: /^git status$/ })
+        .count()) === 1,
+  );
+  await p.getByRole("button", { name: "Approve", exact: true }).click();
+  await p
+    .getByText("Obrigado! Vou usar minha-cli *, git status.", { exact: true })
+    .waitFor({ timeout: 3000 });
+  check("approving the commands keeps the answer in the card", true);
+
+  // Starting agents is the same card again, for one project, and says they run without asking.
+  await message.fill("preciso lançar um agente");
+  await message.press("Enter");
+  await p
+    .getByText(
+      "Wants to start agents in this project. They run without asking for permission",
+      { exact: true },
+    )
+    .waitFor({ timeout: 3000 });
+  await p.getByRole("button", { name: "Approve", exact: true }).click();
+  await p
+    .getByText("Certo! Vou lançar agentes em lynx.", { exact: true })
+    .waitFor({ timeout: 3000 });
+  check(
+    "a request to start agents is the same card, and approving it is kept",
+    true,
+  );
+
+  await p
+    .getByRole("button", { name: "Toggle side panel", exact: true })
+    .click();
+  const detailsTab = p.getByRole("tab", { name: "Bot details", exact: true });
+  // The side panel's code loads the first time it opens, so its tabs can come a moment later.
+  await detailsTab.waitFor({ timeout: 5000 }).catch(() => {});
+  const browserTab = p.getByRole("tab", { name: "Bot browser", exact: true });
+  check(
+    "the side panel opens on the bot's tabs, and Files is not one of them",
+    (await detailsTab.count()) === 1 &&
+      (await browserTab.count()) === 1 &&
+      (await p.getByRole("tab", { name: "Files", exact: true }).count()) === 0,
+    `details ${await detailsTab.count()}, browser ${await browserTab.count()}, files ${await p.getByRole("tab", { name: "Files", exact: true }).count()}`,
+  );
+  await p
+    .getByText("Você organiza a rotina.", { exact: true })
+    .last()
+    .waitFor();
+  check("the details tab shows the instructions the bot was made with", true);
+
+  // The approved patterns are in the bot's list, and the person can add and refuse patterns there too.
+  await detailsTab.click();
+  const commandList = p.getByRole("list", { name: "Commands", exact: true });
+  await commandList
+    .getByText("minha-cli *", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check(
+    "the patterns the person approved are in the bot's commands",
+    (await commandList.getByText("git status", { exact: true }).count()) === 1,
+  );
+  await p.getByRole("button", { name: "Add commands", exact: true }).click();
+  const patterns = p.getByRole("textbox", { name: "Patterns", exact: true });
+  const addPatterns = p
+    .getByRole("dialog")
+    .getByRole("button", { name: "Add", exact: true });
+  await patterns.fill("bash *");
+  await addPatterns.click();
+  await p.getByRole("alert").waitFor({ timeout: 5000 });
+  check(
+    "a pattern that would allow everything is refused in the dialog",
+    (await p.getByRole("dialog").count()) === 1 &&
+      (await p.getByRole("alert").innerText()).includes("not allowed"),
+  );
+  await patterns.fill("git log *");
+  await addPatterns.click();
+  await commandList
+    .getByText("git log *", { exact: true })
+    .waitFor({ timeout: 5000 });
+  await p
+    .getByRole("button", { name: "Remove git log *", exact: true })
+    .click();
+  await p.waitForTimeout(300);
+  check(
+    "a pattern added by hand can be taken back",
+    (await commandList.getByText("git log *", { exact: true }).count()) === 0,
+  );
+
+  // A command the bot leaves running is in its Agents tab, with the end of its output, and can be stopped.
+  await p.getByRole("tab", { name: "Agents", exact: true }).click();
+  check(
+    "with nothing left running, the Agents tab says so",
+    (await p.getByText("No commands running.", { exact: false }).count()) === 1,
+  );
+  await message.fill("deixa rodando");
+  await message.press("Enter");
+  await p
+    .getByText("Iniciei minha-cli serve.", { exact: true })
+    .waitFor({ timeout: 3000 });
+  await p.waitForTimeout(3500);
+  const left = p.getByRole("list", { name: "Commands", exact: true });
+  await left
+    .getByText("minha-cli serve", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check(
+    "a command left running is listed as running, with what it printed",
+    (await left.getByText("Running", { exact: true }).count()) === 1 &&
+      (await left.getByText("listening on 8080", { exact: false }).count()) ===
+        1,
+  );
+  await p
+    .getByRole("button", { name: "Stop minha-cli serve", exact: true })
+    .click();
+  await left.getByText("Ended", { exact: true }).waitFor({ timeout: 5000 });
+  check(
+    "stopping it ends it, and the stop button goes",
+    (await p
+      .getByRole("button", { name: "Stop minha-cli serve", exact: true })
+      .count()) === 0,
+  );
+  await p.getByRole("tab", { name: "Bot details", exact: true }).click();
+
+  // A bot's threads are separate conversations under it: the first message titles one, a new one
+  // starts empty, and each keeps what was said in it.
+  const threadList = p.getByRole("list", { name: "Threads", exact: true });
+  await threadList
+    .getByText("Oi, tudo bem?", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check(
+    "the thread the bot's chat started in is titled by its first message",
+    (await threadList.getByRole("listitem").count()) === 1,
+  );
+  await p.getByRole("button", { name: "New thread", exact: true }).click();
+  await threadList
+    .getByText("New thread", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check(
+    "a new thread starts empty, untitled, and is the one shown",
+    (await threadList.getByRole("listitem").count()) === 2 &&
+      (await p
+        .getByText("Depois abra o navegador.", { exact: true })
+        .count()) === 0,
+  );
+  await message.fill("oi de novo");
+  await message.press("Enter");
+  await threadList
+    .getByText("oi de novo", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check(
+    "the first message titles the new thread",
+    (await threadList.getByText("New thread", { exact: true }).count()) === 0,
+  );
+  await threadList.getByText("Oi, tudo bem?", { exact: true }).click();
+  await p
+    .getByText("Depois abra o navegador.", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check(
+    "going back to the first thread shows what was said in it, and not the other's",
+    (await p.getByText("oi de novo", { exact: true }).count()) === 0 ||
+      (await p
+        .locator('[role="log"]')
+        .getByText("oi de novo", { exact: true })
+        .count()) === 0,
+  );
+
+  // The column can be searched and put away; the choice is the person's.
+  const search = p.getByRole("textbox", {
+    name: "Search threads",
+    exact: true,
+  });
+  await search.fill("zzz");
+  await p
+    .getByText("No thread matches.", { exact: true })
+    .waitFor({ timeout: 3000 });
+  await search.fill("oi de");
+  check(
+    "searching narrows the list to the threads that match",
+    (await threadList.getByRole("listitem").count()) === 1,
+  );
+  await search.fill("");
+  await p.getByRole("button", { name: "Hide threads", exact: true }).click();
+  await p.waitForTimeout(200);
+  check(
+    "the column of threads can be hidden, and shown again",
+    (await p
+      .getByRole("textbox", { name: "Search threads", exact: true })
+      .count()) === 0,
+  );
+  await p.getByRole("button", { name: "Show threads", exact: true }).click();
+  await threadList
+    .getByText("Oi, tudo bem?", { exact: true })
+    .waitFor({ timeout: 3000 });
+
+  // Renaming and deleting are in the row's menu.
+  const second = threadList
+    .getByRole("listitem")
+    .filter({ hasText: "oi de novo" });
+  await second.getByRole("button", { name: /Rename/ }).click();
+  await p.getByRole("menuitem", { name: "Rename", exact: true }).click();
+  await p.getByRole("textbox", { name: "Title", exact: true }).fill("Revisão");
+  await p.getByRole("button", { name: "Save", exact: true }).click();
+  await threadList
+    .getByText("Revisão", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check("a thread can be renamed", true);
+  await threadList
+    .getByRole("listitem")
+    .filter({ hasText: "Revisão" })
+    .getByRole("button", { name: /Rename/ })
+    .click();
+  await p.getByRole("menuitem", { name: "Delete", exact: true }).click();
+  await p
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
+  await p.waitForTimeout(400);
+  check(
+    "deleting a thread asks first and leaves the other",
+    (await threadList.getByRole("listitem").count()) === 1 &&
+      (await threadList.getByText("Oi, tudo bem?", { exact: true }).count()) ===
+        1,
+  );
+
+  // An answer being written can be stopped: what was written stays, marked as stopped.
+  await message.fill("demora");
+  await message.press("Enter");
+  const stop = p.getByRole("button", { name: "Stop", exact: true });
+  await stop.waitFor({ timeout: 3000 });
+  check(
+    "while the bot writes, the box offers Stop and not Send",
+    (await p.getByRole("button", { name: "Send", exact: true }).count()) === 0,
+  );
+  // Another thread of the same bot is free to talk while this one writes.
+  await p.getByRole("button", { name: "New thread", exact: true }).click();
+  await p.waitForTimeout(300);
+  check(
+    "another thread of the bot can be written in while one answers",
+    await message.isEnabled(),
+  );
+  await threadList.getByText("Oi, tudo bem?", { exact: true }).click();
+  await stop.waitFor({ timeout: 3000 });
+  await stop.click();
+  await p.getByText("Stopped", { exact: true }).waitFor({ timeout: 5000 });
+  check(
+    "stopping keeps what was written, says it was stopped, and brings Send back",
+    (await p.getByText("Começando a escrever", { exact: false }).count()) >=
+      1 &&
+      (await p.getByRole("button", { name: "Send", exact: true }).count()) ===
+        1,
+  );
+
+  // Where the bot may start agents is listed with the access it was given, and can be taken back.
+  const startList = p.getByRole("list", {
+    name: "Projects where it can start agents",
+    exact: true,
+  });
+  await startList.getByText("lynx", { exact: true }).waitFor({ timeout: 5000 });
+  await p
+    .getByRole("button", { name: "Remove agents in lynx", exact: true })
+    .click();
+  await p
+    .getByText("No projects yet.", { exact: true })
+    .last()
+    .waitFor({ timeout: 5000 });
+  check(
+    "the project where it may start agents is listed, and taking it back empties the list",
+    (await startList.count()) === 0,
+  );
+
+  // Skills and MCP servers are added from the details tab. The mock's folder picker returns a fixed folder.
+  await detailsTab.click();
+  await p.getByRole("button", { name: "Add skill", exact: true }).click();
+  const skills = p.getByRole("list", { name: "Skills", exact: true });
+  await skills.getByText("web-app", { exact: true }).waitFor({ timeout: 5000 });
+  check(
+    "a skill copied in from a folder is listed under the bot",
+    (await skills.getByText("web-app", { exact: true }).count()) === 1,
+  );
+  await p.getByRole("button", { name: "Add servers", exact: true }).click();
+  const config = p.getByRole("textbox", { name: "Config", exact: true });
+  const addServers = p
+    .getByRole("dialog")
+    .getByRole("button", { name: "Add", exact: true });
+  await config.fill("não é json");
+  await addServers.click();
+  await p.getByRole("alert").waitFor({ timeout: 5000 });
+  check(
+    "a config Lynx cannot read is refused in the dialog, which stays open",
+    (await p.getByRole("dialog").count()) === 1 &&
+      (await p.getByRole("alert").innerText()).includes("not valid JSON"),
+  );
+  await config.fill(
+    JSON.stringify({
+      mcpServers: { docs: { type: "http", url: "https://example.com/mcp" } },
+    }),
+  );
+  await addServers.click();
+  const servers = p.getByRole("list", { name: "MCP servers", exact: true });
+  await servers.getByText("docs", { exact: true }).waitFor({ timeout: 5000 });
+  check(
+    "an MCP server added from a config is listed with the address it is called at",
+    (await p.getByRole("dialog").count()) === 0 &&
+      (await servers
+        .getByText("Calls https://example.com/mcp", { exact: true })
+        .count()) === 1,
+  );
+  await p.getByRole("button", { name: "Remove docs", exact: true }).click();
+  await p
+    .getByText("No MCP servers yet.", { exact: true })
+    .waitFor({ timeout: 5000 });
+  await p.getByRole("button", { name: "Remove web-app", exact: true }).click();
+  await p
+    .getByText("No skills yet.", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check("a removed skill and server leave the bot's lists", true);
+
+  await browserTab.click();
+  check(
+    "the browser tab says whose browser it is, and that the bot cannot use it yet",
+    (await p.getByText("Bento's browser", { exact: true }).count()) === 1,
+  );
+
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations on the bot chat and its side panel",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  await p.getByRole("button", { name: "New bot", exact: true }).click();
+  await wizard.waitFor();
+  // The dialog fades in; axe must not measure the colours while it is still transparent.
+  await p.waitForTimeout(400);
+  const wizardAxe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations in the bot wizard",
+    wizardAxe.length === 0,
+    wizardAxe.join(" || "),
+  );
+  await p.keyboard.press("Escape");
+  await wizard.waitFor({ state: "detached" });
+  // Channels sit outside the teams: a channel is made from the sidebar, with the bots that sit in it.
+  await p.getByRole("button", { name: "New channel", exact: true }).click();
+  const channelDialog = p.getByRole("dialog", {
+    name: "New channel",
+    exact: true,
+  });
+  await channelDialog.waitFor();
+  await channelDialog
+    .getByRole("textbox", { name: "Name", exact: true })
+    .fill("engenharia");
+  await channelDialog
+    .getByRole("button", { name: "Bento", exact: true })
+    .click();
+  await channelDialog
+    .getByRole("button", { name: "Create channel", exact: true })
+    .click();
+  await channelDialog.waitFor({ state: "detached" });
+  check(
+    "a new channel is listed in the sidebar and picked, so the main area is its conversation",
+    (await p
+      .getByRole("list", { name: "Channels" })
+      .getByRole("button", { name: /engenharia/ })
+      .getAttribute("aria-current")) === "true" &&
+      (await p
+        .getByRole("textbox", { name: "Message #engenharia", exact: true })
+        .count()) === 1,
+  );
+  const channelLog = p.getByRole("log", {
+    name: "Conversation in #engenharia",
+    exact: true,
+  });
+  await p
+    .getByRole("textbox", { name: "Message #engenharia", exact: true })
+    .fill("Oi pessoal");
+  await p
+    .getByRole("textbox", { name: "Message #engenharia", exact: true })
+    .press("Enter");
+  const writing = p
+    .getByRole("status")
+    .getByText("Bento is writing…", { exact: true });
+  await writing.waitFor({ timeout: 3000 });
+  check(
+    "while Bento writes, the status line names him",
+    await writing.isVisible(),
+  );
+  const channelReply = channelLog.getByText("Oi, sou Bento.", { exact: false });
+  await channelReply.waitFor({ timeout: 5000 });
+  check(
+    "a member's reply in the channel is streamed under the name of the bot that wrote it",
+    (await channelLog.getByText("Bento", { exact: true }).count()) === 1 &&
+      (await channelReply.count()) === 1,
+  );
+
+  // With a channel picked, the details tab shows the channel and the bots in it.
+  await p.getByRole("tab", { name: "Bot details", exact: true }).click();
+  check(
+    "with a channel picked, the details tab lists its members",
+    (await p
+      .getByRole("list", { name: "Members", exact: true })
+      .getByText("Bento", { exact: true })
+      .count()) === 1 &&
+      (await p.getByRole("tabpanel").getByText("engenharia").count()) >= 1,
+  );
+
+  // The members of the channel change from its details, and go back in the same way.
+  await p.getByRole("button", { name: "Edit members", exact: true }).click();
+  await p
+    .getByRole("tabpanel")
+    .getByRole("button", { name: "Bento", exact: true })
+    .click();
+  await p.getByRole("button", { name: "Save", exact: true }).click();
+  check(
+    "saving the members without Bento leaves the channel with only its person",
+    (await p
+      .getByText("Only you, until a bot joins.", { exact: true })
+      .count()) === 1,
+  );
+  await p.getByRole("button", { name: "Edit members", exact: true }).click();
+  await p
+    .getByRole("tabpanel")
+    .getByRole("button", { name: "Bento", exact: true })
+    .click();
+  await p.getByRole("button", { name: "Save", exact: true }).click();
+  check(
+    "adding Bento back puts it among the channel's members",
+    (await p
+      .getByRole("list", { name: "Members", exact: true })
+      .getByText("Bento", { exact: true })
+      .count()) === 1,
+  );
+
+  // Back to the bot's own chat, which the checks below read.
+  await p
+    .getByRole("list", { name: "Bots" })
+    .getByRole("button", { name: /Bento/ })
+    .click();
+  // A reply that does not come stays in the conversation as an error line.
+  await message.fill("falhar agora");
+  await message.press("Enter");
+  check(
+    "a reply that does not come stays in the conversation as an error line",
+    (await p
+      .getByText("The answer did not come: Claude did not answer.", {
+        exact: true,
+      })
+      .count()) === 1,
+  );
+
+  // An https link in a reply opens in the browser, and the app's own window stays where it is.
+  const link = p.getByRole("link", { name: "a agenda", exact: true }).first();
+  await link.waitFor({ timeout: 5000 });
+  const before = p.url();
+  await link.click();
+  check(
+    "a link in a reply is an https link, and clicking it leaves the app's window where it is",
+    (await link.getAttribute("href")) === "https://example.com/agenda" &&
+      p.url() === before,
+  );
+
+  // The details tab edits the instructions, and deletes the bot after a confirmation.
+  await p.getByRole("tab", { name: "Bot details", exact: true }).click();
+  await p.getByRole("button", { name: "Edit", exact: true }).click();
+  const editor = p.getByRole("textbox", { name: "Instructions", exact: true });
+  await editor.fill("Organize o dia com calma.");
+  await p.getByRole("button", { name: "Save", exact: true }).click();
+  await editor.waitFor({ state: "detached" });
+  check(
+    "saving new instructions shows them in the details tab",
+    (await p
+      .getByText("Organize o dia com calma.", { exact: true })
+      .count()) === 1,
+  );
+
+  // Engine, model and team change together, and the team shows where the bot is listed.
+  await p
+    .getByRole("button", { name: "Edit engine, model and team", exact: true })
+    .click();
+  await p.getByRole("textbox", { name: "Team", exact: true }).fill("dados");
+  await p.getByRole("button", { name: "Save", exact: true }).click();
+  check(
+    "saving the engine, model and team shows the new team in the details and in the list",
+    (await p
+      .getByRole("tabpanel")
+      .getByText("dados", { exact: true })
+      .count()) === 1 &&
+      (await p
+        .getByRole("list", { name: "Bots" })
+        .getByText("dados", { exact: true })
+        .count()) === 1,
+  );
+
+  await p.getByRole("button", { name: "Delete bot", exact: true }).click();
+  const dialog = p.getByRole("alertdialog");
+  await dialog.waitFor();
+  check(
+    "deleting asks first, in a dialog that names the bot",
+    (await dialog.getByText("Delete Bento?", { exact: true }).count()) === 1,
+  );
+  await p.evaluate(axeSource);
+  // The dialog fades in; axe must not measure the colours while it is still transparent.
+  await p.waitForTimeout(400);
+  const deleteAxe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations in the delete confirmation",
+    deleteAxe.length === 0,
+    deleteAxe.join(" || "),
+  );
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await p.getByText("No bots yet.", { exact: true }).waitFor({ timeout: 5000 });
+  check(
+    "the bot is gone, and the Bots view asks for one again",
+    (await p.getByRole("list", { name: "Bots" }).count()) === 0 &&
+      (await p
+        .getByText("Pick a bot in the list to talk to it.", { exact: true })
+        .count()) >= 1,
+  );
+
+  // A channel is removed from its details tab, after a confirmation that names it.
+  await p
+    .getByRole("list", { name: "Channels" })
+    .getByRole("button", { name: /engenharia/ })
+    .click();
+  await p.getByRole("tab", { name: "Bot details", exact: true }).click();
+  await p.getByRole("button", { name: "Delete channel", exact: true }).click();
+  const deleteDialog = p.getByRole("alertdialog");
+  await deleteDialog.waitFor();
+  check(
+    "deleting a channel asks first, in a dialog that names it",
+    (await deleteDialog
+      .getByText("Delete #engenharia?", { exact: true })
+      .count()) === 1,
+  );
+  await deleteDialog
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
+  await p
+    .getByText("No channels yet.", { exact: true })
+    .waitFor({ timeout: 5000 });
+  check(
+    "the channel is gone from the sidebar, and no channel is picked",
+    (await p
+      .getByRole("list", { name: "Channels" })
+      .getByRole("button", { name: /engenharia/ })
+      .count()) === 0 &&
+      (await p
+        .getByText("Say something in #engenharia.", { exact: true })
+        .count()) === 0,
+  );
 });
 
 await runQueuedSessions();

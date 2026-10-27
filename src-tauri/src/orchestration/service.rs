@@ -6,10 +6,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+use specta::Type;
 use thiserror::Error;
 
 use crate::agents::activity::AgentStatus;
 use crate::agents::harness::HarnessId;
+use crate::bots::bot_bridge::BOT_SESSION_PREFIX;
 use crate::config::app_config::OrchestrationConfig;
 use crate::persistence::{AppDatabase, DatabaseError};
 
@@ -25,6 +28,34 @@ const MAX_MODEL_CHARS: usize = 100;
 /// How often a check looks again while it waits for something to arrive.
 const CHECK_POLL: Duration = Duration::from_millis(500);
 
+/// The name the agents tab shows for a worker's agent status.
+fn agent_status_name(status: AgentStatus) -> String {
+    match status {
+        AgentStatus::Working => "working",
+        AgentStatus::NeedsYou => "needs_you",
+        AgentStatus::Done => "done",
+        AgentStatus::Idle => "idle",
+    }
+    .to_owned()
+}
+
+/// One worker a coordinator started, as a bot's agents tab shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerRow {
+    pub run_title: String,
+    pub task_spec: String,
+    pub harness: HarnessId,
+    pub worktree_path: String,
+    pub session_id: String,
+    pub state: String,
+    pub running: bool,
+    pub agent_status: Option<String>,
+}
+
+/// The longest answer a coordinator may type into a worker's terminal, in characters.
+const MAX_REPLY: usize = 2000;
+
 /// What the rules need from the rest of the app.
 pub trait WorkerHost: Send + Sync + 'static {
     /// The orchestration settings as the user has them now.
@@ -36,7 +67,17 @@ pub trait WorkerHost: Send + Sync + 'static {
     /// Writes `text` where an agent can read it, and returns the path.
     fn prompt_file(&self, text: &str) -> Result<String, String>;
     /// The line that starts an agent, with the launch mode and arguments Settings hold for it.
-    fn launch_line(&self, harness: HarnessId) -> String;
+    /// `unattended` says nobody watches its terminal, so it must not stop to ask for permissions.
+    fn launch_line(&self, harness: HarnessId, unattended: bool) -> String;
+    /// Whether the coordinator may start workers in the project of `worktree`. Anyone may by default.
+    /// A refusal says what to do, for the agent that reads it.
+    fn allow_start(&self, _coordinator: &str, _worktree: &str) -> Result<(), String> {
+        Ok(())
+    }
+    /// Types `text` into the session and presses Enter, to answer an agent that waits.
+    fn send(&self, _session: &str, _text: &str) -> Result<(), String> {
+        Err("this host cannot type into a terminal".to_owned())
+    }
     /// Starts a terminal in the worktree, with `command` typed into it. Returns the session.
     fn start(&self, worktree: &str, command: &str) -> Result<String, String>;
     /// Whether the session still runs.
@@ -47,6 +88,11 @@ pub trait WorkerHost: Send + Sync + 'static {
     fn output(&self, session: &str) -> Result<String, String>;
     /// Ends the session.
     fn stop(&self, session: &str);
+    /// A message was added for this coordinator, so it should look at its workers again. Only a bot
+    /// is woken; an agent coordinator checks when it chooses.
+    fn notify(&self, _coordinator: &str) {}
+    /// Sends Enter to a worker once `text` shows on its screen. Nothing by default.
+    fn submit_when_shown(&self, _session: &str, _text: &str) {}
 }
 
 /// Why an orchestration request is refused. The messages reach the agent, so they say what to do.
@@ -78,6 +124,8 @@ pub enum OrchestrationError {
     WaitingFor(String),
     #[error("the task already has its report: it is {0}")]
     AlreadyReported(String),
+    #[error("no worker of this run has a worktree yet, so start it in a new one")]
+    NoWorktreeToReuse,
     #[error("this worker has been stopped, so it cannot report")]
     WorkerStopped,
     #[error("{0}")]
@@ -202,6 +250,9 @@ impl Orchestration {
     ) -> Result<Dispatch, OrchestrationError> {
         self.ensure_enabled()?;
         let run = self.coordinator_run(coordinator)?;
+        self.host
+            .allow_start(coordinator, &run.worktree_path)
+            .map_err(OrchestrationError::Host)?;
         if let Some(model) = model {
             check_model(harness, model)?;
         }
@@ -231,6 +282,14 @@ impl Orchestration {
         }
 
         let worktree = match worktree {
+            WorkerWorktree::Current if coordinator.starts_with(BOT_SESSION_PREFIX) => {
+                // A bot has no worktree of its own: "current" continues in the one its last worker used.
+                self.database
+                    .dispatches_of_run(&run.id)?
+                    .last()
+                    .map(|dispatch| dispatch.worktree_path.clone())
+                    .ok_or(OrchestrationError::NoWorktreeToReuse)?
+            }
             WorkerWorktree::Current => run.worktree_path.clone(),
             WorkerWorktree::New => {
                 let name = format!("lynx-task-{}", task.id.chars().take(8).collect::<String>());
@@ -243,12 +302,20 @@ impl Orchestration {
             .host
             .prompt_file(&worker_prompt(harness, &task.spec))
             .map_err(OrchestrationError::Host)?;
-        let line = self.host.launch_line(harness);
-        let command = agent_command(harness, &line, &read_instruction(&prompt), model);
+        // A bot does not watch its workers' terminals, so they never stop to ask for permissions.
+        let line = self
+            .host
+            .launch_line(harness, coordinator.starts_with(BOT_SESSION_PREFIX));
+        let instruction = read_instruction(&prompt);
+        let command = agent_command(harness, &line, &instruction, model);
         let session = self
             .host
             .start(&worktree, &command)
             .map_err(OrchestrationError::Host)?;
+        if harness == HarnessId::Opencode {
+            // OpenCode's --prompt only fills its input; the instruction is sent when Enter follows it.
+            self.host.submit_when_shown(&session, &instruction);
+        }
 
         let dispatch = Dispatch {
             id: new_id(),
@@ -301,14 +368,56 @@ impl Orchestration {
             .set_task_state(&task.id, outcome.task_state())?;
         self.database.insert_message(&Message {
             id: new_id(),
-            run_id: dispatch.run_id,
+            run_id: dispatch.run_id.clone(),
             dispatch_id: Some(dispatch.id),
             task_id: Some(task.id),
             kind: outcome.message_kind(),
             body: summary.to_owned(),
             created_at: now(),
         })?;
+        self.tell(&dispatch.run_id)
+    }
+
+    /// Tells the run's coordinator that a message was added, once the message is saved.
+    fn tell(&self, run_id: &str) -> Result<(), OrchestrationError> {
+        if let Some(run) = self.database.run(run_id)? {
+            self.host.notify(&run.coordinator_session);
+        }
         Ok(())
+    }
+
+    /// The workers of every run of a bot, whichever thread started it.
+    pub fn workers_of_bot(&self, bot: &str) -> Result<Vec<WorkerRow>, OrchestrationError> {
+        let prefix = format!("{BOT_SESSION_PREFIX}{bot}:");
+        self.workers_in(self.database.runs_of_coordinators_starting(&prefix)?)
+    }
+
+    fn workers_in(&self, runs: Vec<Run>) -> Result<Vec<WorkerRow>, OrchestrationError> {
+        let mut rows = Vec::new();
+        for run in runs {
+            let tasks = self.database.tasks_of_run(&run.id)?;
+            for dispatch in self.database.dispatches_of_run(&run.id)?.iter().rev() {
+                let task_spec = tasks
+                    .iter()
+                    .find(|task| task.id == dispatch.task_id)
+                    .map(|task| task.spec.clone())
+                    .unwrap_or_default();
+                rows.push(WorkerRow {
+                    run_title: run.title.clone(),
+                    task_spec,
+                    harness: dispatch.harness,
+                    worktree_path: dispatch.worktree_path.clone(),
+                    session_id: dispatch.session_id.clone(),
+                    state: dispatch.state.as_str().to_owned(),
+                    running: self.host.running(&dispatch.session_id),
+                    agent_status: self
+                        .host
+                        .status(&dispatch.session_id)
+                        .map(agent_status_name),
+                });
+            }
+        }
+        Ok(rows)
     }
 
     /// What a coordinator hears since its last check. Waits up to `wait` for a message. In the
@@ -351,6 +460,33 @@ impl Orchestration {
             status: self.host.status(&dispatch.session_id),
         };
         Ok((dispatch, reading))
+    }
+
+    /// Answers a worker that waits: `text` is typed into its terminal and sent. One line, no control
+    /// characters, so an answer cannot be anything but an answer.
+    pub fn reply_worker(
+        &self,
+        coordinator: &str,
+        dispatch_id: &str,
+        text: &str,
+    ) -> Result<(), OrchestrationError> {
+        self.ensure_enabled()?;
+        let dispatch = self.worker_of_run(coordinator, dispatch_id)?;
+        let text = text.trim();
+        if text.is_empty() || text.chars().count() > MAX_REPLY || text.chars().any(char::is_control)
+        {
+            return Err(OrchestrationError::InvalidText(format!(
+                "an answer is one line of 1 to {MAX_REPLY} characters, with no control characters"
+            )));
+        }
+        if !self.host.running(&dispatch.session_id) {
+            return Err(OrchestrationError::Host(
+                "the worker has ended, so there is no one to answer".to_owned(),
+            ));
+        }
+        self.host
+            .send(&dispatch.session_id, text)
+            .map_err(OrchestrationError::Host)
     }
 
     /// Ends a worker. Its task is cancelled if it was still running.
@@ -402,6 +538,7 @@ impl Orchestration {
                     body: "The worker is waiting for an answer. Read its output to see the question; the user gives the answer in the worker's terminal.".to_owned(),
                     created_at: now(),
                 })?;
+                self.tell(&dispatch.run_id)?;
             }
             if !self.host.running(&dispatch.session_id) {
                 self.database
@@ -419,6 +556,7 @@ impl Orchestration {
                             .to_owned(),
                     created_at: now(),
                 })?;
+                self.tell(&dispatch.run_id)?;
             } else if !reports_through_tools(dispatch.harness)
                 && self.host.status(&dispatch.session_id) == Some(AgentStatus::Done)
                 && !self
@@ -435,6 +573,7 @@ impl Orchestration {
                     body: "The worker finished its turn without a report. Read its output to see what it did.".to_owned(),
                     created_at: now(),
                 })?;
+                self.tell(&dispatch.run_id)?;
             }
         }
         Ok(())

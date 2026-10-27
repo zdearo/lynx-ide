@@ -3,7 +3,14 @@ import { lazy, Suspense, useEffect } from "react";
 import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
 
 import { Button } from "@/components/ui/button";
+import { BotArea, BotTopBar } from "@/bots/BotMain";
+import {
+  selectedBotOf,
+  selectedChannelOf,
+  useBotsStore,
+} from "@/bots/bots-store";
 import { useDialogStore } from "@/dialog-store";
+import { useNavigationStore } from "@/navigation/navigation-store";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { BrowserView } from "@/browser/BrowserView";
 import { useBrowserStore } from "@/browser/browser-store";
@@ -53,6 +60,10 @@ export function TerminalWorkspace({
   const hasSessions = sessions.some((session) => session.worktreePath === path);
   const openFile = useEditorStore((state) => activeFileOf(state, path));
   const browserOpen = useBrowserStore((state) => state.open);
+  // In the Bots view the main area is the chat with the picked bot; the terminals stay mounted, hidden.
+  const botsView = useNavigationStore((state) => state.activeView === "bots");
+  const bot = useBotsStore(selectedBotOf);
+  const channel = useBotsStore(selectedChannelOf);
 
   // Looking at a finished agent is what clears its "done" mark.
   const activeFinished = sessions.some(
@@ -71,13 +82,23 @@ export function TerminalWorkspace({
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">
-      <TerminalTabs
-        showLocation={!sidebarVisible}
-        onToggleSidebar={onToggleSidebar}
-        rightPanelOpen={rightPanelOpen}
-        onToggleRightPanel={onToggleRightPanel}
-      />
-      {path && <FileTabs worktreePath={path} />}
+      {botsView ? (
+        <BotTopBar
+          bot={bot}
+          channel={channel}
+          rightPanelOpen={rightPanelOpen}
+          onToggleSidebar={onToggleSidebar}
+          onToggleRightPanel={onToggleRightPanel}
+        />
+      ) : (
+        <TerminalTabs
+          showLocation={!sidebarVisible}
+          onToggleSidebar={onToggleSidebar}
+          rightPanelOpen={rightPanelOpen}
+          onToggleRightPanel={onToggleRightPanel}
+        />
+      )}
+      {!botsView && path && <FileTabs worktreePath={path} />}
       <div className="relative min-h-0 flex-1">
         {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. */}
         {sessions.map((session) => (
@@ -86,27 +107,40 @@ export function TerminalWorkspace({
             key={session.id}
             className={cn(
               "absolute inset-0",
-              (session.id !== activeId || openFile || browserOpen) && "hidden",
+              (session.id !== activeId ||
+                openFile ||
+                browserOpen ||
+                botsView) &&
+                "hidden",
             )}
           >
             <TerminalView
               terminalId={session.id}
-              active={session.id === activeId && !openFile && !browserOpen}
+              active={
+                session.id === activeId &&
+                !openFile &&
+                !browserOpen &&
+                !botsView
+              }
             />
           </div>
         ))}
-        {loaded && repoCount === 0 && <Welcome />}
-        {path && openFile && (
+        {botsView && <BotArea />}
+        {!botsView && loaded && repoCount === 0 && <Welcome />}
+        {!botsView && path && openFile && (
           <div className="absolute inset-0 bg-background">
             <Suspense fallback={null}>
               <FileEditor worktreePath={path} file={openFile} />
             </Suspense>
           </div>
         )}
-        {loaded && selected && !hasSessions && !openFile && !browserOpen && (
-          <EmptyWorktree selected={selected} />
-        )}
-        {browserOpen && <BrowserView />}
+        {!botsView &&
+          loaded &&
+          selected &&
+          !hasSessions &&
+          !openFile &&
+          !browserOpen && <EmptyWorktree selected={selected} />}
+        {!botsView && browserOpen && <BrowserView />}
       </div>
     </main>
   );

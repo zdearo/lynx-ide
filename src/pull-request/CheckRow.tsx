@@ -82,7 +82,7 @@ export function CheckRow({
   async function openPage() {
     if (!url) return;
     try {
-      await unwrap(commands.openPullRequestUrl(url));
+      await unwrap(commands.openLink(url));
     } catch (error) {
       toast.error(copy.pullRequest.openFailed, {
         description: errorMessage(error),

@@ -2,6 +2,7 @@ export const shellCopy = {
   navigation: {
     label: "Primary navigation",
     projects: "Projects",
+    bots: "Bots",
     settings: "Settings",
   },
 

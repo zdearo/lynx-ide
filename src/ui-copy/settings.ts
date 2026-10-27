@@ -228,6 +228,60 @@ export const settingsCopy = {
         hint: "Look for a new version when Lynx starts and every few hours.",
       },
     },
+    bots: {
+      title: "Bots",
+      intro:
+        "Bots are assistants you talk to in Lynx. Lynx runs them itself and talks to each provider directly. Sign in to a provider here.",
+      enabled: {
+        label: "Use the ChatGPT plan",
+        hint: "Bots may spend the ChatGPT plan you signed in with. Turning this on does not sign you in.",
+      },
+      chatgpt: {
+        title: "ChatGPT",
+        intro:
+          "Sign in with the ChatGPT plan you already have. You sign in on OpenAI's page; Lynx never sees your password.",
+        signedOut: "Not signed in.",
+        signingIn: "Waiting for the sign-in in your browser…",
+        signedIn: (email: string | null) =>
+          email ? `Signed in as ${email}.` : "Signed in.",
+        failed: "The last sign-in did not finish.",
+        signIn: "Sign in with ChatGPT",
+        signOut: "Sign out",
+        signInFailed: "Could not start the sign-in",
+        signOutFailed: "Could not sign out",
+      },
+      memory: {
+        label: "Remember what we talk about",
+        hint: "Every few turns of a conversation, the bot's CLI reads the new messages once for facts worth keeping and files them in its memory. It uses a short call of your plan each time.",
+      },
+      jev: {
+        title: "Jev",
+        intro:
+          "Jev is a fast decision model from TypeSafe. With it on, a message that names nobody goes to the member Jev picks, in about a second. It needs your own key. When Jev is not sure, or does not answer in time, the first member answers.",
+        enabled: {
+          label: "Let Jev choose who answers",
+          hint: "Only for channels, and only for messages that name nobody with @. Without a key, channels pick as they did before.",
+        },
+        key: {
+          label: "Jev API key",
+          placeholder: "Paste your key",
+          saved: "A key is saved. It is never shown again.",
+          none: "No key saved.",
+          save: "Save key",
+          remove: "Remove key",
+          saveFailed: "Could not save the key",
+          removeFailed: "Could not remove the key",
+        },
+        test: {
+          action: "Test",
+          ok: (ms: number) => `Jev answered in ${ms} ms.`,
+          slow: (ms: number) =>
+            `Jev answered in ${ms} ms. Above 1.5 s, channels go on without it.`,
+          failed: (reason: string) => `Jev did not answer: ${reason}.`,
+          runFailed: "Could not test the key",
+        },
+      },
+    },
     usage: {
       title: "Plan limits",
       intro:

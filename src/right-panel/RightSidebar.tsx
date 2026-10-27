@@ -1,17 +1,22 @@
 import { Fragment } from "react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
-import { RIGHT_PANEL_TABS } from "@/right-panel/right-panel-tabs";
+import {
+  BOT_RIGHT_PANEL_TABS,
+  RIGHT_PANEL_TABS,
+} from "@/right-panel/right-panel-tabs";
 import { useRightPanelStore } from "@/right-panel/right-panel-store";
+import { useNavigationStore } from "@/navigation/navigation-store";
 import { copy } from "@/ui-copy";
 
 /** The right-hand panel: a tab bar on top and the chosen tab's content below. */
 export function RightSidebar() {
   const activeTab = useRightPanelStore((state) => state.activeTab);
   const selectTab = useRightPanelStore((state) => state.selectTab);
-  const tab =
-    RIGHT_PANEL_TABS.find((candidate) => candidate.id === activeTab) ??
-    RIGHT_PANEL_TABS[0];
+  const botsView = useNavigationStore((state) => state.activeView === "bots");
+  const tabs = botsView ? BOT_RIGHT_PANEL_TABS : RIGHT_PANEL_TABS;
+  // A tab from the other view falls back to this view's first tab.
+  const tab = tabs.find((candidate) => candidate.id === activeTab) ?? tabs[0];
   const Panel = tab.panel;
 
   return (
@@ -21,7 +26,7 @@ export function RightSidebar() {
         aria-label={copy.rightPanel.tabs}
         className="flex h-9 shrink-0 items-center gap-1 px-1.5"
       >
-        {RIGHT_PANEL_TABS.map((candidate) => (
+        {tabs.map((candidate) => (
           <Fragment key={candidate.id}>
             {candidate.separatorBefore && (
               <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />

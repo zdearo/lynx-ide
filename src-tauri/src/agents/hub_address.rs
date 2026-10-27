@@ -3,12 +3,13 @@
 //! keep a port and token nobody listens on; the file always names the current ones.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use super::hook_hub::{FILE_ENV, PORT_ENV, TOKEN_ENV};
+use crate::private_file;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HubAddress {
@@ -16,22 +17,9 @@ pub struct HubAddress {
     pub token: String,
 }
 
-/// Replaces the file in one step, so a reader never sees half of it. It holds the hub's token, so
-/// on Unix only its owner can read it; Windows keeps the permissions of the folder it is in.
+/// The file holds the hub's token, so it is written private to its owner.
 pub fn publish(file: &Path, address: &HubAddress) -> io::Result<()> {
-    if let Some(parent) = file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let temporary = file.with_extension("json.tmp");
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut handle = options.open(&temporary)?;
-    handle.write_all(serde_json::to_string(address)?.as_bytes())?;
-    handle.sync_all()?;
-    drop(handle);
-    fs::rename(&temporary, file)
+    private_file::write(file, serde_json::to_string(address)?.as_bytes())
 }
 
 /// None when the file is missing or is not an address, so the caller falls back.

@@ -3,6 +3,7 @@ import { create } from "zustand";
 import {
   commands,
   type AppConfig,
+  type BotsConfig,
   type ConfigSnapshot,
   type HarnessId,
   type TerminalConfig,
@@ -28,6 +29,13 @@ export const DEFAULT_TERMINAL_CONFIG: TerminalConfig = {
 
 /** The plans whose limits Lynx reads, in the order the footer shows them. */
 export const USAGE_PROVIDERS: HarnessId[] = ["claude", "codex"];
+
+/** Mirrors the backend defaults, for the moment before the first config arrives. */
+export const DEFAULT_BOTS_CONFIG: BotsConfig = {
+  chatgpt: { enabled: false },
+  decider: { enabled: false },
+  memory: { capture: true },
+};
 
 /** Mirrors the backend defaults, for the moment before the first config arrives. */
 export const DEFAULT_USAGE_CONFIG: UsageConfig = {

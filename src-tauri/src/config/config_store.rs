@@ -12,8 +12,8 @@ use specta::Type;
 use crate::agents::harness::{HarnessId, harness_name, supported};
 
 use super::app_config::{
-    AppConfig, BrowserConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK, GitConfig,
-    LaunchMode, NotificationsConfig, OrchestrationConfig, TerminalConfig, UpdatesConfig,
+    AppConfig, BotsConfig, BrowserConfig, ConfigIssue, DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK,
+    GitConfig, LaunchMode, NotificationsConfig, OrchestrationConfig, TerminalConfig, UpdatesConfig,
     UsageConfig, expand_home, parse_config,
 };
 
@@ -380,6 +380,28 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
         (updates.check_automatically != updates_defaults.check_automatically)
             .then(|| json!(updates.check_automatically)),
     );
+    let defaults = BotsConfig::default();
+    put_bot_switch(
+        root,
+        "chatgpt",
+        "enabled",
+        config.bots.chatgpt.enabled,
+        defaults.chatgpt.enabled,
+    );
+    put_bot_switch(
+        root,
+        "decider",
+        "enabled",
+        config.bots.decider.enabled,
+        defaults.decider.enabled,
+    );
+    put_bot_switch(
+        root,
+        "memory",
+        "capture",
+        config.bots.memory.capture,
+        defaults.memory.capture,
+    );
     let usage = &config.usage;
     let usage_defaults = UsageConfig::default();
     put(
@@ -487,6 +509,46 @@ fn apply(root: &mut Map<String, Value>, config: &AppConfig) {
         "allowedSites",
         (!browser.allowed_sites.is_empty()).then(|| json!(browser.allowed_sites)),
     );
+}
+
+/// Writes only the switch under `bots.<section>`, so other keys in those objects survive. A default
+/// leaves no trace, the same as the other sections.
+fn put_bot_switch(
+    root: &mut Map<String, Value>,
+    section: &str,
+    key: &str,
+    enabled: bool,
+    default: bool,
+) {
+    if enabled != default {
+        let bots = root.entry("bots").or_insert_with(|| json!({}));
+        if !bots.is_object() {
+            // Already reported as invalid; the section is ours to rewrite.
+            *bots = json!({});
+        }
+        let Some(bots) = bots.as_object_mut() else {
+            return;
+        };
+        let entry = bots.entry(section).or_insert_with(|| json!({}));
+        if !entry.is_object() {
+            *entry = json!({});
+        }
+        if let Some(entry) = entry.as_object_mut() {
+            entry.insert(key.to_owned(), json!(enabled));
+        }
+        return;
+    }
+    if let Some(Value::Object(bots)) = root.get_mut("bots") {
+        if let Some(Value::Object(entry)) = bots.get_mut(section) {
+            entry.shift_remove(key);
+            if entry.is_empty() {
+                bots.shift_remove(section);
+            }
+        }
+        if bots.is_empty() {
+            root.shift_remove("bots");
+        }
+    }
 }
 
 /// Writes each agent's arguments under `agents.launchArguments`. Only the names Lynx knows are

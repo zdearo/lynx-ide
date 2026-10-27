@@ -100,6 +100,16 @@
   --attention: oklch(0.84 0.16 85);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
+  /* A bot's colour, and the ink its initial is written in. Both themes use the same ones. */
+  --bot-rose: oklch(0.78 0.11 15);
+  --bot-sky: oklch(0.8 0.1 230);
+  --bot-indigo: oklch(0.74 0.13 277);
+  --bot-violet: oklch(0.76 0.13 300);
+  --bot-amber: oklch(0.86 0.13 85);
+  --bot-green: oklch(0.8 0.14 150);
+  --bot-teal: oklch(0.79 0.1 185);
+  --bot-graphite: oklch(0.78 0.01 260);
+  --bot-ink: oklch(0.2 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.97 0 0);

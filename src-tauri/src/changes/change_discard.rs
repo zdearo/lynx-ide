@@ -38,12 +38,14 @@ pub fn discard(root: &Path, paths: &[String]) -> Result<(), AppError> {
     }
     for batch in restore.chunks(BATCH) {
         git(root)
+            .literal_paths()
             .args(["restore", "--worktree", "--"])
             .args(batch)
             .run()?;
     }
     for batch in clean.chunks(BATCH) {
         git(root)
+            .literal_paths()
             .args(["clean", "-f", "-q", "--"])
             .args(batch)
             .run()?;
@@ -57,6 +59,19 @@ mod tests {
 
     use super::*;
     use crate::git::test_repository::TestRepository;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_named_like_a_pattern_discards_only_itself() {
+        let repo = TestRepository::new();
+        fs::write(repo.path.join("*"), "star\n").expect("write");
+        fs::write(repo.path.join("keep.txt"), "keep\n").expect("write");
+
+        discard(&repo.path, &["*".to_owned()]).expect("discard");
+
+        assert!(!repo.path.join("*").exists());
+        assert!(repo.path.join("keep.txt").exists());
+    }
 
     #[test]
     fn a_modified_file_goes_back_and_a_new_file_is_deleted() {

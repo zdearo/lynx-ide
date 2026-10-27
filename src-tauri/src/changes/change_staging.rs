@@ -9,7 +9,10 @@ use crate::git::git_command::git;
 /// Stages one changed file. A deleted file stages its deletion.
 pub fn stage(root: &Path, relative: &str) -> Result<(), AppError> {
     check_shape(root, relative)?;
-    git(root).args(["add", "-A", "--", relative]).run()?;
+    git(root)
+        .literal_paths()
+        .args(["add", "-A", "--", relative])
+        .run()?;
     Ok(())
 }
 
@@ -23,7 +26,11 @@ pub fn stage_many(root: &Path, relatives: &[String]) -> Result<(), AppError> {
         check_shape(root, relative)?;
     }
     for batch in relatives.chunks(STAGE_BATCH) {
-        git(root).args(["add", "-A", "--"]).args(batch).run()?;
+        git(root)
+            .literal_paths()
+            .args(["add", "-A", "--"])
+            .args(batch)
+            .run()?;
     }
     Ok(())
 }
@@ -37,7 +44,11 @@ pub fn unstage(root: &Path, relative: &str, original: Option<&str>) -> Result<()
         check_shape(root, original)?;
         paths.push(original);
     }
-    git(root).args(["reset", "-q", "--"]).args(paths).run()?;
+    git(root)
+        .literal_paths()
+        .args(["reset", "-q", "--"])
+        .args(paths)
+        .run()?;
     Ok(())
 }
 

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -27,6 +28,8 @@ pub const FILE_ENV: &str = "LYNX_HUB_FILE";
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_HEAD_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
+/// Requests served at once; a tool call can hold one for many seconds.
+const MAX_CONNECTIONS: usize = 64;
 
 /// Runs the tools an agent calls through its MCP process. The hub only authenticates the call and
 /// finds the session it came from; what the tool does is up to the handler.
@@ -202,12 +205,24 @@ impl HookHub {
 }
 
 fn accept_loop(listener: &TcpListener, routes: &Arc<Routes>) {
+    let open = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
+        if open.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
+            open.fetch_sub(1, Ordering::AcqRel);
+            continue;
+        }
         let routes = Arc::clone(routes);
+        let slot = Arc::clone(&open);
         // A thread per request keeps one slow client from holding up the others.
-        let _ = std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("agent-hook-request".to_owned())
-            .spawn(move || handle(stream, &routes));
+            .spawn(move || {
+                handle(stream, &routes);
+                slot.fetch_sub(1, Ordering::AcqRel);
+            });
+        if spawned.is_err() {
+            open.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 }
 
@@ -300,13 +315,26 @@ fn route(request: &Request, routes: &Routes) -> Reply {
     if request.method != "POST" || !(request.path == HOOK_PATH || request.path == TOOL_PATH) {
         return Reply::status("404 Not Found");
     }
-    if request.token.as_deref() != Some(routes.token.as_str()) {
+    if !token_matches(request.token.as_deref(), &routes.token) {
         return Reply::status("401 Unauthorized");
     }
     if request.path == TOOL_PATH {
         return route_tool(&request.body, routes);
     }
     Reply::status(route_hook(&request.body, routes))
+}
+
+/// Compares without stopping at the first differing byte, so timing does not leak the token.
+fn token_matches(given: Option<&str>, expected: &str) -> bool {
+    let Some(given) = given else {
+        return false;
+    };
+    let (given, expected) = (given.as_bytes(), expected.as_bytes());
+    let mut diff = given.len() ^ expected.len();
+    for (index, byte) in expected.iter().enumerate() {
+        diff |= usize::from(byte ^ given.get(index).copied().unwrap_or(0));
+    }
+    diff == 0
 }
 
 fn route_hook(body: &[u8], routes: &Routes) -> &'static str {
@@ -348,6 +376,24 @@ fn count_tool(routes: &Routes, session_id: &str, change: i32) {
     }
 }
 
+struct ToolRun<'a> {
+    routes: &'a Routes,
+    session_id: &'a str,
+}
+
+impl<'a> ToolRun<'a> {
+    fn start(routes: &'a Routes, session_id: &'a str) -> Self {
+        count_tool(routes, session_id, 1);
+        Self { routes, session_id }
+    }
+}
+
+impl Drop for ToolRun<'_> {
+    fn drop(&mut self) {
+        count_tool(self.routes, self.session_id, -1);
+    }
+}
+
 fn route_tool(body: &[u8], routes: &Routes) -> Reply {
     let Ok(call) = serde_json::from_slice::<ToolCall>(body) else {
         return Reply::status("400 Bad Request");
@@ -369,14 +415,14 @@ fn route_tool(body: &[u8], routes: &Routes) -> Reply {
         return Reply::status("503 Service Unavailable");
     };
     // The lock is released: a tool can take many seconds, and other sessions keep reporting.
-    count_tool(routes, &call.session_id, 1);
+    // Dropped even if the tool panics, so the session is never left marked busy.
+    let _running = ToolRun::start(routes, &call.session_id);
     let result = handler.call(
         &call.session_id,
         call.agent.as_deref().unwrap_or_default(),
         &call.tool,
         call.arguments,
     );
-    count_tool(routes, &call.session_id, -1);
     Reply {
         status: "200 OK",
         body: Some(result.to_string()),
@@ -623,6 +669,47 @@ mod tool_count_tests {
     use super::*;
 
     /// A session counts as busy while any of its tool calls runs, however they overlap.
+    #[test]
+    fn a_tool_that_panics_does_not_leave_the_session_busy() {
+        let hub = HookHub::start();
+        let routes = Arc::clone(&hub.routes);
+        let result = std::thread::spawn(move || {
+            let _running = ToolRun::start(&routes, "s1");
+            panic!("tool failed");
+        })
+        .join();
+        assert!(result.is_err());
+        assert!(!hub.tool_running("s1"));
+    }
+
+    #[test]
+    fn only_the_exact_token_matches() {
+        assert!(token_matches(Some("abc"), "abc"));
+        assert!(!token_matches(Some("abd"), "abc"));
+        assert!(!token_matches(Some("ab"), "abc"));
+        assert!(!token_matches(Some("abcd"), "abc"));
+        assert!(!token_matches(None, "abc"));
+    }
+
+    #[test]
+    fn connections_past_the_limit_are_dropped_and_slots_come_back() {
+        let hub = HookHub::start();
+        let port = hub.port.expect("port");
+        // Silent clients hold their slots until the read timeout.
+        let held: Vec<_> = (0..MAX_CONNECTIONS)
+            .map(|_| TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect"))
+            .collect();
+        std::thread::sleep(Duration::from_millis(200));
+        let mut extra = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+        extra
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("timeout");
+        let mut answer = String::new();
+        // Closed without a reply.
+        assert!(matches!(extra.read_to_string(&mut answer), Ok(0)));
+        drop(held);
+    }
+
     #[test]
     fn a_session_is_busy_until_its_last_tool_call_ends() {
         let hub = HookHub::start();

@@ -60,6 +60,7 @@ pub struct GitCommand<'a> {
     args: Vec<OsString>,
     stdin: Option<Vec<u8>>,
     timeout: Option<Duration>,
+    literal_paths: bool,
 }
 
 pub fn git(cwd: &Path) -> GitCommand<'_> {
@@ -68,6 +69,7 @@ pub fn git(cwd: &Path) -> GitCommand<'_> {
         args: Vec::new(),
         stdin: None,
         timeout: None,
+        literal_paths: false,
     }
 }
 
@@ -90,6 +92,13 @@ impl GitCommand<'_> {
     /// Stops git after `timeout`. For commands that wait on the network, which can hang.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    /// Reads path arguments as plain names: a file called `*` or `[a]` is that file, not a
+    /// pattern that matches others. For commands that change files; `check-ignore` needs patterns.
+    pub fn literal_paths(mut self) -> Self {
+        self.literal_paths = true;
         self
     }
 
@@ -135,6 +144,9 @@ impl GitCommand<'_> {
             // Reading must never rewrite the index: the file watcher would report it and the screen would read again.
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("LC_ALL", "C");
+        if self.literal_paths {
+            command.env("GIT_LITERAL_PATHSPECS", "1");
+        }
         hide_console_window(&mut command);
         app_image_environment::clean_command(&mut command);
 

@@ -18,6 +18,7 @@ import {
 } from "@codemirror/view";
 
 import {
+  autosaveSlot,
   getDocument,
   setDocument,
   setLiveText,
@@ -35,7 +36,11 @@ interface CodeEditorProps {
   text: string;
   onChange: () => void;
   onSave: (text: string) => void;
+  /** Called after a pause in typing, when the view loses focus, and when the view goes away. */
+  onAutosave: (text: string) => void;
 }
+
+const AUTOSAVE_DELAY_MS = 1000;
 
 // One compartment for every file: a kept state still finds its language slot.
 const language = new Compartment();
@@ -48,17 +53,30 @@ export function CodeEditor({
   text,
   onChange,
   onSave,
+  onAutosave,
 }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   // The callbacks change on every render; the view is built once and reads them from here.
-  const handlers = useRef({ onChange, onSave });
+  const handlers = useRef({ onChange, onSave, onAutosave });
   useEffect(() => {
-    handlers.current = { onChange, onSave };
+    handlers.current = { onChange, onSave, onAutosave };
   });
 
   useEffect(() => {
     const parent = host.current;
     if (!parent) return;
+
+    const slot = autosaveSlot(documentId);
+    const cancelAutosave = () => {
+      clearTimeout(slot.timer);
+      slot.timer = undefined;
+    };
+    // Writes now if a write is waiting for the pause to end.
+    const flush = () => {
+      if (slot.timer === undefined || !slot.view) return;
+      cancelAutosave();
+      slot.save(slot.view.state.doc.toString());
+    };
 
     const found = getDocument(documentId);
     const kept = found?.revision === revision ? found : undefined;
@@ -86,6 +104,7 @@ export function CodeEditor({
               key: "Mod-s",
               preventDefault: true,
               run: (view) => {
+                cancelAutosave();
                 handlers.current.onSave(view.state.doc.toString());
                 return true;
               },
@@ -96,34 +115,49 @@ export function CodeEditor({
             indentWithTab,
           ]),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) handlers.current.onChange();
+            if (!update.docChanged) return;
+            handlers.current.onChange();
+            clearTimeout(slot.timer);
+            slot.timer = setTimeout(() => {
+              slot.timer = undefined;
+              slot.save(update.state.doc.toString());
+            }, AUTOSAVE_DELAY_MS);
+          }),
+          EditorView.domEventHandlers({
+            blur: () => {
+              flush();
+            },
           }),
         ],
       });
 
-    const view = new EditorView({ state, parent });
-    if (kept?.scroll) view.dispatch({ effects: kept.scroll });
-    setLiveText(documentId, () => view.state.doc.toString());
-    view.focus();
+    const current = new EditorView({ state, parent });
+    slot.view = current;
+    slot.save = (text) => handlers.current.onAutosave(text);
+    if (kept?.scroll) current.dispatch({ effects: kept.scroll });
+    setLiveText(documentId, () => current.state.doc.toString());
+    current.focus();
 
     let disposed = false;
     const name = languageNameFor(path);
     if (name) {
       void loadLanguage(name).then((extension) => {
         if (!disposed)
-          view.dispatch({ effects: language.reconfigure(extension) });
+          current.dispatch({ effects: language.reconfigure(extension) });
       });
     }
 
     return () => {
       disposed = true;
+      flush();
+      slot.view = undefined;
       setLiveText(documentId, null);
       setDocument(documentId, {
-        state: view.state,
-        scroll: view.scrollSnapshot(),
+        state: current.state,
+        scroll: current.scrollSnapshot(),
         revision,
       });
-      view.destroy();
+      current.destroy();
     };
     // The parent remounts this for a reload (new `key`), so only the file matters here.
     // eslint-disable-next-line react-hooks/exhaustive-deps

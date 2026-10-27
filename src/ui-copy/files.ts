@@ -41,6 +41,7 @@ export const filesCopy = {
     tooLarge: "This file is too large to edit here.",
     binary: "This file is not text, so it cannot be edited here.",
     notAFile: "This is not a regular file.",
+    imageLabel: (name: string) => `Image ${name}`,
     retry: "Retry",
     conflictTitle: "This file changed on disk",
     conflictBody: "Saving now would replace the newer version.",

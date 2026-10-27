@@ -148,12 +148,15 @@ export function FileToolbar({
             label: copy.editor.viewEdit,
             disabled:
               Boolean(file.commit) ||
+              file.imageUrl !== null ||
               (file.status === "error" && file.view !== "edit"),
           },
           {
             id: "diff",
             label: copy.editor.viewDiff,
-            disabled: !change && file.view !== "diff" && !file.commit,
+            disabled:
+              file.imageUrl !== null ||
+              (!change && file.view !== "diff" && !file.commit),
           },
         ]}
       />

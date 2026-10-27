@@ -4,11 +4,15 @@ import { Button } from "@/components/ui/button";
 import { useChangesStore } from "@/changes/changes-store";
 import { CodeEditor } from "@/editor/CodeEditor";
 import { FileDiffView } from "@/editor/FileDiffView";
+import { ImageView } from "@/editor/ImageView";
 import { FileToolbar } from "@/editor/FileToolbar";
 import { documentKey, liveText } from "@/editor/editor-documents";
 import { useEditorStore, type OpenFile } from "@/editor/editor-store";
 import { errorMessage } from "@/lib/error-message";
 import { copy } from "@/ui-copy";
+
+// How long to wait before trying an autosave again while the previous write is running.
+const SAVE_RETRY_MS = 300;
 
 function openFailure(file: OpenFile): string {
   switch (file.errorKind) {
@@ -59,6 +63,21 @@ function EditView({
   const store = useEditorStore.getState();
   const id = documentKey(worktreePath, file.path);
 
+  // Typing saves by itself after a pause. A file that changed on disk waits for the user's
+  // choice, and one the store no longer calls dirty (reloaded, saved) has nothing to write.
+  function autosave(text: string) {
+    const current = useEditorStore
+      .getState()
+      .files[worktreePath]?.find((candidate) => candidate.path === file.path);
+    if (!current?.dirty || current.conflict) return;
+    // Two writes at once would make the second one see the first as a change on disk.
+    if (current.saving) {
+      setTimeout(() => autosave(liveText(id) ?? text), SAVE_RETRY_MS);
+      return;
+    }
+    void save(text);
+  }
+
   async function save(text: string, force = false) {
     try {
       const outcome = await store.save(worktreePath, file.path, text, force);
@@ -95,6 +114,8 @@ function EditView({
       </div>
     );
   }
+
+  if (file.imageUrl) return <ImageView name={file.name} url={file.imageUrl} />;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -136,6 +157,7 @@ function EditView({
           text={file.text}
           onChange={() => store.markDirty(worktreePath, file.path)}
           onSave={(text) => void save(text)}
+          onAutosave={autosave}
         />
       </div>
     </div>

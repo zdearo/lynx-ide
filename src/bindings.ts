@@ -128,6 +128,8 @@ export const commands = {
 	listDirectory: (worktreePath: string, relativePath: string) => typedError<DirectoryListing, IpcError>(__TAURI_INVOKE("list_directory", { worktreePath, relativePath })),
 	/**  The text of one file, for the editor. Refuses what it cannot show as text. */
 	readFile: (worktreePath: string, relativePath: string) => typedError<FileText, IpcError>(__TAURI_INVOKE("read_file", { worktreePath, relativePath })),
+	/**  The bytes of one image, for the viewer. */
+	readFileImage: (worktreePath: string, relativePath: string) => typedError<FileImage, IpcError>(__TAURI_INVOKE("read_file_image", { worktreePath, relativePath })),
 	/**
 	 *  Saves the editor's text. `expected_hash` is the hash from the read; a file that changed since is
 	 *  refused, and `None` overwrites it.
@@ -647,6 +649,12 @@ export type FileEntry = {
 	symlink: boolean,
 	/**  Git ignores it; shown, but quieter. */
 	ignored: boolean,
+};
+
+export type FileImage = {
+	mime: string,
+	/**  The file's bytes, base64. */
+	data: string,
 };
 
 export type FileKind = "directory" | "file";

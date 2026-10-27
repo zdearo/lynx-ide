@@ -1461,6 +1461,20 @@ await session("?mock=full", 1400, 800, async (p) => {
     (await fileTabs.getByText("unsaved changes").count()) === 0,
   );
 
+  await p.keyboard.type("!");
+  check(
+    "typing again marks it unsaved",
+    (await fileTabs.getByText("unsaved changes").count()) === 1,
+  );
+  await p
+    .getByText("unsaved changes")
+    .waitFor({ state: "detached", timeout: 4000 })
+    .catch(() => {});
+  check(
+    "it saves by itself after a pause in typing",
+    (await fileTabs.getByText("unsaved changes").count()) === 0,
+  );
+
   // Another program changes the file; the next save must not overwrite it silently.
   await p.evaluate(() => {
     window.__lynxMock.touchFile(
@@ -1524,11 +1538,27 @@ await session("?mock=full", 1400, 800, async (p) => {
   await item(/^logo\.png$/).dblclick();
   await settle(p, 400);
   check(
+    "an image opens in the viewer, not the editor",
+    (await p.getByRole("img", { name: "Image logo.png" }).count()) === 1 &&
+      (await p.locator(".cm-editor").count()) === 0,
+  );
+
+  await item(/^bundle\.zip$/).dblclick();
+  await settle(p, 400);
+  check(
     "a file that is not text says so instead of opening",
     (await p.getByRole("alert").filter({ hasText: "not text" }).count()) === 1,
   );
 
   await fileTabs.getByRole("tab", { name: /App\.tsx/ }).click();
+  // Typing saves by itself, so a change stays unsaved only when the disk copy changed under it.
+  await p.evaluate(() => {
+    window.__lynxMock.touchFile(
+      "/home/dev/lynx-ide-worktrees/feat-auth",
+      "src/App.tsx",
+      "changed again\n",
+    );
+  });
   await p.locator(".cm-content").click();
   await p.keyboard.type("y");
   await fileTabs.getByRole("tab", { name: /App\.tsx/ }).press("Delete");

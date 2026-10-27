@@ -6,6 +6,7 @@ use crate::workspace::workspace_service::WorkspaceService;
 
 use super::directory_listing::{DirectoryListing, list_directory as list};
 use super::file_content::{FileText, read_text, write_text};
+use super::file_image::{FileImage, read_image};
 use super::files_error::FilesError;
 use super::path_inside_worktree::resolve_inside;
 
@@ -37,6 +38,22 @@ pub async fn read_file(
     run_blocking(move || {
         let root = workspace.resolve_worktree(&worktree_path)?;
         Ok(read_text(&root, &relative_path)?)
+    })
+    .await
+}
+
+/// The bytes of one image, for the viewer.
+#[tauri::command]
+#[specta::specta]
+pub async fn read_file_image(
+    workspace: State<'_, WorkspaceService>,
+    worktree_path: String,
+    relative_path: String,
+) -> Result<FileImage, IpcError> {
+    let workspace = workspace.inner().clone();
+    run_blocking(move || {
+        let root = workspace.resolve_worktree(&worktree_path)?;
+        Ok(read_image(&root, &relative_path)?)
     })
     .await
 }

@@ -207,7 +207,6 @@ export function App() {
   "README.md": "# Sample\n\nA project for the mock backend.\n",
 };
 const MOCK_BINARY = new Set([
-  "logo.png",
   "bundle.zip",
   "data.sqlite",
   "track.mp3",
@@ -1326,6 +1325,13 @@ export function installMockTauri(scenario: string): void {
             stored?.content ?? MOCK_CONTENT[relative] ?? `${relative}\n`;
           return { content, hash: stored?.hash ?? `h-${content.length}` };
         }
+        case "read_file_image":
+          await delay(60);
+          // A 1×1 transparent PNG.
+          return {
+            mime: "image/png",
+            data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAfbLI3wAAAABJRU5ErkJggg==",
+          };
         case "write_file": {
           const key = `${args.worktreePath}::${String(args.relativePath)}`;
           const stored = fileContents.get(key);

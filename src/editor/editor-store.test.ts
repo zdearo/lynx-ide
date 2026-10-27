@@ -6,7 +6,7 @@ import { failure, ok } from "@/test-support";
 import { useTerminalStore } from "@/terminal/terminal-store";
 
 vi.mock("@/bindings", () => ({
-  commands: { readFile: vi.fn(), writeFile: vi.fn() },
+  commands: { readFile: vi.fn(), readFileImage: vi.fn(), writeFile: vi.fn() },
 }));
 
 const api = vi.mocked(commands);
@@ -48,11 +48,29 @@ describe("open", () => {
 
   it("keeps the failure kind when the file cannot be read as text", async () => {
     api.readFile.mockResolvedValue(failure("binaryFile", "not text"));
-    await useEditorStore.getState().open(wt, "logo.png");
+    await useEditorStore.getState().open(wt, "data.bin");
 
-    expect(fileOf("logo.png")).toMatchObject({
+    expect(fileOf("data.bin")).toMatchObject({
       status: "error",
       errorKind: "binaryFile",
+    });
+  });
+});
+
+describe("images", () => {
+  it("opens an image as a data URL, in the edit view, without reading it as text", async () => {
+    api.readFileImage.mockResolvedValue(
+      ok({ mime: "image/png", data: "AQID" }),
+    );
+    await useEditorStore
+      .getState()
+      .open(wt, "assets/logo.png", { view: "diff" });
+
+    expect(api.readFile).not.toHaveBeenCalled();
+    expect(fileOf("assets/logo.png")).toMatchObject({
+      status: "ready",
+      view: "edit",
+      imageUrl: "data:image/png;base64,AQID",
     });
   });
 });

@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import { commands, type DiffSource, type IpcErrorKind } from "@/bindings";
 import { documentKey, forgetDocument } from "@/editor/editor-documents";
+import { isImagePath } from "@/editor/image-file";
 import { errorMessage } from "@/lib/error-message";
 import { IpcRequestError, unwrap } from "@/lib/ipc-result";
 import { useTerminalStore } from "@/terminal/terminal-store";
@@ -23,6 +24,8 @@ export interface OpenFile {
   /** Set for a file of an old commit: its real path and the commit. Such a tab only shows a diff. */
   commit: { hash: string; path: string } | null;
   status: "loading" | "ready" | "error";
+  /** An image file is shown, not edited: its bytes as a data URL. */
+  imageUrl: string | null;
   /** The text the editor starts from. The editor itself holds what is typed after. */
   text: string;
   /** The hash of what is on disk, for the next save to notice a change. */
@@ -103,6 +106,17 @@ export const useEditorStore = create<EditorStoreState>((set, get) => {
 
   async function load(worktreePath: string, path: string) {
     try {
+      if (isImagePath(path)) {
+        const image = await unwrap(commands.readFileImage(worktreePath, path));
+        patch(worktreePath, path, {
+          status: "ready",
+          imageUrl: `data:${image.mime};base64,${image.data}`,
+          error: null,
+          errorKind: null,
+          revision: (find(worktreePath, path)?.revision ?? 0) + 1,
+        });
+        return;
+      }
       const read = await unwrap(commands.readFile(worktreePath, path));
       patch(worktreePath, path, {
         status: "ready",
@@ -132,7 +146,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => {
       if (existing) {
         patch(worktreePath, path, {
           ...(!preview && existing.preview ? { preview: false } : {}),
-          ...(options.view ? { view: options.view } : {}),
+          ...(options.view && !isImagePath(path) ? { view: options.view } : {}),
           ...(options.originalPath !== undefined
             ? { originalPath: options.originalPath }
             : {}),
@@ -143,7 +157,11 @@ export const useEditorStore = create<EditorStoreState>((set, get) => {
       const entry: OpenFile = {
         path,
         preview,
-        view: options.commit ? "diff" : (options.view ?? "edit"),
+        view: options.commit
+          ? "diff"
+          : isImagePath(path)
+            ? "edit"
+            : (options.view ?? "edit"),
         originalPath: options.originalPath ?? null,
         diffSource: { kind: "head" },
         commit: options.commit ?? null,
@@ -151,6 +169,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => {
           ? `${fileName(options.commit.path)} @ ${options.commit.hash.slice(0, 7)}`
           : fileName(path),
         status: options.commit ? "ready" : "loading",
+        imageUrl: null,
         text: "",
         hash: null,
         dirty: false,
@@ -237,7 +256,8 @@ export const useEditorStore = create<EditorStoreState>((set, get) => {
 
     async reload(worktreePath, path) {
       forgetDocument(documentKey(worktreePath, path));
-      patch(worktreePath, path, { conflict: false });
+      // Nothing typed is kept, so no pending autosave may write it back over the reload.
+      patch(worktreePath, path, { conflict: false, dirty: false });
       await load(worktreePath, path);
     },
 

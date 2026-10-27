@@ -94,6 +94,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             config::open_config_file,
             files::list_directory,
             files::read_file,
+            files::read_file_image,
             files::write_file,
             files::reveal_in_file_manager,
             changes::list_changes,

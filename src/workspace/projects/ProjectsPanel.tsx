@@ -2,15 +2,31 @@ import { useMemo, type KeyboardEvent } from "react";
 import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
 import { FolderPlusGlyph18 } from "@/components/icons/FolderPlusGlyph18";
 
+import {
+  SegmentedControl,
+  type SegmentOption,
+} from "@/components/SegmentedControl";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useDialogStore } from "@/dialog-store";
+import { TeamModeSwitch } from "@/team/TeamModeSwitch";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
 import { agentsByWorktree } from "@/workspace/projects/collapsed-summary";
+import {
+  activeRepoIds,
+  onlyActive,
+  type ProjectFilter,
+} from "@/workspace/projects/project-filter";
+import { useProjectFilterStore } from "@/workspace/projects/project-filter-store";
 import { buildProjectTree } from "@/workspace/projects/project-tree";
 import { ProjectTree } from "@/workspace/projects/ProjectTree";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
+
+const FILTER_OPTIONS: readonly SegmentOption<ProjectFilter>[] = [
+  { value: "all", label: copy.sidebar.filterAll },
+  { value: "active", label: copy.sidebar.filterActive },
+];
 
 /** Moves focus between folder headers, repo headers and worktree rows with the arrow keys. */
 function moveFocus(event: KeyboardEvent<HTMLElement>) {
@@ -38,6 +54,13 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
   const askAddProject = useDialogStore((state) => state.askAddProject);
   const sessions = useTerminalStore((state) => state.sessions);
   const agents = useMemo(() => agentsByWorktree(sessions), [sessions]);
+  const filter = useProjectFilterStore((state) => state.filter);
+  const shown = useMemo(() => {
+    const nodes = buildProjectTree(folders, repos);
+    return filter === "active"
+      ? onlyActive(nodes, activeRepoIds(repos, worktrees, sessions))
+      : nodes;
+  }, [folders, repos, worktrees, sessions, filter]);
 
   const empty = repos.length === 0 && folders.length === 0;
 
@@ -62,6 +85,19 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
           </TooltipIconButton>
         </div>
       </div>
+      {!empty && (
+        <div className="flex items-center justify-between gap-2 px-2 pb-2">
+          <TeamModeSwitch path={selectedPath} />
+          <SegmentedControl
+            label={copy.sidebar.filterLabel}
+            options={FILTER_OPTIONS}
+            value={filter}
+            onChange={(next) =>
+              useProjectFilterStore.getState().setFilter(next)
+            }
+          />
+        </div>
+      )}
 
       {empty ? (
         <div className="px-3 pt-1">
@@ -72,11 +108,17 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
             {copy.sidebar.emptyBody}
           </p>
         </div>
+      ) : shown.length === 0 ? (
+        <ScrollArea className="min-h-0 flex-1">
+          <p className="px-3 text-ui text-muted-foreground">
+            {copy.sidebar.activeEmpty}
+          </p>
+        </ScrollArea>
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <ul className="px-2 pb-2" onKeyDown={moveFocus}>
             <ProjectTree
-              nodes={buildProjectTree(folders, repos)}
+              nodes={shown}
               context={{
                 worktrees,
                 pending,

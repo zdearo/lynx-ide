@@ -7,6 +7,7 @@ import { workspaceCopy } from "@/ui-copy/workspace";
 import { terminalCopy } from "@/ui-copy/terminal";
 import { usageCopy } from "@/ui-copy/usage";
 import { botsCopy } from "@/ui-copy/bots";
+import { teamCopy } from "@/ui-copy/team";
 
 /** Every user-facing string lives under src/ui-copy, one file per area, so the interface can be translated later. */
 export const copy = {
@@ -20,4 +21,5 @@ export const copy = {
   ...terminalCopy,
   ...usageCopy,
   ...botsCopy,
+  ...teamCopy,
 } as const;

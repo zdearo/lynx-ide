@@ -5610,6 +5610,340 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 });
 
+// The team is a prototype of a coordinator's run, so only the mock offers it. A card on the map,
+// a panel over the map for the picked member, and a terminal dialog over the central area.
+await session("?mock=full", 1400, 860, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 300);
+  check(
+    "the sidebar header has the Terminal | Team switch and the All | Active filter",
+    (await p
+      .getByRole("group", { name: "Central view", exact: true })
+      .count()) === 1 &&
+      (await p
+        .getByRole("group", { name: "Which projects", exact: true })
+        .count()) === 1,
+  );
+  await p.getByRole("button", { name: "Team", exact: true }).click();
+  await settle(p, 600);
+  check(
+    "Team puts the team bar in place of the terminal tabs",
+    (await p.getByRole("tablist", { name: "Terminals" }).count()) === 0 &&
+      (await p.getByText("Auth refactor", { exact: true }).count()) === 1,
+  );
+  check(
+    "the org chart draws the five members, joined by five lines",
+    (await p.locator(".react-flow__node").count()) === 5 &&
+      (await p.locator(".react-flow__edge").count()) === 5,
+    `${await p.locator(".react-flow__node").count()} nodes, ${await p.locator(".react-flow__edge").count()} edges`,
+  );
+  check(
+    "the pair is labelled",
+    (await p.getByText("asks for review", { exact: true }).count()) === 1,
+  );
+  check(
+    "the member that needs the user opens in a panel, and only the panel has the reply",
+    (await p
+      .getByRole("dialog", { name: "Researcher · OpenCode", exact: true })
+      .count()) === 1 &&
+      (await p.getByRole("button", { name: "Reply", exact: true }).count()) ===
+        1,
+  );
+
+  await p.getByRole("button", { name: "Reply", exact: true }).click();
+  await p
+    .getByRole("textbox", { name: "Reply to Researcher", exact: true })
+    .fill("passport-oauth2");
+  await p.getByRole("button", { name: "Send", exact: true }).click();
+  await settle(p, 300);
+  check(
+    "a reply sends the member back to work, and the focus stays in the panel",
+    (await p.getByText("3 working", { exact: true }).count()) === 1 &&
+      (await p.getByRole("button", { name: "Reply", exact: true }).count()) ===
+        0 &&
+      (await p.evaluate(() => document.activeElement?.getAttribute("role"))) ===
+        "dialog",
+  );
+
+  await p.keyboard.press("Escape");
+  await settle(p, 200);
+  check(
+    "Escape closes the panel, and the focus goes back to the member's card",
+    (await p.getByRole("dialog").count()) === 0 &&
+      (await p.evaluate(() =>
+        document.activeElement?.getAttribute("data-team-id"),
+      )) === "researcher",
+  );
+
+  await p.locator('.react-flow__node[data-id="builder"]').click();
+  await settle(p, 200);
+  const builderPanel = p.getByRole("dialog", {
+    name: "Builder · Codex",
+    exact: true,
+  });
+  check(
+    "a click picks the member: its panel opens without being modal, and its card is selected",
+    (await builderPanel.count()) === 1 &&
+      (await builderPanel.getAttribute("aria-modal")) === null &&
+      (await p
+        .locator('.react-flow__node.selected[data-id="builder"]')
+        .count()) === 1,
+  );
+  const place = await p.evaluate(() => {
+    const panel = document
+      .querySelector('[role="dialog"]:not([aria-modal])')
+      ?.getBoundingClientRect();
+    const flow = document.querySelector(".react-flow")?.getBoundingClientRect();
+    return panel && flow
+      ? {
+          right: flow.right - panel.right,
+          top: panel.top - flow.top,
+          width: panel.width,
+          height: panel.height,
+          flowHeight: flow.height,
+        }
+      : null;
+  });
+  check(
+    "the panel sits at the top right of the map, 320 px wide, and leaves most of the map open",
+    place !== null &&
+      Math.abs(place.right - 12) <= 2 &&
+      Math.abs(place.top - 12) <= 2 &&
+      Math.abs(place.width - 320) <= 2 &&
+      place.height < place.flowHeight * 0.8,
+    JSON.stringify(place),
+  );
+  check(
+    "the panel shows the task, its done-when line, the latest activity and the diff",
+    (await builderPanel.getByText("login form", { exact: true }).count()) ===
+      1 &&
+      (await builderPanel
+        .getByText(
+          "The login form submits through the new adapter and its tests pass.",
+          { exact: true },
+        )
+        .count()) === 1 &&
+      (await builderPanel.getByText(/^editing LoginForm\.tsx · /).count()) ===
+        1 &&
+      (await builderPanel.getByText("+120", { exact: true }).count()) === 1,
+  );
+
+  await builderPanel
+    .getByRole("button", { name: "Reviewer", exact: true })
+    .click();
+  await settle(p, 200);
+  check(
+    "a relation picks the member it names",
+    (await p
+      .getByRole("dialog", { name: "Reviewer · Claude Code", exact: true })
+      .count()) === 1,
+  );
+
+  await p
+    .locator('.react-flow__node[data-id="builder"]')
+    .click({ button: "right" });
+  await settle(p, 200);
+  check(
+    "right-click on a card opens its actions",
+    (await p
+      .getByRole("menuitem", { name: "Open terminal", exact: true })
+      .count()) === 1 &&
+      (await p.getByRole("menuitem", { name: "Reassign role" }).count()) ===
+        1 &&
+      (await p
+        .getByRole("menuitem", { name: "Connect to…", exact: true })
+        .count()) === 1 &&
+      (await p
+        .getByRole("menuitem", { name: "Dismiss", exact: true })
+        .count()) === 1,
+  );
+  await p.getByRole("menuitem", { name: "Open terminal", exact: true }).click();
+  await settle(p, 400);
+  const modal = p.locator('main > [role="dialog"]');
+  // The sheet of the same member is open too, so the modal is found by its title.
+  check(
+    "Open terminal opens a modal dialog titled with the member",
+    (await modal
+      .getByRole("heading", { name: "Builder · Codex", exact: true })
+      .count()) === 1,
+  );
+  const size = await p.evaluate(() => {
+    const main = document.querySelector("main")?.getBoundingClientRect();
+    const dialog = document
+      .querySelector('main > [role="dialog"]')
+      ?.getBoundingClientRect();
+    return main && dialog
+      ? {
+          width: dialog.width / main.width,
+          height: dialog.height / main.height,
+        }
+      : null;
+  });
+  check(
+    "the dialog covers about 90% of the central area",
+    size !== null &&
+      Math.abs(size.width - 0.9) < 0.02 &&
+      Math.abs(size.height - 0.9) < 0.02,
+    JSON.stringify(size),
+  );
+  check(
+    "the dialog says the output is simulated",
+    (await p.getByText(/^Simulated output:/).count()) === 1,
+  );
+  await settle(p, 300);
+  await p.evaluate(axeSource);
+  const axeModal = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the card and the terminal dialog open",
+    axeModal.length === 0,
+    axeModal.join(" || "),
+  );
+
+  await p.keyboard.press("Escape");
+  await settle(p, 300);
+  check(
+    "Escape closes the terminal dialog, and the focus goes back to the card",
+    (await modal.count()) === 0 &&
+      (await p.evaluate(() =>
+        document.activeElement?.getAttribute("data-team-id"),
+      )) === "builder",
+  );
+
+  await p.locator('[data-team-id="tester"]').focus();
+  await p.keyboard.press("Enter");
+  await settle(p, 300);
+  check(
+    "Enter on a focused card opens its terminal dialog",
+    (await modal.count()) === 1,
+  );
+  await p.keyboard.press("Escape");
+  await settle(p, 300);
+
+  await p.locator('[data-team-id="lead"]').focus();
+  await p.keyboard.press("Shift+F10");
+  await settle(p, 200);
+  check(
+    "Shift+F10 on a focused card opens its actions",
+    (await p
+      .getByRole("menuitem", { name: "Open terminal", exact: true })
+      .count()) === 1,
+  );
+  await p.keyboard.press("Escape");
+  await settle(p, 200);
+
+  await p.getByRole("button", { name: "Show as list", exact: true }).click();
+  await settle(p, 300);
+  check(
+    "the list shows the same run as a tree, with the picked member's panel still over it",
+    (await p.getByRole("treeitem").count()) === 5 &&
+      (await p
+        .getByRole("dialog", { name: "Tester · OMP", exact: true })
+        .count()) === 1,
+  );
+  await p.getByRole("button", { name: "Show as map", exact: true }).click();
+  await settle(p, 300);
+  check(
+    "the map comes back from the list",
+    (await p.locator(".react-flow").count()) === 1,
+  );
+
+  await p.locator('.react-flow__node[data-id="builder"]').click();
+  await settle(p, 200);
+  await p
+    .getByRole("dialog", { name: "Builder · Codex", exact: true })
+    .getByRole("button", { name: "Changes", exact: true })
+    .click();
+  await settle(p, 300);
+  check(
+    "the panel's Changes button opens the Changes tab of the right panel",
+    (await p
+      .getByRole("tab", { name: "Changes", exact: true, selected: true })
+      .count()) === 1,
+  );
+
+  await settle(p, 300);
+  await p.evaluate(axeSource);
+  const axe = await p.evaluate(async () => {
+    const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
+    return r.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
+    );
+  });
+  check(
+    "axe: no WCAG A/AA violations with the map and the panel open",
+    axe.length === 0,
+    axe.join(" || "),
+  );
+
+  const projects = p.getByRole("group", {
+    name: "Which projects",
+    exact: true,
+  });
+  await projects.getByRole("button", { name: "Active", exact: true }).click();
+  await settle(p, 300);
+  check(
+    "Active lists only the projects with a running terminal",
+    (await p.getByText("api-server", { exact: true }).count()) === 0 &&
+      (await p.getByText("lynx-ide", { exact: true }).count()) >= 1,
+  );
+  await projects.getByRole("button", { name: "All", exact: true }).click();
+  await settle(p, 300);
+  check(
+    "All lists every project again",
+    (await p.getByText("api-server", { exact: true }).count()) === 1,
+  );
+
+  await p.keyboard.press("Control+Shift+B");
+  await settle(p, 300);
+  check(
+    "with the sidebar hidden, the team bar keeps a Terminal button",
+    (await p.getByRole("button", { name: "Terminal", exact: true }).count()) ===
+      1,
+  );
+  await p.getByRole("button", { name: "Terminal", exact: true }).click();
+  await settle(p, 300);
+  check(
+    "that button brings back the terminal tabs",
+    (await p.getByRole("tablist", { name: "Terminals" }).count()) === 1,
+  );
+});
+
+// Below 1100 px the team is the tree, and the panel still opens over it, so a narrow window can reply.
+await session("?mock=full", 1000, 860, async (p) => {
+  await p.keyboard.press("Control+Shift+B");
+  await settle(p, 300);
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 300);
+  await p.keyboard.press("Control+Shift+B");
+  await settle(p, 300);
+  await p.getByRole("button", { name: "Team", exact: true }).click();
+  await settle(p, 300);
+  await p.keyboard.press("Escape");
+  await settle(p, 400);
+  check(
+    "a narrow window shows the team as the tree, with the reply in the panel",
+    (await p.getByRole("treeitem").count()) === 5 &&
+      (await p.locator(".react-flow").count()) === 0 &&
+      (await p.getByRole("button", { name: "Reply", exact: true }).count()) ===
+        1,
+  );
+  check(
+    "the map toggle is disabled there",
+    await p
+      .getByRole("button", { name: "Show as map", exact: true })
+      .isDisabled(),
+  );
+  check(
+    "no horizontal scroll with the team in a narrow window",
+    (await overflow(p)) <= 0,
+  );
+});
+
 await runQueuedSessions();
 console.log(results.join("\n"));
 await browser.close();

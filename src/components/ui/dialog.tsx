@@ -49,13 +49,16 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  container,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  /** Portals the dialog into this element, and its backdrop covers only that element. */
+  container?: HTMLElement | null;
 }) {
   return (
-    <DialogPortal>
-      <DialogOverlay />
+    <DialogPortal container={container}>
+      <DialogOverlay className={container ? "absolute" : undefined} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(

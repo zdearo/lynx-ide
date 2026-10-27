@@ -13,7 +13,7 @@ import { useRightPanelStore } from "@/right-panel/right-panel-store";
 import { Toaster } from "@/components/ui/sonner";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { WIDE_LAYOUT_QUERY } from "@/hooks/layout-queries";
+import { DOCK_RIGHT_QUERY, WIDE_LAYOUT_QUERY } from "@/hooks/layout-queries";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { errorMessage } from "@/lib/error-message";
 import { handleTerminalExit } from "@/terminal/terminal-actions";
@@ -44,8 +44,6 @@ import {
 import { useNavigationStore } from "@/navigation/navigation-store";
 import { useQuitGuard } from "@/quit-guard";
 
-/** The right panel only docks beside the terminal when there is room for both. */
-const DOCK_RIGHT_QUERY = "(min-width: 1280px)";
 const REFRESH_ON_FOCUS_MS = 2000;
 
 function App() {

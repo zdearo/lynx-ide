@@ -78,6 +78,10 @@ export const workspaceCopy = {
     emptyTitle: "No projects yet",
     emptyBody: "Add a project to see its worktrees.",
     loadError: "Could not load your repositories",
+    filterLabel: "Which projects",
+    filterAll: "All",
+    filterActive: "Active",
+    activeEmpty: "No project has a running terminal.",
   },
 
   addProject: {

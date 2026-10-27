@@ -259,3 +259,14 @@
   --diff-modified: oklch(0.82 0.13 85);
   --diff-removed: oklch(0.74 0.15 25);
 }
+
+/* The team map is React Flow, which reads its colours from its own variables: they take the theme's tokens here. */
+.team-map.react-flow {
+  --xy-background-color-default: var(--background);
+  --xy-node-boxshadow-selected-default: none;
+  --xy-attribution-background-color-default: color-mix(
+    in oklch,
+    var(--background) 70%,
+    transparent
+  );
+}

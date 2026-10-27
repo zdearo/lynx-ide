@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
 
@@ -22,6 +22,8 @@ import { startPreset } from "@/terminal/terminal-actions";
 import { TerminalTabs } from "@/terminal/TerminalTabs";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalView } from "@/terminal/TerminalView";
+import { TeamTopBar } from "@/team/TeamTopBar";
+import { teamModeOf, useTeamStore } from "@/team/team-store";
 import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
 import {
@@ -34,6 +36,10 @@ import { useWorkspaceStore } from "@/workspace/workspace-store";
 // CodeMirror loads the first time a file opens, not at startup.
 const FileEditor = lazy(() =>
   import("@/editor/FileEditor").then((m) => ({ default: m.FileEditor })),
+);
+// The team map is React Flow, loaded only when a worktree is switched to the team.
+const TeamView = lazy(() =>
+  import("@/team/TeamView").then((m) => ({ default: m.TeamView })),
 );
 
 interface TerminalWorkspaceProps {
@@ -60,10 +66,14 @@ export function TerminalWorkspace({
   const hasSessions = sessions.some((session) => session.worktreePath === path);
   const openFile = useEditorStore((state) => activeFileOf(state, path));
   const browserOpen = useBrowserStore((state) => state.open);
+  const teamMode =
+    useTeamStore((state) => teamModeOf(state.modeByWorktree, path)) === "team";
   // In the Bots view the main area is the chat with the picked bot; the terminals stay mounted, hidden.
   const botsView = useNavigationStore((state) => state.activeView === "bots");
   const bot = useBotsStore(selectedBotOf);
   const channel = useBotsStore(selectedChannelOf);
+  // The team's terminal dialog covers this element, so it stays on screen when the team does.
+  const [mainArea, setMainArea] = useState<HTMLElement | null>(null);
 
   // Looking at a finished agent is what clears its "done" mark.
   const activeFinished = sessions.some(
@@ -75,17 +85,46 @@ export function TerminalWorkspace({
     }
   }, [activeFinished, activeId]);
 
-  // A file opened from the explorer or the tabs comes in front of the browser.
+  // A file or the browser coming in front takes the team away; the team takes the file and the browser away.
   useEffect(() => {
-    if (openFile) useBrowserStore.getState().setOpen(false);
-  }, [openFile]);
+    if ((openFile || browserOpen) && path) {
+      useTeamStore.getState().setMode(path, "terminal");
+    }
+  }, [openFile, browserOpen, path]);
+  useEffect(() => {
+    if (!teamMode || !path) return;
+    useBrowserStore.getState().setOpen(false);
+    useEditorStore.getState().show(path, null);
+  }, [teamMode, path]);
+  // A terminal started from anywhere (the + menu, the shortcut) comes in front of the team.
+  useEffect(
+    () =>
+      useTerminalStore.subscribe((state, previous) => {
+        const created = state.sessions[state.sessions.length - 1];
+        if (state.sessions.length > previous.sessions.length && created) {
+          useTeamStore.getState().setMode(created.worktreePath, "terminal");
+        }
+      }),
+    [],
+  );
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col bg-background">
+    <main
+      ref={setMainArea}
+      className="relative flex min-w-0 flex-1 flex-col bg-background"
+    >
       {botsView ? (
         <BotTopBar
           bot={bot}
           channel={channel}
+          rightPanelOpen={rightPanelOpen}
+          onToggleSidebar={onToggleSidebar}
+          onToggleRightPanel={onToggleRightPanel}
+        />
+      ) : teamMode ? (
+        <TeamTopBar
+          path={path}
+          sidebarVisible={sidebarVisible}
           rightPanelOpen={rightPanelOpen}
           onToggleSidebar={onToggleSidebar}
           onToggleRightPanel={onToggleRightPanel}
@@ -98,7 +137,7 @@ export function TerminalWorkspace({
           onToggleRightPanel={onToggleRightPanel}
         />
       )}
-      {!botsView && path && <FileTabs worktreePath={path} />}
+      {!botsView && !teamMode && path && <FileTabs worktreePath={path} />}
       <div className="relative min-h-0 flex-1">
         {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. */}
         {sessions.map((session) => (
@@ -110,6 +149,7 @@ export function TerminalWorkspace({
               (session.id !== activeId ||
                 openFile ||
                 browserOpen ||
+                teamMode ||
                 botsView) &&
                 "hidden",
             )}
@@ -120,6 +160,7 @@ export function TerminalWorkspace({
                 session.id === activeId &&
                 !openFile &&
                 !browserOpen &&
+                !teamMode &&
                 !botsView
               }
             />
@@ -134,12 +175,20 @@ export function TerminalWorkspace({
             </Suspense>
           </div>
         )}
+        {!botsView && teamMode && (
+          <div className="absolute inset-0 bg-background">
+            <Suspense fallback={null}>
+              <TeamView area={mainArea} />
+            </Suspense>
+          </div>
+        )}
         {!botsView &&
           loaded &&
           selected &&
           !hasSessions &&
           !openFile &&
-          !browserOpen && <EmptyWorktree selected={selected} />}
+          !browserOpen &&
+          !teamMode && <EmptyWorktree selected={selected} />}
         {!botsView && browserOpen && <BrowserView />}
       </div>
     </main>

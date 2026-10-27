@@ -4,6 +4,7 @@
  * Set CHROME_PATH when Chrome is not at a standard location.
  */
 import { spawn } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -58,13 +59,86 @@ const browser = await chromium.launch({
   headless: true,
   args: ["--no-sandbox"],
 });
+// Sessions run in parallel, so each one collects its own results; they are printed in
+// the order the sessions were declared.
+const SESSION_CONCURRENCY = Number(process.env.E2E_CONCURRENCY ?? 4);
+const resultsOfSession = new AsyncLocalStorage();
 const results = [];
 const check = (name, ok, detail = "") =>
-  results.push(`${ok ? "PASS" : "FAIL"}  ${name}${ok ? "" : "  -> " + detail}`);
+  (resultsOfSession.getStore() ?? results).push(
+    `${ok ? "PASS" : "FAIL"}  ${name}${ok ? "" : "  -> " + detail}`,
+  );
+
+// Resolves once the DOM has been quiet for QUIET_MS (the old fixed sleep is the ceiling).
+const QUIET_MS = 80;
+// Lazy chunks come over the network (and the dev server transforms them first).
+const requestsInFlight = new WeakMap();
+const watchRequests = (page) => {
+  const state = { count: 0, last: 0 };
+  requestsInFlight.set(page, state);
+  const touch = (delta) => () => {
+    state.count += delta;
+    state.last = Date.now();
+  };
+  page.on("request", touch(1));
+  page.on("requestfinished", touch(-1));
+  page.on("requestfailed", touch(-1));
+};
+const settle = async (page, ceilingMs) => {
+  const started = Date.now();
+  const inFlight = requestsInFlight.get(page);
+  const networkBusy = () =>
+    inFlight && (inFlight.count > 0 || Date.now() - inFlight.last < 100);
+  do {
+    while (networkBusy() && Date.now() - started < 10000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await page.evaluate(
+      ([quiet, ceiling]) =>
+        new Promise((resolve) => {
+          let timer;
+          const done = () => {
+            resolve();
+            observer.disconnect();
+            clearTimeout(cap);
+            clearTimeout(timer);
+          };
+          const arm = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+              // A command in flight, or a transition still running, will change the page.
+              const animating = document
+                .getAnimations()
+                .some(
+                  (a) =>
+                    a.playState === "running" &&
+                    a.effect?.getComputedTiming().iterations !== Infinity,
+                );
+              if (animating || window.__lynxMock?.pendingCommands?.() > 0)
+                arm();
+              else done();
+            }, quiet);
+          };
+          const observer = new MutationObserver(arm);
+          observer.observe(document.documentElement, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            characterData: true,
+          });
+          const cap = setTimeout(done, ceiling);
+          requestAnimationFrame(() => requestAnimationFrame(arm));
+        }),
+      [QUIET_MS, ceilingMs],
+    );
+    // A lazy chunk is requested only after the render that needs it.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  } while (networkBusy() && Date.now() - started < 10000);
+};
 
 // The DOM renderer keeps terminal text in the page, which many checks read. So sessions
 // run without WebGL unless they ask for it; the WebGL session below covers that path.
-async function session(query, width, height, run, contextOptions = {}) {
+async function runSession(query, width, height, run, contextOptions = {}) {
   const { webgl = false, ...options } = contextOptions;
   const context = await browser.newContext({
     viewport: { width, height },
@@ -81,12 +155,22 @@ async function session(query, width, height, run, contextOptions = {}) {
       };
     });
   }
+  watchRequests(page);
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
   await page.goto(BASE + query, { waitUntil: "networkidle" });
-  await page.waitForTimeout(800);
-  await run(page);
+  await page.waitForSelector("#root > *");
+  await settle(page, 800);
+  try {
+    await run(page);
+  } catch (error) {
+    check(
+      `session ran to the end (${query} @${width})`,
+      false,
+      String(error).slice(0, 200),
+    );
+  }
   check(
     `no console errors (${query} @${width})`,
     errors.length === 0,
@@ -94,6 +178,24 @@ async function session(query, width, height, run, contextOptions = {}) {
   );
   await context.close();
 }
+const queuedSessions = [];
+const session = (...args) => {
+  queuedSessions.push(args);
+};
+const runQueuedSessions = async () => {
+  const outcomes = queuedSessions.map(() => []);
+  let next = 0;
+  const worker = async () => {
+    while (next < queuedSessions.length) {
+      const index = next++;
+      await resultsOfSession.run(outcomes[index], () =>
+        runSession(...queuedSessions[index]),
+      );
+    }
+  };
+  await Promise.all(Array.from({ length: SESSION_CONCURRENCY }, worker));
+  for (const outcome of outcomes) results.push(...outcome);
+};
 const tabs = (page) => page.getByRole("tab").count();
 const overflow = (page) =>
   page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -102,15 +204,15 @@ const overflow = (page) =>
 // With copy-on-select on, a drag over the screen copies the buffer text instead.
 const setTerminalSwitch = async (p, id, on) => {
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("tab", { name: "Behavior", exact: true }).click();
   const toggle = p.locator(`#${id}`);
   if ((await toggle.getAttribute("aria-checked")) !== String(on)) {
     await toggle.click();
   }
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("button", { name: "Close settings" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 };
 const selectTerminalScreen = async (p) => {
   const box = await p.evaluate(() => {
@@ -126,7 +228,7 @@ const selectTerminalScreen = async (p) => {
     steps: 8,
   });
   await p.mouse.up();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
 };
 const readTerminal = async (p) => {
   await p.evaluate(() => {
@@ -149,7 +251,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   check("selecting a worktree shows its 2 tabs", (await tabs(p)) === 2);
 
   await p.keyboard.press("Control+Shift+T");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "Ctrl+Shift+T opens a third tab",
     (await tabs(p)) === 3,
@@ -157,7 +259,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 
   await p.keyboard.press("Control+Shift+W");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "Ctrl+Shift+W closes the active tab",
     (await tabs(p)) === 2,
@@ -165,7 +267,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 
   await p.keyboard.press("Control+Shift+B");
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "Ctrl+Shift+B hides the sidebar",
     (await p.locator("aside").count()) === 0,
@@ -179,7 +281,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   // The tree reads top to bottom: Work > Client X > api-server. Arrow keys walk it.
   await p.getByRole("button", { name: "Collapse Work" }).focus();
   await p.keyboard.press("ArrowDown");
-  await p.waitForTimeout(120);
+  await settle(p, 120);
   const onClientX = await p.evaluate(
     () => document.activeElement?.textContent ?? "",
   );
@@ -189,7 +291,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     onClientX,
   );
   await p.keyboard.press("ArrowDown");
-  await p.waitForTimeout(120);
+  await settle(p, 120);
   const onRepo = await p.evaluate(() =>
     document.activeElement?.getAttribute("data-project-id"),
   );
@@ -208,7 +310,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   await p.keyboard.press("Control+Shift+N");
   await p.locator("#worktree-name").fill("feature/payments");
   await p.keyboard.press("Enter");
-  await p.waitForTimeout(250);
+  await settle(p, 250);
   check(
     "dialog closes immediately and a progress row appears",
     (await p.getByText("Creating feature/payments…").count()) === 1,
@@ -223,17 +325,17 @@ await session("?mock=full", 1200, 760, async (p) => {
 
   await p.getByRole("button", { name: /^fix\/pty/ }).hover();
   await p.getByRole("button", { name: /^fix\/pty/ }).click({ button: "right" });
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "right-clicking a worktree opens its actions menu",
     (await p.getByRole("menuitem", { name: /Remove worktree/ }).count()) === 1,
   );
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   await p.getByRole("button", { name: "Actions for fix/pty" }).click();
   await p.getByRole("menuitem", { name: /Remove worktree/ }).click();
   await p.getByRole("button", { name: "Remove", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "removed worktree disappears from the sidebar",
     (await p.getByRole("button", { name: /^fix\/pty/ }).count()) === 0,
@@ -249,6 +351,7 @@ await session("?mock=full", 1200, 760, async (p) => {
       (await p.getByRole("alert").count()) === 1,
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -266,7 +369,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await p.getByRole("tab", { name: /claude/ }).click();
-  await p.waitForTimeout(800);
+  await settle(p, 800);
 
   // Room is what is left inside every ancestor once its own padding is removed.
   const fit = await p.evaluate(() => {
@@ -362,6 +465,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 });
 
 await session("?mock=full", 1200, 760, async (p) => {
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -389,7 +493,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 
   await projects.click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "clicking the active view hides the side panel and keeps the primary bar",
     (await panel.count()) === 0 &&
@@ -398,11 +502,11 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 
   await projects.click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check("clicking it again brings the panel back", (await panel.count()) === 1);
 
   await p.keyboard.press("Control+Shift+B");
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "the sidebar shortcut hides the panel but not the primary bar",
     (await panel.count()) === 0 && (await nav.count()) === 1,
@@ -426,7 +530,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 
   await settings.click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   const dialog = p.getByRole("dialog", { name: "Settings" });
   const box = await dialog.boundingBox();
   check(
@@ -457,20 +561,20 @@ await session("?mock=full", 1200, 760, async (p) => {
     axeSettings.join(" || "),
   );
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "Escape closes settings",
     (await p.getByRole("dialog", { name: "Settings" }).count()) === 0,
   );
 
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "Ctrl+, opens settings",
     (await p.getByRole("dialog", { name: "Settings" }).count()) === 1,
   );
   await p.getByRole("button", { name: "Close settings" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "the close button closes settings",
     (await p.getByRole("dialog", { name: "Settings" }).count()) === 0,
@@ -495,15 +599,15 @@ const termFont = (p) =>
 // Launch arguments are offered once an agent is on, and the launch mode applies to every agent.
 await session("?mock=full", 1200, 900, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("tab", { name: "Agents" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 
   await p.getByRole("switch", { name: "Use Claude Code in Lynx" }).click();
-  await p.waitForTimeout(300);
-  await p.waitForTimeout(600);
+  await settle(p, 300);
+  await settle(p, 600);
 
   const argumentsSwitch = p.getByRole("switch", {
     name: "Launch arguments for Claude Code",
@@ -518,14 +622,14 @@ await session("?mock=full", 1200, 900, async (p) => {
   );
 
   await argumentsSwitch.click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "turning the arguments on shows the text box",
     (await argumentsBox.count()) === 1,
   );
   await argumentsBox.fill("--model opus");
   await argumentsBox.press("Enter");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the arguments typed in the box are kept",
     (await argumentsBox.inputValue()) === "--model opus",
@@ -533,7 +637,7 @@ await session("?mock=full", 1200, 900, async (p) => {
 
   await p.getByRole("combobox", { name: "Launch mode" }).click();
   await p.getByRole("option", { name: "YOLO", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const confirm = p.getByRole("alertdialog");
   check(
     "YOLO asks before it is turned on",
@@ -541,7 +645,7 @@ await session("?mock=full", 1200, 900, async (p) => {
       ((await confirm.textContent()) ?? "").includes("YOLO mode"),
   );
   await confirm.getByRole("button", { name: "Turn on YOLO" }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "in YOLO mode the agent says which flag it starts with",
     (await p
@@ -550,7 +654,7 @@ await session("?mock=full", 1200, 900, async (p) => {
   );
 
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   // Several rows have a "New terminal" button; the one in the tab bar sits at the top of the main area.
   const launchers = p.getByRole("button", { name: "New terminal" });
   let launcher = null;
@@ -572,7 +676,7 @@ await session("?mock=full", 1200, 900, async (p) => {
     menuFontSize,
   );
   await p.getByRole("menuitem", { name: "Claude Code" }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "a Claude Code terminal opens from the menu",
     (await p.getByRole("tab", { name: /claude/i }).count()) >= 1,
@@ -582,11 +686,11 @@ await session("?mock=full", 1200, 900, async (p) => {
 // The agents found on this computer get a switch, and flipping it takes effect without a confirmation.
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("tab", { name: "Agents" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 
   const onComputer = p.getByRole("region", { name: "On this computer" });
   const elsewhere = p.getByRole("region", { name: "Other supported agents" });
@@ -616,7 +720,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 
   // Turning an agent on needs no confirmation: the switch itself is the yes.
   await claudeSwitch.click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "turning Claude Code on asks nothing and takes effect at once",
     (await p.getByRole("alertdialog").count()) === 0 &&
@@ -629,7 +733,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 
   await claudeSwitch.click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "turning it off asks nothing either",
     (await p.getByRole("alertdialog").count()) === 0 &&
@@ -639,7 +743,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 
   await claudeSwitch.click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
 
   const axeAgents = await p.evaluate(async (src) => {
     window.eval(src);
@@ -659,9 +763,10 @@ await session("?mock=full", 1200, 760, async (p) => {
 
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
+  await p.getByRole("tab", { name: "Text", exact: true }).waitFor();
 
   check(
     "the terminal settings are split into Text, Appearance and Behavior tabs",
@@ -690,7 +795,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
 
   await increase.click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "a step up saves the size and restyles the open terminal",
     (await sizeText()) === "14" && (await termFont(p))?.size === "14px",
@@ -699,20 +804,20 @@ await session("?mock=full", 1200, 760, async (p) => {
   const reset = p.getByRole("button", { name: "Reset to default" });
   check("a changed setting offers a reset", (await reset.count()) === 1);
   await reset.click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "reset returns the size to the default",
     (await sizeText()) === "13" && (await termFont(p))?.size === "13px",
   );
 
   await p.evaluate(() => window.__lynxMock.editConfigFile({ fontSize: 32 }));
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check("the larger button stops at the maximum", await increase.isDisabled());
   await p.evaluate(() => window.__lynxMock.editConfigFile({ fontSize: 8 }));
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check("the smaller button stops at the minimum", await decrease.isDisabled());
   await p.evaluate(() => window.__lynxMock.editConfigFile({ fontSize: 20 }));
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "an edit made in the file shows up in the stepper and the terminal",
     (await sizeText()) === "20" && (await termFont(p))?.size === "20px",
@@ -722,7 +827,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   const family = p.locator("#terminal-font-family");
   await family.click();
   await p.getByRole("option", { name: "Fira Code" }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   const withFamily = await termFont(p);
   check(
     "a preset font goes first, before the bundled ones",
@@ -739,7 +844,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   check("Custom opens a box for a font list", (await typed.count()) === 1);
   await typed.fill("Bad; color: red");
   await p.keyboard.press("Enter");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a font list that tries to inject CSS is refused",
     (await p
@@ -749,7 +854,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
   await typed.fill("Hack, monospace");
   await p.keyboard.press("Enter");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "a typed font list is saved and goes first",
     (await termFont(p))?.family.includes("Hack") === true &&
@@ -757,7 +862,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
   await family.click();
   await p.getByRole("option", { name: /JetBrains Mono/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "choosing the bundled font puts the default back",
     !((await termFont(p))?.family ?? "").includes("Hack"),
@@ -775,7 +880,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   const pick = async (id, option) => {
     await p.locator(`#${id}`).click();
     await p.getByRole("option", { name: option, exact: true }).click();
-    await p.waitForTimeout(400);
+    await settle(p, 400);
   };
   const textChoice = async () =>
     (await p.locator("#terminal-text-colours").textContent()) ?? "";
@@ -842,7 +947,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     (await p.getByRole("option", { name: "/bin/zsh" }).count()) === 1,
   );
   await p.getByRole("option", { name: "/bin/zsh" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the chosen shell is shown and saved without an error",
     ((await shell.textContent()) ?? "").includes("/bin/zsh") &&
@@ -853,7 +958,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   const scrollback = p.locator("#terminal-scrollback");
   await scrollback.click();
   await p.getByRole("option", { name: /10[,.]000/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "scrollback is picked from a list of sizes",
     /10[,.]000/.test((await scrollback.textContent()) ?? ""),
@@ -866,7 +971,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     (await copyOnSelect.getAttribute("aria-checked")) === "false",
   );
   await copyOnSelect.click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a switch turns on and saves",
     (await copyOnSelect.getAttribute("aria-checked")) === "true",
@@ -883,7 +988,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
   await bell.click();
   await p.getByRole("option", { name: "Nothing" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "the bell can be set to nothing",
     /Nothing/.test((await bell.textContent()) ?? ""),
@@ -894,7 +999,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   const directory = p.locator("#worktrees-directory");
   await directory.fill("relative/path");
   await directory.blur();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a relative worktrees folder is refused",
     (await p
@@ -904,7 +1009,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
   await directory.fill("~/trees");
   await directory.blur();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a home-relative worktrees folder is accepted",
     (await p.getByRole("alert").count()) === 0,
@@ -916,7 +1021,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     (await directory.inputValue()) === "~/trees",
   );
   await p.getByRole("button", { name: "Choose folder…" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "Choose folder saves the folder that was picked",
     (await directory.inputValue()) === "/home/dev/web-app",
@@ -927,7 +1032,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     (await p.getByText("/home/dev/.lynx/config.json").count()) >= 1,
   );
   await p.getByRole("button", { name: "Open config file" }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "Open config file asks the backend to open it",
     await p.evaluate(() => window.__lynxMock.probe.configFileOpened),
@@ -961,7 +1066,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   });
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await p.getByRole("tab", { name: /claude/ }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
 
   const dragAcrossFiller = () => selectTerminalScreen(p);
 
@@ -983,22 +1088,22 @@ await session("?mock=full", 1200, 760, async (p) => {
 
   await p.locator(".xterm-helper-textarea:visible").focus();
   await p.keyboard.press("Control+g");
-  await p.waitForTimeout(100);
+  await settle(p, 100);
   check(
     "a bell flashes the terminal by default",
     (await p.locator(".terminal-bell").count()) === 1,
   );
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("tab", { name: "Behavior", exact: true }).click();
   await p.locator("#terminal-bell").click();
   await p.getByRole("option", { name: "Nothing" }).click();
   await p.getByRole("button", { name: "Close settings" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.locator(".xterm-helper-textarea:visible").focus();
   await p.keyboard.press("Control+g");
-  await p.waitForTimeout(100);
+  await settle(p, 100);
   check(
     "with the bell set to nothing, nothing flashes",
     (await p.locator(".terminal-bell").count()) === 0,
@@ -1009,13 +1114,13 @@ await session("?mock=full", 1200, 760, async (p) => {
     .getByRole("tab", { name: /claude/ })
     .locator("[data-close]")
     .click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "closing a tab asks first when confirmation is on",
     (await p.getByRole("alertdialog").count()) === 1,
   );
   await p.getByRole("button", { name: "Keep it open" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "keeping it open leaves the tab where it was",
     (await p.getByRole("tab", { name: /claude/ }).count()) === 1 &&
@@ -1025,9 +1130,9 @@ await session("?mock=full", 1200, 760, async (p) => {
     .getByRole("tab", { name: /claude/ })
     .locator("[data-close]")
     .click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("button", { name: "Close terminal" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "confirming closes the tab",
     (await p.getByRole("tab", { name: /claude/ }).count()) === 0,
@@ -1035,7 +1140,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 
   await setTerminalSwitch(p, "terminal-close-on-exit", true);
   await p.evaluate(() => window.__lynxMock.endAllTerminals());
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "with close on exit, the tabs of programs that ended are closed",
     (await p
@@ -1049,7 +1154,7 @@ await session("?mock=broken", 1200, 760, async (p) => {
   await p.keyboard.press("Control+,");
   // The settings code loads the first time the dialog opens, which can take longer than a fixed wait.
   await p.getByRole("tab", { name: "Terminal", exact: true }).waitFor();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "a broken config file is called out",
     (await p
@@ -1073,7 +1178,7 @@ await session(
   800,
   async (p) => {
     await p.getByRole("button", { name: /^feat\/auth/ }).click();
-    await p.waitForTimeout(500);
+    await settle(p, 500);
     const panel = p.getByRole("complementary", { name: "Side panel" });
     const tree = p.getByRole("tree", {
       name: "Files in the selected worktree",
@@ -1082,7 +1187,7 @@ await session(
 
     check("the side panel starts closed", (await panel.count()) === 0);
     await p.keyboard.press("Control+Shift+E");
-    await p.waitForTimeout(500);
+    await settle(p, 500);
     check(
       "the shortcut docks the side panel with the Files tab selected",
       (await panel.count()) === 1 &&
@@ -1096,6 +1201,7 @@ await session(
         .getByRole("button", { name: "Toggle side panel" })
         .getAttribute("aria-pressed")) === "true",
     );
+    await item(/^README\.md(,|$)/).waitFor();
     check(
       "the tree lists the worktree's files",
       (await tree.count()) === 1 &&
@@ -1112,7 +1218,7 @@ await session(
     );
 
     await item(/^src(,|$)/).click();
-    await p.waitForTimeout(400);
+    await settle(p, 400);
     check(
       "opening a folder loads and shows its children one level deeper",
       (await item(/^src(,|$)/).getAttribute("aria-expanded")) === "true" &&
@@ -1128,7 +1234,7 @@ await session(
           .innerText()) === "M",
     );
     await item(/^src(,|$)/).click();
-    await p.waitForTimeout(200);
+    await settle(p, 200);
     check(
       "clicking it again closes it",
       (await item(/^App\.tsx(,|$)/).count()) === 0,
@@ -1139,7 +1245,7 @@ await session(
       (await item(/node_modules.*ignored by Git/).count()) === 1,
     );
     await item(/^empty-folder$/).click();
-    await p.waitForTimeout(400);
+    await settle(p, 400);
     check(
       "an empty folder says so",
       (await p.getByText("Empty", { exact: true }).count()) === 1,
@@ -1148,9 +1254,9 @@ await session(
 
     // Keyboard: the tree behaves like a tree.
     await item(/^docs(,|$)/).click();
-    await p.waitForTimeout(400);
+    await settle(p, 400);
     await p.keyboard.press("ArrowDown");
-    await p.waitForTimeout(120);
+    await settle(p, 120);
     check(
       "ArrowDown moves into the opened folder",
       (await p.evaluate(() =>
@@ -1158,7 +1264,7 @@ await session(
       )) === "docs/architecture.md",
     );
     await p.keyboard.press("ArrowLeft");
-    await p.waitForTimeout(120);
+    await settle(p, 120);
     check(
       "ArrowLeft goes back up to the parent folder",
       (await p.evaluate(() =>
@@ -1166,19 +1272,19 @@ await session(
       )) === "docs",
     );
     await p.keyboard.press("ArrowLeft");
-    await p.waitForTimeout(200);
+    await settle(p, 200);
     check(
       "ArrowLeft on an open folder closes it",
       (await item(/^docs(,|$)/).getAttribute("aria-expanded")) === "false",
     );
     await p.keyboard.press("ArrowRight");
-    await p.waitForTimeout(300);
+    await settle(p, 300);
     check(
       "ArrowRight opens it again",
       (await item(/^docs(,|$)/).getAttribute("aria-expanded")) === "true",
     );
     await p.keyboard.press("End");
-    await p.waitForTimeout(120);
+    await settle(p, 120);
     check(
       "End goes to the last row",
       (await p.evaluate(() =>
@@ -1186,7 +1292,7 @@ await session(
       )) !== "docs",
     );
     await p.keyboard.press("Home");
-    await p.waitForTimeout(120);
+    await settle(p, 120);
     check(
       "Home goes to the first row",
       (await p.evaluate(() =>
@@ -1202,7 +1308,7 @@ await session(
     await item(/^README\.md(,|$)/).hover();
     await p.getByRole("button", { name: "Actions for README.md" }).click();
     await p.getByRole("menuitem", { name: "Send path to terminal" }).click();
-    await p.waitForTimeout(400);
+    await settle(p, 400);
     // Every session stays mounted; readTerminal reads the one on screen.
     const typed = await readTerminal(p);
     check(
@@ -1213,7 +1319,7 @@ await session(
 
     await item(/^a file with spaces\.md$/).click({ button: "right" });
     await p.getByRole("menuitem", { name: "Send path to terminal" }).click();
-    await p.waitForTimeout(400);
+    await settle(p, 400);
     const typedWithSpaces = await readTerminal(p);
     check(
       "a path with spaces is quoted for the shell",
@@ -1223,14 +1329,14 @@ await session(
 
     await item(/^docs(,|$)/).click({ button: "right" });
     await p.getByRole("menuitem", { name: "Copy relative path" }).click();
-    await p.waitForTimeout(300);
+    await settle(p, 300);
     check(
       "Copy relative path puts it on the clipboard",
       (await p.evaluate(() => navigator.clipboard.readText())) === "docs",
     );
     await item(/^docs(,|$)/).click({ button: "right" });
     await p.getByRole("menuitem", { name: "Copy path", exact: true }).click();
-    await p.waitForTimeout(300);
+    await settle(p, 300);
     check(
       "Copy path gives the absolute path",
       (await p.evaluate(() => navigator.clipboard.readText())).endsWith(
@@ -1240,7 +1346,7 @@ await session(
     );
     await item(/^README\.md(,|$)/).click({ button: "right" });
     await p.getByRole("menuitem", { name: "Open containing folder" }).click();
-    await p.waitForTimeout(200);
+    await settle(p, 200);
     check(
       "Open containing folder asks the backend with the worktree and the item",
       (await p.evaluate(() => window.__lynxMock.probe.revealed))?.endsWith(
@@ -1251,7 +1357,7 @@ await session(
     // The menu is reachable without a mouse.
     await item(/^README\.md(,|$)/).focus();
     await p.keyboard.press("Shift+F10");
-    await p.waitForTimeout(300);
+    await settle(p, 300);
     check(
       "Shift+F10 opens the actions menu for the focused row",
       (await p
@@ -1259,7 +1365,7 @@ await session(
         .count()) === 1,
     );
     await p.keyboard.press("Escape");
-    await p.waitForTimeout(400);
+    await settle(p, 400);
 
     const overflow = await p.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,
@@ -1286,7 +1392,7 @@ await session(
     );
 
     await p.keyboard.press("Control+Shift+E");
-    await p.waitForTimeout(300);
+    await settle(p, 300);
     check("the shortcut closes the panel again", (await panel.count()) === 0);
   },
   { permissions: ["clipboard-read", "clipboard-write"] },
@@ -1294,14 +1400,14 @@ await session(
 
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   const item = (name) => p.getByRole("treeitem", { name });
   const fileTabs = p.getByRole("tablist", { name: "Open files" });
 
   await item(/^src(,|$)/).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await item(/^App\.tsx(,|$)/).click();
   check(
     "one click selects a file without opening it",
@@ -1349,7 +1455,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     (await fileTabs.getByText("unsaved changes").count()) === 1,
   );
   await p.keyboard.press("Control+s");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "Ctrl+S saves it",
     (await fileTabs.getByText("unsaved changes").count()) === 0,
@@ -1365,7 +1471,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   });
   await p.keyboard.type("x");
   await p.keyboard.press("Control+s");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a file changed on disk shows the conflict instead of saving",
     (await p
@@ -1374,7 +1480,7 @@ await session("?mock=full", 1400, 800, async (p) => {
       .count()) === 1,
   );
   await p.getByRole("button", { name: "Reload from disk" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "reloading takes the text from disk",
     (await p.locator(".cm-content").innerText()).includes("changed elsewhere"),
@@ -1397,7 +1503,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   await item(/^package\.json(,|$)/).click();
   await p.keyboard.press("Enter");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "Enter opens the selected file from the keyboard",
     (await fileTabs.getByRole("tab").count()) === 2,
@@ -1408,7 +1514,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     .getByRole("tab")
     .first()
     .click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "choosing a terminal tab brings the terminal back, and the files stay open",
     (await p.locator(".cm-editor").count()) === 0 &&
@@ -1416,7 +1522,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await item(/^logo\.png$/).dblclick();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "a file that is not text says so instead of opening",
     (await p.getByRole("alert").filter({ hasText: "not text" }).count()) === 1,
@@ -1426,13 +1532,13 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p.locator(".cm-content").click();
   await p.keyboard.type("y");
   await fileTabs.getByRole("tab", { name: /App\.tsx/ }).press("Delete");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "closing a file with unsaved changes asks first",
     (await p.getByRole("alertdialog").count()) === 1,
   );
   await p.getByRole("button", { name: "Close without saving" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "confirming closes the file",
     (await fileTabs.getByRole("tab", { name: /App\.tsx/ }).count()) === 0,
@@ -1441,11 +1547,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   const list = p.getByRole("group", {
     name: "Changed files in the selected worktree",
   });
@@ -1502,7 +1608,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   await row(/^App\.tsx, modified$/).click();
   await p.locator(".cm-editor").waitFor({ timeout: 5000 });
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const appTab = fileTabs.getByRole("tab", { name: /App\.tsx/ });
   check(
     "one click opens the file as a temporary tab in diff view",
@@ -1520,7 +1626,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await row(/^Button\.tsx, renamed$/).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "another single click replaces the temporary tab",
     (await fileTabs.getByRole("tab").count()) === 1 &&
@@ -1528,14 +1634,14 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await row(/^package\.json, modified$/).dblclick();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   const pkgTab = fileTabs.getByRole("tab", { name: /package\.json/ });
   check(
     "double click opens it as a permanent tab",
     (await pkgTab.locator("span.italic").count()) === 0,
   );
   await row(/^App\.tsx, modified$/).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "a permanent tab survives the next temporary one",
     (await fileTabs.getByRole("tab").count()) === 2 &&
@@ -1545,7 +1651,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   const toolbar = p.getByRole("toolbar", { name: "File view" });
   await toolbar.getByRole("button", { name: "Split" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "Split shows the original and the new text side by side",
     (await p.locator(".cm-merge-a").count()) === 1 &&
@@ -1553,7 +1659,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
   await toolbar.getByRole("button", { name: "Unified" }).click();
   await toolbar.getByRole("button", { name: "Edit" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "Edit switches the same tab to the editor",
     (await p.locator(".cm-content[contenteditable=true]").count()) === 1 &&
@@ -1562,14 +1668,14 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p.locator(".cm-content").click();
   await p.keyboard.type("// local");
   await toolbar.getByRole("button", { name: "Diff" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the diff includes text that is not saved yet",
     (await p.locator(".cm-line", { hasText: "// local" }).count()) >= 1,
   );
 
   await row(/^Legacy\.tsx, deleted$/).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "a deleted file opens as a diff, and Edit is off because there is nothing to edit",
     (await p.locator(".cm-deletedLine, .cm-deletedChunk").count()) >= 0 &&
@@ -1577,9 +1683,9 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await p.getByRole("tab", { name: "Files", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("treeitem", { name: /^README\.md(,|$)/ }).dblclick();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "a file opened from Files starts in the editor, and Diff is on because it changed",
     (await toolbar
@@ -1588,16 +1694,16 @@ await session("?mock=full", 1400, 800, async (p) => {
       (await toolbar.getByRole("button", { name: "Diff" }).isEnabled()),
   );
   await p.getByRole("treeitem", { name: /^LICENSE$/ }).dblclick();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "Diff is off for a file that did not change",
     await toolbar.getByRole("button", { name: "Diff" }).isDisabled(),
   );
 
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await row(/^App\.tsx, modified$/).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   const axeDiff = await p.evaluate(async (src) => {
     window.eval(src);
     const r = await window.axe.run(document, {
@@ -1618,7 +1724,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 await session("?mock=full", 1000, 700, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "on a narrower window the panel opens as a drawer over the terminal",
     (await p.getByRole("dialog", { name: "Side panel" }).count()) === 1 &&
@@ -1630,7 +1736,7 @@ await session("?mock=full", 1000, 700, async (p) => {
     (await p.getByRole("treeitem", { name: /^README\.md(,|$)/ }).count()) === 1,
   );
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "Escape closes the drawer",
     (await p.getByRole("dialog", { name: "Side panel" }).count()) === 0,
@@ -1640,12 +1746,12 @@ await session("?mock=full", 1000, 700, async (p) => {
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await p.getByRole("tab", { name: /claude/ }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   // Other sessions stay mounted under the visible one: a click must still reach the visible terminal.
   await p.evaluate(() => document.activeElement?.blur());
   const box = await p.locator(".xterm-screen:visible").first().boundingBox();
   await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "clicking the terminal focuses it so the keyboard can type",
     await p.evaluate(
@@ -1663,7 +1769,7 @@ await session(
   async (p) => {
     await p.getByRole("button", { name: /^feat\/auth/ }).click();
     await p.getByRole("tab", { name: /claude/ }).click();
-    await p.waitForTimeout(600);
+    await settle(p, 600);
     const renderer = () =>
       p.evaluate(() => {
         const visible = [...document.querySelectorAll(".xterm")].find(
@@ -1723,7 +1829,8 @@ await session(
 
 await session("?mock=empty", 1400, 700, async (p) => {
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
+  await p.getByText("Select a worktree to browse its files.").waitFor();
   check(
     "without a worktree the panel says what to do",
     (await p.getByText("Select a worktree to browse its files.").count()) === 1,
@@ -1732,7 +1839,7 @@ await session("?mock=empty", 1400, 700, async (p) => {
 
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   const terminalTabs = p
     .getByRole("tablist", { name: "Terminals" })
     .getByRole("tab");
@@ -1750,7 +1857,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 
   await terminalTabs.first().focus();
   await p.keyboard.press("Delete");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "Delete closes the focused terminal tab",
     (await terminalTabs.count()) === 1,
@@ -1758,7 +1865,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 
   await terminalTabs.first().hover();
   await terminalTabs.first().locator("[data-close]").click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "clicking the x closes a tab and leaves the worktree with the launcher",
     (await terminalTabs.count()) === 0 &&
@@ -1791,14 +1898,14 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
 
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "selecting a worktree does not hide the other worktrees' agents",
     (await p.locator("[data-agent-group]").count()) === 3,
   );
 
   await toggleGroup(featPath).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "opening a group lists its agents",
     (await agent(/^claude, idle$/).count()) === 1,
@@ -1818,7 +1925,7 @@ await session("?mock=full", 1300, 760, async (p) => {
 
   await p.getByRole("tab", { name: /zsh/ }).click();
   await agent(/^claude, idle$/).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "clicking an agent brings its tab forward",
     (await p.getByRole("tab", { name: /claude/, selected: true }).count()) ===
@@ -1886,7 +1993,7 @@ await session("?mock=full", 1300, 760, async (p) => {
 
   await p.getByRole("button", { name: /^feat\/auth/ }).focus();
   await p.keyboard.press("ArrowDown");
-  await p.waitForTimeout(120);
+  await settle(p, 120);
   check(
     "ArrowDown walks from the worktree into its agents group",
     (await p.evaluate(() =>
@@ -1912,7 +2019,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
 
   await p.getByRole("button", { name: /^fix\/pty/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "selecting another worktree keeps the first one's agents in view",
     (await agent(/^claude, idle$/).count()) === 1,
@@ -1922,14 +2029,14 @@ await session("?mock=full", 1300, 760, async (p) => {
     (await agent(/^codex, needs you$/).count()) === 0,
   );
   await toggleGroup(fixPath).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "each row shows its own age",
     ((await agent(/^codex, needs you$/).textContent()) ?? "").includes("3h"),
   );
 
   await toggleGroup(refactorPath).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a finished agent is shown as exited, with its age",
     (await agent(/^claude, exited with code 0$/).count()) === 1 &&
@@ -1938,7 +2045,7 @@ await session("?mock=full", 1300, 760, async (p) => {
 
   await agent(/^claude, idle$/).hover();
   await groupOf(featPath).getByRole("button", { name: "Close claude" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "closing from the row removes the agent and its tab",
     (await agent(/^claude, idle$/).count()) === 0 &&
@@ -1966,13 +2073,13 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
 
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p
     .locator(
       '[data-agent-group="/home/dev/lynx-ide-worktrees/feat-auth"] > button',
     )
     .click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const agentRow = p.getByRole("button", { name: /^claude, idle$/ });
   check("agent rows stay inside the sidebar too", await fits(agentRow));
 
@@ -2137,7 +2244,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
 
   await p.mouse.move(0, 0);
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const actionOpacity = () =>
     p.evaluate(
       () =>
@@ -2147,7 +2254,7 @@ await session("?mock=full", 1300, 760, async (p) => {
     );
   const hiddenBefore = await actionOpacity();
   await p.locator('[data-folder-id="f-work"] > div > button').first().hover();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const shownAfter = await actionOpacity();
   check(
     "the arrow appears only when the row is hovered",
@@ -2172,13 +2279,13 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
 
   await p.getByRole("button", { name: "Collapse Work" }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "collapsing a folder hides everything inside it",
     (await p.locator('[data-project-id="r2"]').count()) === 0,
   );
   await p.getByRole("button", { name: "Expand Work" }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "expanding it brings the contents back",
     (await p.locator('[data-project-id="r2"]').count()) === 1,
@@ -2191,7 +2298,7 @@ await session("?mock=full", 1300, 760, async (p) => {
     .click();
   await p.locator("#folder-name").fill("Personal");
   await p.keyboard.press("Enter");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a new top-level folder sorts before Work",
     (await names())[0] === "Personal",
@@ -2207,7 +2314,7 @@ await session("?mock=full", 1300, 760, async (p) => {
     .click();
   await p.locator("#folder-name").fill("Deep");
   await p.keyboard.press("Enter");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a folder made inside Work lands inside Work",
     (await inside("Work", '[data-folder-id]:has-text("Deep")').count()) >= 1,
@@ -2220,7 +2327,7 @@ await session("?mock=full", 1300, 760, async (p) => {
     .click({ force: true })
     .catch(() => {});
   await openMenu("Work", "Move to folder…", true);
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   const blocked = async (id) => p.locator(`[data-option="${id}"]`).isDisabled();
   check("Work cannot be moved inside itself", await blocked("f-work"));
   check(
@@ -2229,7 +2336,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
   check("the top level is always a valid place", !(await blocked("top")));
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(200);
+  await settle(p, 200);
 
   // Deleting a folder moves what was inside it up one level; nothing is lost.
   await openMenu("Client X", "Delete folder…", true);
@@ -2246,7 +2353,7 @@ await session("?mock=full", 1300, 760, async (p) => {
       .count()) === 1,
   );
   await p.getByRole("button", { name: "Delete folder", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "api-server is still listed after its folder is gone",
     (await p.locator('[data-project-id="r2"]').count()) === 1,
@@ -2260,10 +2367,10 @@ await session("?mock=full", 1300, 760, async (p) => {
 
   // Moving a repo back to the top level.
   await openMenu("api-server", "Move to folder…");
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   await p.locator('[data-option="top"]').click();
   await p.getByRole("button", { name: "Move here" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "moving a repo to the top level takes it out of its folder",
     (await p.locator('[data-folder-id] [data-project-id="r2"]').count()) ===
@@ -2274,7 +2381,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   await openMenu("Work", "Rename…", true);
   await p.locator("#folder-name").fill("Trabalho");
   await p.keyboard.press("Enter");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "renaming a folder keeps its contents where they were",
     (await p.locator('[data-folder-id]:has-text("Trabalho")').count()) >= 1,
@@ -2329,7 +2436,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
   await p.locator("#folder-name").fill("Code");
   await p.getByRole("button", { name: "Create and link" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
 
   check(
     "the linked folder shows its repo and the folder the scan made",
@@ -2377,7 +2484,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   await p.evaluate(() => window.__lynxMock.setRepoMissing("fresh", true));
   await menuOf("Code", true);
   await p.getByRole("menuitem", { name: "Rescan folder" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   const missingRow = p.locator('[data-project-id]:has-text("fresh")');
   check(
     "a repo gone from disk says so in words, not only by dimming",
@@ -2402,7 +2509,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   await menuOf("Code", true);
   await p.getByRole("menuitem", { name: "Unlink from disk…" }).click();
   await p.getByRole("button", { name: "Unlink", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await menuOf("clients", true);
   const afterUnlink = await menuItems();
   check(
@@ -2426,7 +2533,7 @@ await session("?mock=full", 1300, 760, async (p) => {
   );
 
   await p.getByRole("button", { name: "Collapse lynx-ide" }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   const spoken = await spokenOf(repoHeader);
   check(
     "a collapsed repo says what it hides, including the agents running in it and those that need the user",
@@ -2441,14 +2548,14 @@ await session("?mock=full", 1300, 760, async (p) => {
     shownInRow,
   );
   await p.getByRole("button", { name: "Expand lynx-ide" }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "expanding the repo removes the summary again",
     (await spokenOf(repoHeader)) === null,
   );
 
   await p.getByRole("button", { name: "Collapse Work" }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   const folderSpoken = await spokenOf(
     p.locator('[data-folder-id="f-work"] > div > button'),
   );
@@ -2458,7 +2565,7 @@ await session("?mock=full", 1300, 760, async (p) => {
     folderSpoken ?? "null",
   );
   await p.getByRole("button", { name: "Expand Work" }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "the folder's name is still what the header is called",
     (await p.getByRole("button", { name: "Collapse Work" }).count()) === 1,
@@ -2488,7 +2595,7 @@ await session("?mock=crowded", 1300, 760, async (p) => {
   );
 
   await header.click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "opened, the header is only the word Agents, with no badges",
     (await header.locator('svg[data-icon="agent"]').count()) === 0 &&
@@ -2501,7 +2608,7 @@ await session("?mock=crowded", 1300, 760, async (p) => {
   );
 
   await p.mouse.move(0, 0);
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   const styles = await p.evaluate(() => {
     const header = document.querySelector(
       '[data-agent-group="/home/dev/lynx-ide-worktrees/fix-pty"] > button',
@@ -2531,7 +2638,7 @@ await session("?mock=crowded", 1300, 760, async (p) => {
     JSON.stringify(styles),
   );
   await header.hover();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "hovering the header is the only thing that changes it",
     (await header.evaluate((el) => getComputedStyle(el).backgroundColor)) !==
@@ -2541,7 +2648,8 @@ await session("?mock=crowded", 1300, 760, async (p) => {
 
 await session("?mock=empty", 1000, 700, async (p) => {
   await p.getByRole("button", { name: "Add project" }).last().click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
+  await p.getByRole("dialog", { name: "Add project" }).waitFor();
   const chooser = p.getByRole("dialog", { name: "Add project" });
   check(
     "Add project offers browsing an existing project or creating a new one",
@@ -2553,7 +2661,7 @@ await session("?mock=empty", 1000, 700, async (p) => {
   );
 
   await chooser.getByRole("button", { name: /Browse project/ }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "browsing closes the dialog and adds the chosen repository",
     (await p.getByRole("dialog").count()) === 0 &&
@@ -2568,7 +2676,7 @@ await session("?mock=empty", 1000, 700, async (p) => {
 await session("?mock=empty", 1000, 700, async (p) => {
   await p.getByRole("button", { name: "Add project" }).last().click();
   await p.getByRole("button", { name: /Create new project/ }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const create = p.getByRole("button", { name: "Create project" });
   check(
     "creating needs a name and a location before it is enabled",
@@ -2577,7 +2685,7 @@ await session("?mock=empty", 1000, 700, async (p) => {
   );
 
   await p.getByRole("button", { name: "Choose folder…" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByLabel("Project name").fill("notes");
   check(
     "the form says where the project folder is created",
@@ -2585,6 +2693,7 @@ await session("?mock=empty", 1000, 700, async (p) => {
       (await create.isEnabled()),
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -2600,7 +2709,7 @@ await session("?mock=empty", 1000, 700, async (p) => {
 
   await p.getByLabel("Project name").fill("a/b");
   await create.click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a refused name keeps the form open with the reason and the typed name",
     (await p.getByRole("alert").innerText()).includes("invalid name") &&
@@ -2611,7 +2720,7 @@ await session("?mock=empty", 1000, 700, async (p) => {
 
   await p.getByLabel("Project name").fill("notes");
   await create.click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   check(
     "a valid name creates the project and adds it to the sidebar",
     (await p.getByRole("dialog").count()) === 0 &&
@@ -2628,7 +2737,7 @@ await session("?mock=full", 800, 700, async (p) => {
   );
   check("narrow window has no horizontal overflow", (await overflow(p)) <= 0);
   await p.keyboard.press("Control+Shift+B");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "Ctrl+Shift+B opens the drawer",
     (await p.getByRole("heading", { name: "Projects" }).count()) >= 1,
@@ -2640,7 +2749,10 @@ await session("?mock=full", 800, 700, async (p) => {
       .count()) === 1,
   );
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await p
+    .getByRole("heading", { name: "Projects" })
+    .first()
+    .waitFor({ state: "detached" });
   check(
     "choosing a worktree closes the drawer",
     (await p.getByRole("heading", { name: "Projects" }).count()) === 0,
@@ -2681,6 +2793,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     (await p.getByText("Showing 100 of 4002").count()) === 1,
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -2753,6 +2866,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     `${JSON.stringify(rail)} ${JSON.stringify(projectPanel)} ${JSON.stringify(box)}`,
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -2770,11 +2884,11 @@ await session("?mock=full", 1200, 760, async (p) => {
 // Stage, commit and unstage from the Changes tab. The mock moves the files, like git would.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   const list = p.getByRole("group", {
     name: "Changed files in the selected worktree",
   });
@@ -2784,7 +2898,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   const commit = p.getByRole("button", { name: "Commit", exact: true });
 
   await list.getByRole("button", { name: "Stage App.tsx" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the stage button moves a changed file into the staged section",
     (await group(/^Staged changes/)
@@ -2801,7 +2915,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   await list.getByRole("treeitem", { name: /^setup\.md, untracked$/ }).focus();
   await p.keyboard.press("s");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "S on a focused row stages it",
     (await group(/^Staged changes/)
@@ -2810,7 +2924,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await list.getByRole("button", { name: "Unstage setup.md" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "unstage moves the file back to untracked, and the working tree keeps it",
     (await group(/^Untracked files/)
@@ -2822,10 +2936,10 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
   await list.getByRole("treeitem", { name: /^setup\.md, untracked$/ }).focus();
   await p.keyboard.press("s");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
 
   await p.getByRole("button", { name: "Generate message with AI" }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "Generate fills the message and says which agent wrote it",
     (await summary.inputValue()) === "Update the Changes panel" &&
@@ -2843,6 +2957,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     await commit.isEnabled(),
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -2857,7 +2972,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await commit.click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   check(
     "a commit empties the index and clears the message",
     (await group(/^Staged changes/).count()) === 0 &&
@@ -2878,7 +2993,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   await p.evaluate(() =>
     window.__lynxMock.worktreeMadeByAgent("lynx-ide", "lynx-task-1a2b3c4d"),
   );
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "a worktree an agent made shows in the sidebar without a reload",
     (await p.getByRole("button", { name: /lynx-task-1a2b3c4d/ }).count()) >= 1,
@@ -2888,9 +3003,9 @@ await session("?mock=full", 1200, 760, async (p) => {
 // The Orchestration tab: off until the user turns it on; the coordinator, not Settings, picks the agent and worktree.
 await session("?mock=full", 1200, 760, async (p) => {
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("tab", { name: "Orchestration", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 
   check(
     "the Orchestration tab starts off, and finished workers close by default",
@@ -2901,6 +3016,7 @@ await session("?mock=full", 1200, 760, async (p) => {
         .getByRole("switch", { name: "Close finished workers" })
         .getAttribute("aria-checked")) === "true",
   );
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -2918,11 +3034,11 @@ await session("?mock=full", 1200, 760, async (p) => {
 // The Git tab: which agent writes commit messages, the style it follows, and the instructions box.
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.getByRole("tab", { name: "Git", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 
   check(
     "the Git tab starts on the automatic agent and Conventional Commits",
@@ -2940,7 +3056,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 
   await p.locator("#git-commit-style").click();
   await p.getByRole("option", { name: "Custom", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   const instructions = p.locator("#git-commit-instructions");
   check(
     "choosing Custom shows the instructions box",
@@ -2948,7 +3064,7 @@ await session("?mock=full", 1200, 760, async (p) => {
   );
   await instructions.fill("Write the subject in Portuguese.");
   await instructions.blur();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the instructions save when the box loses focus",
     (await instructions.inputValue()) === "Write the subject in Portuguese.",
@@ -2956,7 +3072,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 
   await p.locator("#git-commit-agent").click();
   await p.getByRole("option", { name: "Codex", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the agent choice saves",
     ((await p.locator("#git-commit-agent").textContent()) ?? "").includes(
@@ -2964,6 +3080,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     ),
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -2981,11 +3098,11 @@ await session("?mock=full", 1200, 760, async (p) => {
 // The Browser tab: how far agents may go in the page, and the sites they may visit.
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.getByRole("tab", { name: "Browser", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 
   check(
     "agents get full control of the browser by default, on any site",
@@ -2996,7 +3113,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 
   await p.locator("#browser-agent-access").click();
   await p.getByRole("option", { name: "Read only", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the access choice saves",
     ((await p.locator("#browser-agent-access").textContent()) ?? "").includes(
@@ -3007,12 +3124,13 @@ await session("?mock=full", 1200, 760, async (p) => {
   const sites = p.locator("#browser-allowed-sites");
   await sites.fill("example.com\n  docs.rs  \n");
   await sites.blur();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the sites save one per line, trimmed",
     (await sites.inputValue()) === "example.com\ndocs.rs",
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -3031,7 +3149,7 @@ await session("?mock=full", 1200, 760, async (p) => {
 // Wide enough for the side panel to dock: as a drawer it is modal and hides the page from getByRole.
 await session("?mock=full", 1400, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the browser is not on screen before an agent uses it",
     (await p.getByRole("toolbar", { name: "Browser" }).count()) === 0,
@@ -3040,7 +3158,7 @@ await session("?mock=full", 1400, 760, async (p) => {
   await p.evaluate(() =>
     window.__lynxMock.agentUsesBrowser("Opening example.com"),
   );
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "an agent using the browser does not take over the screen",
     (await p.getByRole("toolbar", { name: "Browser" }).count()) === 0,
@@ -3049,7 +3167,7 @@ await session("?mock=full", 1400, 760, async (p) => {
   await p.keyboard.press("Control+Shift+E");
   await p.getByRole("tab", { name: "Browser", exact: true }).click();
   await p.getByRole("button", { name: /^Dashboard · Vite/ }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "and the toolbar says what the agent is doing",
     (await p
@@ -3125,7 +3243,7 @@ await session("?mock=full", 1400, 760, async (p) => {
   );
 
   await p.getByRole("button", { name: /^Pull request #4/ }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "another tab takes the notice away",
     (await p.getByText("This tab is in its own window").count()) === 0,
@@ -3145,13 +3263,13 @@ await session("?mock=full", 1400, 760, async (p) => {
 // Without its engine the browser offers to download it, shows how it goes, and then opens.
 await session("?mock=full&engine=missing", 1400, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
   await p.getByRole("tab", { name: "Browser", exact: true }).click();
   await p.getByRole("button", { name: /^Dashboard · Vite/ }).click();
   // Nothing has started the engine yet: the page offers to try again, and that starts it.
   await p.getByRole("button", { name: "Try again", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
 
   check(
     "a browser with no engine says so and offers the download",
@@ -3159,6 +3277,7 @@ await session("?mock=full&engine=missing", 1400, 760, async (p) => {
       (await p.getByRole("button", { name: "Download the engine" }).count()) ===
         1,
   );
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -3173,7 +3292,7 @@ await session("?mock=full&engine=missing", 1400, 760, async (p) => {
   );
 
   await p.getByRole("button", { name: "Download the engine" }).click();
-  await p.waitForTimeout(150);
+  await settle(p, 150);
   const bar = p.getByRole("progressbar");
   check(
     "the download shows a progress bar with the size",
@@ -3192,11 +3311,11 @@ await session("?mock=full&engine=missing", 1400, 760, async (p) => {
 // Settings shows the engine, and removing it makes the browser ask for it again.
 await session("?mock=full", 1200, 760, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.getByRole("tab", { name: "Browser", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
 
   const group = p.getByRole("group", { name: "Browser engine" });
   check(
@@ -3204,7 +3323,7 @@ await session("?mock=full", 1200, 760, async (p) => {
     ((await group.textContent()) ?? "").includes("Installed (154.0.34-p2)"),
   );
   await group.getByRole("button", { name: "Remove" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "removing it says it is not installed and offers the download",
     ((await group.textContent()) ?? "").includes("Not installed") &&
@@ -3217,11 +3336,11 @@ await session("?mock=full", 1200, 760, async (p) => {
 // The section buttons stage every file of their section at once.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   const list = p.getByRole("group", {
     name: "Changed files in the selected worktree",
   });
@@ -3240,7 +3359,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   await list
     .getByRole("button", { name: "Stage all untracked files", exact: true })
     .click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "stage all untracked files moves every untracked file into the staged section",
     (await tree(/^Staged changes/)
@@ -3251,7 +3370,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   await list
     .getByRole("button", { name: "Stage all changes", exact: true })
     .click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "stage all changes moves every unstaged file, deletions included, into the index",
     (await tree(/^Staged changes/)
@@ -3263,6 +3382,7 @@ await session("?mock=full", 1400, 800, async (p) => {
       (await tree(/^Changes/).count()) === 0,
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -3280,11 +3400,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 // The Pull request tab: the branch's PR, its checks, and the link to GitHub.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Pull request", exact: true }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
 
   check(
     "the tab shows the pull request of the branch, with its number and title",
@@ -3307,12 +3427,13 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await p.getByRole("button", { name: "Open on GitHub" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "Open on GitHub asks the backend for the pull request link",
     (await p.getByRole("alert").count()) === 0,
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -3330,11 +3451,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 // A repository with no GitHub remote: the panel offers to create one, and the dialog creates it.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^fix\/pty/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Pull request", exact: true }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
 
   const createButton = p.getByRole("button", {
     name: "Create remote",
@@ -3348,7 +3469,8 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await createButton.click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
+  await p.getByRole("dialog").waitFor();
   const dialog = p.getByRole("dialog");
   check(
     "the dialog opens with the signed-in account, the folder name and private selected",
@@ -3377,7 +3499,8 @@ await session("?mock=full", 1400, 800, async (p) => {
   check("a valid name turns Create repository on", await confirm.isEnabled());
 
   // The button fades in when it turns on; axe would measure the colour mid-transition.
-  await p.waitForTimeout(400);
+  await settle(p, 400);
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -3392,7 +3515,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await confirm.click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
   check(
     "confirming creates the remote and the pull request panel reads the branch again",
     (await p.getByRole("dialog").count()) === 0 &&
@@ -3405,11 +3528,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 // After a commit, the button under the file list becomes Push while the remote lacks commits.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
 
   const commit = p.getByRole("button", { name: "Commit", exact: true });
   const push = p.getByRole("button", { name: "Push", exact: true });
@@ -3422,7 +3545,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     .getByRole("textbox", { name: "Commit summary" })
     .fill("Fix the label");
   await commit.click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
   check(
     "once the index is empty and a commit is waiting, the button becomes Push",
     (await push.count()) === 1 && (await commit.count()) === 0,
@@ -3433,7 +3556,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await p.getByRole("button", { name: "Generate message with AI" }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "with nothing staged, Generate still answers the click and says what to do",
     (await p
@@ -3444,7 +3567,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await p.getByRole("button", { name: "Commits", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const history = p.getByRole("list", { name: "Commits on this branch" });
   check(
     "the Commits view lists the commits made, newest first, with the unpushed one marked",
@@ -3466,7 +3589,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     JSON.stringify({ summaryBox, listBox }),
   );
   await history.getByRole("button", { name: /Fix the label/ }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const commitFiles = p.getByRole("list", { name: /^Files in commit/ });
   check(
     "a commit expands into its files, each with its kind and lines",
@@ -3490,7 +3613,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await push.click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
   check(
     "after the push the button is Commit again and the push is reported",
     (await commit.count()) === 1 &&
@@ -3503,11 +3626,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 // A branch with no pull request: the form sits in the tab, like the commit box, and creates it.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^refactor-db/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Pull request", exact: true }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
 
   const title = p.getByRole("textbox", { name: "Pull request title" });
   const body = p.getByRole("textbox", { name: "Pull request description" });
@@ -3535,7 +3658,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p
     .getByRole("button", { name: "Generate title and description with AI" })
     .click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "the sparkle button fills the title and description and names the agent",
     (await title.inputValue()) ===
@@ -3546,6 +3669,7 @@ await session("?mock=full", 1400, 800, async (p) => {
         .count()) === 1,
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -3561,7 +3685,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   await p.getByRole("switch", { name: "Draft" }).click();
   await p.getByRole("button", { name: "Push and create", exact: true }).click();
-  await p.waitForTimeout(800);
+  await settle(p, 800);
   check(
     "creating replaces the form with the new pull request, marked as a draft",
     (await p.getByRole("heading", { name: /^#77 refactor\(db\)/ }).count()) ===
@@ -3576,11 +3700,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 // Discarding asks first, cancelling changes nothing, and confirming removes the file from the list.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   const list = p.getByRole("group", {
     name: "Changed files in the selected worktree",
   });
@@ -3602,7 +3726,7 @@ await session("?mock=full", 1400, 800, async (p) => {
       "HEAD|Staged|Unstaged|Base",
   );
   await compare.getByRole("button", { name: "Staged", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "picking Staged shows the index side of the diff",
     ((await p.locator(".cm-content").first().innerText()) ?? "").includes(
@@ -3610,12 +3734,13 @@ await session("?mock=full", 1400, 800, async (p) => {
     ),
   );
   await compare.getByRole("button", { name: "HEAD", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 
   await list
     .getByRole("button", { name: "Discard App.tsx", exact: true })
     .click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
+  await p.getByRole("alertdialog").waitFor();
   const dialog = p.getByRole("alertdialog");
   check(
     "discarding asks first and says it cannot be undone",
@@ -3623,17 +3748,17 @@ await session("?mock=full", 1400, 800, async (p) => {
       ((await dialog.textContent()) ?? "").includes("cannot be undone"),
   );
   await dialog.getByRole("button", { name: "Cancel" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check("cancelling keeps the file in the list", (await app.count()) === 1);
 
   await app.focus();
   await p.keyboard.press("Delete");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p
     .getByRole("alertdialog")
     .getByRole("button", { name: "Discard", exact: true })
     .click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "confirming removes the file from the Changes section",
     (await app.count()) === 0,
@@ -3642,7 +3767,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   await list
     .getByRole("button", { name: "Discard all untracked files", exact: true })
     .click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a section's discard button names how many files it covers",
     (await p
@@ -3655,15 +3780,15 @@ await session("?mock=full", 1400, 800, async (p) => {
 // Amend: the last commit's message comes back, and a commit the remote has needs a second click.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
 
   const summary = p.getByRole("textbox", { name: "Commit summary" });
   await p.getByRole("switch", { name: "Amend last commit" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "turning amend on brings back the last commit's message",
     (await summary.inputValue()) === "feat(auth): add the login form",
@@ -3671,7 +3796,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   await summary.fill("feat(auth): add the sign-in form");
   await p.getByRole("button", { name: "Amend", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "amending a commit the remote has asks for a second, deliberate click",
     (await p.getByText(/already on origin\. Amending rewrites it/).count()) ===
@@ -3682,9 +3807,9 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await p.getByRole("button", { name: "Amend anyway", exact: true }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   await p.getByRole("button", { name: "Commits", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const history = p.getByRole("list", { name: "Commits on this branch" });
   const first =
     (await history.getByRole("listitem").first().textContent()) ?? "";
@@ -3700,29 +3825,29 @@ await session("?mock=full", 1400, 800, async (p) => {
 // Keeping the branch and its remote together: Pull when behind, Sync when both moved.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
 
   await p
     .getByRole("textbox", { name: "Commit summary" })
     .fill("Fix the label");
   await p.getByRole("button", { name: "Commit", exact: true }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
   await p.getByRole("button", { name: "Push", exact: true }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
 
   await p.evaluate(() => window.__lynxMock.setBehind(2));
   await p.getByRole("button", { name: "Refresh", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "when the remote has commits and the branch has none of its own, the button is Pull",
     (await p.getByRole("button", { name: "Pull", exact: true }).count()) === 1,
   );
   await p.getByRole("button", { name: "Pull", exact: true }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   check(
     "pulling brings the branch level and says so",
     (await p.getByText("Pulled from origin.").count()) === 1 &&
@@ -3732,20 +3857,20 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   // Something of its own to push, and the remote moved too: Sync.
   await p.getByRole("button", { name: "Stage README.md", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.getByRole("textbox", { name: "Commit summary" }).fill("Second fix");
   await p.getByRole("button", { name: "Commit", exact: true }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
   await p.evaluate(() => window.__lynxMock.setBehind(1));
   await p.getByRole("button", { name: "Refresh", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "with commits on both sides the button is Sync, and says what each side has",
     (await p.getByRole("button", { name: "Sync", exact: true }).count()) ===
       1 && (await p.getByText(/1 to push, 1 to pull/).count()) === 1,
   );
   await p.getByRole("button", { name: "Sync", exact: true }).click();
-  await p.waitForTimeout(800);
+  await settle(p, 800);
   check(
     "syncing joins the two and ends level",
     (await p.getByText("Synced with origin.").count()) === 1 &&
@@ -3757,18 +3882,18 @@ await session("?mock=full", 1400, 800, async (p) => {
 // An amended commit the remote has: a plain push would be refused, so the button is a Force push with lease.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
 
   await p.getByRole("switch", { name: "Amend last commit" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("button", { name: "Amend", exact: true }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   await p.getByRole("button", { name: "Amend anyway", exact: true }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
 
   const force = p.getByRole("button", { name: "Force push", exact: true });
   check(
@@ -3779,7 +3904,7 @@ await session("?mock=full", 1400, 800, async (p) => {
       (await p.getByText(/old copies of commits you rewrote/).count()) === 1,
   );
   await force.click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "a force push asks for a second click and says what it replaces",
     (await p
@@ -3790,7 +3915,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p
     .getByRole("button", { name: "Force push anyway", exact: true })
     .click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
   check(
     "after the force push the branch is level again",
     (await p.getByText("Replaced the branch on origin.").count()) === 1 &&
@@ -3803,11 +3928,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 // Actions on the pull request: auto-merge, draft state, close and reopen, and a merge that asks twice.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Pull request", exact: true }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
 
   check(
     "an open pull request says where it merges and what stands in the way",
@@ -3821,24 +3946,24 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await p.getByRole("button", { name: "Enable auto-merge" }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "enabling auto-merge says GitHub will merge it once the requirements pass",
     (await p.getByText(/Auto-merge is on/).count()) === 1,
   );
 
   await p.getByRole("button", { name: "Convert to draft" }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "converting to draft shows the Draft badge and offers Ready for review",
     (await p.getByText("Draft", { exact: true }).count()) >= 1 &&
       (await p.getByRole("button", { name: "Ready for review" }).count()) === 1,
   );
   await p.getByRole("button", { name: "Ready for review" }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
 
   await p.getByRole("button", { name: "Close pull request" }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "closing shows the Closed badge and offers to reopen",
     (await p.getByText("Closed", { exact: true }).count()) >= 1 &&
@@ -3846,17 +3971,17 @@ await session("?mock=full", 1400, 800, async (p) => {
         1,
   );
   await p.getByRole("button", { name: "Reopen pull request" }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
 
   await p.getByRole("button", { name: "Merge", exact: true }).click();
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "a merge asks for a second click and says what it merges where",
     (await p.getByRole("button", { name: "Confirm merge" }).count()) === 1 &&
       (await p.getByText(/Merges #42 into main/).count()) === 1,
   );
   await p.getByRole("button", { name: "Confirm merge" }).click();
-  await p.waitForTimeout(600);
+  await settle(p, 600);
   check(
     "after the merge the badge reads Merged and the actions are gone",
     (await p.getByText("Merged", { exact: true }).count()) >= 1 &&
@@ -3872,7 +3997,7 @@ await session("?mock=full", 1400, 800, async (p) => {
         1,
   );
   await p.getByRole("button", { name: "Clean up worktree" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const cleanUp = p.getByRole("alertdialog");
   check(
     "the clean-up dialog says what goes: the folder, the branch and the terminals",
@@ -3893,19 +4018,19 @@ await session("?mock=full", 1400, 800, async (p) => {
     cleanUpAxe.join(" || "),
   );
   await cleanUp.getByRole("button", { name: "Cancel" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "cancelling keeps the worktree",
     (await p.getByRole("button", { name: /^feat\/auth/ }).count()) >= 1,
   );
 
   await p.getByRole("button", { name: "Clean up worktree" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p
     .getByRole("alertdialog")
     .getByRole("button", { name: "Remove worktree and branch" })
     .click();
-  await p.waitForTimeout(800);
+  await settle(p, 800);
   check(
     "confirming removes the worktree from the sidebar and says so",
     (await p.getByRole("button", { name: /^feat\/auth/ }).count()) === 0 &&
@@ -3916,11 +4041,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 // The Discussion view: the conversation, an inline thread to reply to and resolve, and a new comment.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Pull request", exact: true }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
 
   check(
     "the pull request offers Checks and Discussion, with counts",
@@ -3929,7 +4054,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     )?.includes("3") === true,
   );
   await p.getByRole("button", { name: /^Discussion/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the discussion shows the inline thread with its place, and the conversation in order",
     (await p.getByText("src/App.tsx:12").count()) === 1 &&
@@ -3945,14 +4070,14 @@ await session("?mock=full", 1400, 800, async (p) => {
     .getByRole("textbox", { name: "Reply in src/App.tsx" })
     .fill("It was a leftover, fixed.");
   await p.getByRole("button", { name: "Reply", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "replying adds the answer to the thread",
     (await p.getByText("It was a leftover, fixed.").count()) === 1,
   );
 
   await p.getByRole("button", { name: "Resolve thread" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "resolving marks the thread resolved and offers to reopen it",
     (await p.getByText("Resolved", { exact: true }).count()) === 1 &&
@@ -3963,7 +4088,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     .getByRole("textbox", { name: "Add a comment" })
     .fill("Thanks, looks good now.");
   await p.getByRole("button", { name: "Comment", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "a new comment joins the conversation and clears the box",
     (await p.getByText("Thanks, looks good now.").count()) === 1 &&
@@ -3971,6 +4096,7 @@ await session("?mock=full", 1400, 800, async (p) => {
         "",
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -3988,11 +4114,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 // A failed check has a log to read in place.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Pull request", exact: true }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
 
   check(
     "only a GitHub Actions job offers a log, and every check with a page offers Open",
@@ -4003,13 +4129,14 @@ await session("?mock=full", 1400, 800, async (p) => {
         .count()) === 1,
   );
   await p.getByRole("button", { name: "Log of CI / test" }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   const log = p.getByLabel("Log text of CI / test");
   check(
     "opening the log shows its end, says it was cut, and can be closed",
     ((await log.textContent()) ?? "").includes("test failed") &&
       (await p.getByText("Only the end of the log is shown.").count()) === 1,
   );
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -4029,11 +4156,11 @@ await session("?mock=full", 1400, 800, async (p) => {
 // Fix with AI: a rejected commit and broken checks are handed to an agent that is on.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   const summary = p.getByRole("textbox", { name: "Commit summary" });
   const fix = p.getByRole("button", { name: "Fix with AI" });
   const failCommit = async () => {
@@ -4041,10 +4168,10 @@ await session("?mock=full", 1400, 800, async (p) => {
       .getByRole("group", { name: "Changed files in the selected worktree" })
       .getByRole("button", { name: "Stage App.tsx" })
       .click();
-    await p.waitForTimeout(300);
+    await settle(p, 300);
     await summary.fill("Ship it, hook fails");
     await p.getByRole("button", { name: "Commit", exact: true }).click();
-    await p.waitForTimeout(500);
+    await settle(p, 500);
   };
 
   await failCommit();
@@ -4056,24 +4183,24 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   // Turn Claude Code on in Settings, then try again.
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("tab", { name: "Agents" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("switch", { name: "Use Claude Code in Lynx" }).click();
-  await p.waitForTimeout(300);
-  await p.waitForTimeout(600);
+  await settle(p, 300);
+  await settle(p, 600);
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 
   await p.getByRole("button", { name: "Commit", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "with an agent on, a rejected commit offers Fix with AI",
     (await fix.count()) === 1,
   );
 
   await fix.click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
   const run = await p.evaluate(() => window.__lynxMock.lastAgentRun());
   check(
     "Fix with AI writes the error, the message and the staged files to a prompt",
@@ -4093,28 +4220,28 @@ await session("?mock=full", 1400, 800, async (p) => {
 
 await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   await p.getByRole("tab", { name: "Pull request", exact: true }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
   check(
     "Fix broken checks is not offered while no agent is on",
     (await p.getByRole("button", { name: "Fix broken checks" }).count()) === 0,
   );
 
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("tab", { name: "Agents" }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("switch", { name: "Use Claude Code in Lynx" }).click();
-  await p.waitForTimeout(300);
-  await p.waitForTimeout(600);
+  await settle(p, 300);
+  await settle(p, 600);
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 
   await p.getByRole("button", { name: "Fix broken checks" }).click();
-  await p.waitForTimeout(700);
+  await settle(p, 700);
   const run = await p.evaluate(() => window.__lynxMock.lastAgentRun());
   check(
     "Fix broken checks hands the failing checks, with their links, to the agent",
@@ -4137,7 +4264,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   await inFront(true);
   await report("done");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "no notification while the window is in front",
     (await sent()).length === 0,
@@ -4145,14 +4272,14 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   await inFront(false);
   await report("working");
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "a working agent is not worth a notification",
     (await sent()).length === 0,
   );
 
   await report("done");
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   const finished = await sent();
   check(
     "an agent that finishes while the window is away is announced, with its place",
@@ -4164,14 +4291,14 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await report("done");
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "the same status twice does not notify twice",
     (await sent()).length === finished.length,
   );
 
   await report("needsYou");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const all = await sent();
   check(
     "an agent that needs the user is announced too",
@@ -4185,9 +4312,9 @@ await session("?mock=full", 1400, 800, async (p) => {
   // Turn "Agent finished" off in Settings: only the needs-you kind stays.
   await inFront(true);
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("tab", { name: "Notifications", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const finishedSwitch = p.getByRole("switch", { name: "Agent finished" });
   check(
     "the Notifications page has both kinds, on by default",
@@ -4196,6 +4323,7 @@ await session("?mock=full", 1400, 800, async (p) => {
         .getByRole("switch", { name: "Agent needs you" })
         .getAttribute("aria-checked")) === "true",
   );
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -4209,21 +4337,21 @@ await session("?mock=full", 1400, 800, async (p) => {
     axe.join(" || "),
   );
   await finishedSwitch.click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
 
   await inFront(false);
   const before = (await sent()).length;
   await report("working");
   await report("done");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "with 'Agent finished' off, finishing is silent",
     (await sent()).length === before,
   );
   await report("needsYou");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check("and 'Agent needs you' still speaks", (await sent()).length > before);
 });
 
@@ -4231,9 +4359,9 @@ await session("?mock=full", 1400, 800, async (p) => {
 await session("?mock=full", 1400, 800, async (p) => {
   const worktree = "/home/dev/lynx-ide-worktrees/feat-auth";
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   await p.keyboard.press("Control+Shift+E");
-  await p.waitForTimeout(600);
+  await settle(p, 600);
 
   check(
     "the new file is not listed before the agent writes it",
@@ -4243,14 +4371,14 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p.evaluate((path) => {
     window.__lynxMock.agentWritesFile(path, "", "agent-notes.md");
   }, worktree);
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "a file an agent writes appears in the explorer by itself",
     (await p.getByRole("treeitem", { name: /^agent-notes\.md/ }).count()) === 1,
   );
 
   await p.getByRole("tab", { name: "Changes", exact: true }).click();
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "and in Changes, as an untracked file",
     (await p
@@ -4262,7 +4390,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p.evaluate((path) => {
     window.__lynxMock.agentWritesFile(path, "docs", "plan.md");
   }, worktree);
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "a second file shows up in Changes too, with no reload",
     (await p
@@ -4284,7 +4412,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await codex.click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const details = p.getByRole("dialog");
   check(
     "its popover names the plan and window and says when it resets",
@@ -4298,6 +4426,7 @@ await session("?mock=full", 1400, 800, async (p) => {
       .getByRole("progressbar", { name: "Monthly window" })
       .count()) === 1,
   );
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -4311,7 +4440,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     axe.join(" || "),
   );
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(200);
+  await settle(p, 200);
   check(
     "Escape closes the popover",
     (await p.getByRole("dialog").count()) === 0,
@@ -4353,7 +4482,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     ]);
     window.dispatchEvent(new Event("focus"));
   });
-  await p.waitForTimeout(500);
+  await settle(p, 500);
   check(
     "the footer shows the fullest window, so a nearly used up plan reads 93%",
     (
@@ -4367,7 +4496,7 @@ await session("?mock=full", 1400, 800, async (p) => {
       .count()) === 1,
   );
   await footer.getByRole("button", { name: /^Codex:/ }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "the popover lists both windows and flags the nearly used up one in words",
     (await p.getByRole("dialog").getByText("Almost used up").count()) === 1 &&
@@ -4425,7 +4554,7 @@ await session("?mock=full", 1400, 800, async (p) => {
     ]);
     window.dispatchEvent(new Event("focus"));
   });
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "both plans show in the footer by default, compact, with the countdown",
     (await claude.count()) === 1 &&
@@ -4435,11 +4564,11 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   // The limits are a tab of the Agents page.
   await p.getByRole("tab", { name: "Agents", exact: true }).click();
   await p.getByRole("tab", { name: "Plan limits", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   const settings = p.locator('[role="dialog"]');
   const switchOn = async (name) =>
     (await settings
@@ -4451,6 +4580,7 @@ await session("?mock=full", 1400, 800, async (p) => {
       (await switchOn("Claude Code")) &&
       (await switchOn("Codex")),
   );
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -4465,20 +4595,20 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await settings.getByRole("switch", { name: "Codex", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "turning a plan off takes it out of the footer",
     (await codexBehind.count()) === 0 && (await claudeBehind.count()) === 1,
   );
   await settings.getByRole("switch", { name: "Codex", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
 
   await settings.getByRole("combobox", { name: "Footer layout" }).click();
   await p.getByRole("option", { name: "Detailed", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await settings.getByRole("combobox", { name: "Percentages" }).click();
   await p.getByRole("option", { name: "Left", exact: true }).click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   const detailed = (await claudeBehind.textContent()) ?? "";
   check(
     "detailed layout names each window and reads what is left",
@@ -4491,7 +4621,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 
   // The warning levels cannot cross: the warning stops one below the critical level.
   await p.evaluate(() => window.__lynxMock.setUsageConfig({ warnAt: 89 }));
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "the warning level cannot go up to the critical one",
     await settings
@@ -4512,7 +4642,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   await settings
     .getByRole("switch", { name: "Show plan names", exact: true })
     .click();
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   const marks = p.locator('footer [role="group"] button');
   check(
     "with names off the footer keeps each plan's number but not its name, which stays in the label",
@@ -4524,9 +4654,9 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await p.keyboard.press("Escape");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.evaluate(() => window.__lynxMock.setUsageConfig({ visible: false }));
-  await p.waitForTimeout(400);
+  await settle(p, 400);
   check(
     "switching the footer off hides every plan",
     (await footer.getByRole("group", { name: "Plan limits" }).count()) === 0,
@@ -4537,9 +4667,9 @@ await session("?mock=full", 1400, 800, async (p) => {
 // restart that asks first.
 await session("?mock=full", 1400, 800, async (p) => {
   await p.keyboard.press("Control+,");
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   await p.getByRole("tab", { name: "Updates", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "the Updates page shows the installed version and a check button",
     (await p.getByText("Installed version 0.1.0").count()) === 1 &&
@@ -4554,6 +4684,7 @@ await session("?mock=full", 1400, 800, async (p) => {
       (await p.getByText("Lynx 0.1.1 is available").count()) >= 1,
   );
 
+  await settle(p, 300);
   await p.evaluate(axeSource);
   const axe = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
@@ -4577,7 +4708,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 
   await p.getByRole("button", { name: "Restart Lynx", exact: true }).click();
-  await p.waitForTimeout(300);
+  await settle(p, 300);
   check(
     "restarting asks first, and says that terminals and agents close",
     (await p.getByRole("alertdialog").count()) === 1 &&
@@ -4586,6 +4717,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p.keyboard.press("Escape");
 });
 
+await runQueuedSessions();
 console.log(results.join("\n"));
 await browser.close();
 vite.kill();

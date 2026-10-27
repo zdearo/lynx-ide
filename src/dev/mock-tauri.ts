@@ -1857,10 +1857,28 @@ export function installMockTauri(scenario: string): void {
     { shouldMockEvents: true },
   );
 
+  // Lets the e2e wait for commands still in flight instead of sleeping.
+  let pendingCommands = 0;
+  const internals = (
+    window as unknown as {
+      __TAURI_INTERNALS__: { invoke: (...args: unknown[]) => Promise<unknown> };
+    }
+  ).__TAURI_INTERNALS__;
+  const mockedInvoke = internals.invoke;
+  internals.invoke = async (...invokeArgs) => {
+    pendingCommands += 1;
+    try {
+      return await mockedInvoke(...invokeArgs);
+    } finally {
+      pendingCommands -= 1;
+    }
+  };
+
   // Test hooks: change the config as if another program had edited the file.
   Object.assign(window, {
     __lynxMock: {
       probe,
+      pendingCommands: () => pendingCommands,
       /** The prompt file the last agent was given, and the command typed to start it. */
       lastAgentRun: () => ({
         prompt: lastAgentPrompt,

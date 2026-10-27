@@ -37,7 +37,10 @@ export function ResumableList({ worktreePath }: { worktreePath: string }) {
       return;
     }
     forget(worktreePath, item.id);
-    void startTerminal(worktreePath, command).then(() => refresh(worktreePath));
+    // The new session only learns its conversation id later, so the old record is dropped here.
+    const started = await startTerminal(worktreePath, command);
+    if (started) await remove(worktreePath, item.id).catch(() => undefined);
+    await refresh(worktreePath);
   };
 
   const take = (item: ResumableSession) => {

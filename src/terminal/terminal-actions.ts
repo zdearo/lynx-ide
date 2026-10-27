@@ -28,15 +28,17 @@ export async function startPreset(
 export async function startTerminal(
   worktreePath: string,
   command: string | null,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await useTerminalStore.getState().create(worktreePath, command);
     // Starting something in a worktree means looking at it.
     useWorkspaceStore.getState().selectWorktree(worktreePath);
+    return true;
   } catch (error) {
     toast.error(copy.terminal.createFailed, {
       description: errorMessage(error),
     });
+    return false;
   }
 }
 

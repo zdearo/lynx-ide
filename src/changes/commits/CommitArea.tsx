@@ -4,7 +4,6 @@ import { commitFailurePrompt } from "@/agents/fix-prompts";
 import { fixWithAgent, useHasFixAgent } from "@/agents/fix-with-agent";
 import { commands } from "@/bindings";
 import { useChangesStore } from "@/changes/changes-store";
-import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
 import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { useBranchSyncStore } from "@/changes/branch-sync-store";
@@ -284,20 +283,15 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
         <TooltipIconButton
           label={copy.changes.generate}
           tooltipSide="top"
-          variant="outline"
           disabled={busyElsewhere}
           aria-busy={generating}
           className={cn(
-            "absolute top-1/2 right-1 size-6 -translate-y-1/2 bg-background",
+            "absolute top-1/2 right-1 size-6 -translate-y-1/2",
             stagedCount === 0 && "opacity-60",
           )}
           onClick={() => void generate()}
         >
-          {generating ? (
-            <Loader2Glyph18 className="animate-spin" />
-          ) : (
-            <SparkleGlyph18 />
-          )}
+          <SparkleGlyph18 />
         </TooltipIconButton>
       </div>
       <Textarea

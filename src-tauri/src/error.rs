@@ -12,6 +12,7 @@ use crate::persistence::DatabaseError;
 use crate::pull_request::github_remote::GitHubRemoteError;
 use crate::pull_request::pull_request_create::CreatePullRequestError;
 use crate::pull_request::pull_request_lookup::PullRequestError;
+use crate::team::team_error::TeamError;
 use crate::terminal::TerminalError;
 
 #[derive(Debug, thiserror::Error)]
@@ -88,6 +89,8 @@ pub enum AppError {
     Update(#[from] crate::updates::update_service::UpdateError),
     #[error(transparent)]
     Bot(#[from] crate::bots::bot_folder::BotError),
+    #[error(transparent)]
+    Team(#[from] TeamError),
     #[error("background task failed: {0}")]
     TaskFailed(String),
 }
@@ -151,6 +154,12 @@ pub enum IpcErrorKind {
     Browser,
     Update,
     InvalidBot,
+    /// The team has no run or member with that id.
+    TeamNotFound,
+    /// A team value is malformed: an empty goal, a role or a text that is too long.
+    TeamInvalid,
+    /// A team rule refuses the change, e.g. a cycle or two bots in a line.
+    TeamRefused,
     Internal,
 }
 
@@ -231,6 +240,17 @@ impl From<AppError> for IpcError {
             AppError::Browser(_) => IpcErrorKind::Browser,
             AppError::Update(_) => IpcErrorKind::Update,
             AppError::Bot(_) => IpcErrorKind::InvalidBot,
+            AppError::Team(error) => match error {
+                TeamError::RunNotFound(_) | TeamError::MemberNotFound(_) => {
+                    IpcErrorKind::TeamNotFound
+                }
+                TeamError::Database(_) => IpcErrorKind::Storage,
+                TeamError::InvalidTitle
+                | TeamError::InvalidRole
+                | TeamError::InvalidText
+                | TeamError::InvalidBot => IpcErrorKind::TeamInvalid,
+                _ => IpcErrorKind::TeamRefused,
+            },
             AppError::TaskFailed(_) => IpcErrorKind::Internal,
         };
         Self {

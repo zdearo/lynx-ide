@@ -362,6 +362,18 @@ export const commands = {
 	 *  daemon's keep running, and the new version rejoins them.
 	 */
 	restartToUpdate: () => __TAURI_INVOKE<void>("restart_to_update"),
+	/**  The whole team: its runs, members and lines. */
+	teamSnapshot: () => typedError<TeamSnapshot, IpcError>(__TAURI_INVOKE("team_snapshot")),
+	/**  Starts a run with its orchestrator at the top: Lead, or the bot `bot_id` when one is given. */
+	teamCreateRun: (title: string, botId: string | null) => typedError<TeamRun, IpcError>(__TAURI_INVOKE("team_create_run", { title, botId })),
+	teamDeleteRun: (runId: string) => typedError<null, IpcError>(__TAURI_INVOKE("team_delete_run", { runId })),
+	teamAddMember: (runId: string, member: NewTeamMember) => typedError<TeamMember, IpcError>(__TAURI_INVOKE("team_add_member", { runId, member })),
+	teamSetParent: (memberId: string, parentId: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_parent", { memberId, parentId })),
+	teamSetOrchestrator: (memberId: string, orchestrator: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_orchestrator", { memberId, orchestrator })),
+	teamSetRole: (memberId: string, role: string) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_role", { memberId, role })),
+	teamSetTask: (memberId: string, task: string, acceptance: string) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_task", { memberId, task, acceptance })),
+	teamDismissMember: (memberId: string) => typedError<null, IpcError>(__TAURI_INVOKE("team_dismiss_member", { memberId })),
+	teamSetLinked: (a: string, b: string, linked: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_linked", { a, b, linked })),
 };
 
 /** Events */
@@ -378,6 +390,7 @@ export const events = {
 	chatGptAuthChanged: makeEvent<ChatGptAuthChanged>("chat-gpt-auth-changed"),
 	chatMessageAdded: makeEvent<ChatMessageAdded_Deserialize>("chat-message-added"),
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
+	teamChanged: makeEvent<TeamChanged>("team-changed"),
 	terminalCreated: makeEvent<TerminalCreated>("terminal-created"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
 	updateStatusChanged: makeEvent<UpdateStatusChanged>("update-status-changed"),
@@ -1010,7 +1023,13 @@ export type IpcError = {
 	message: string,
 };
 
-export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "orchestration" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "update" | "invalidBot" | "internal";
+export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "orchestration" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "update" | "invalidBot" | 
+/**  The team has no run or member with that id. */
+"teamNotFound" | 
+/**  A team value is malformed: an empty goal, a role or a text that is too long. */
+"teamInvalid" | 
+/**  A team rule refuses the change, e.g. a cycle or two bots in a line. */
+"teamRefused" | "internal";
 
 /**  Whether a Jev key is saved. The key itself never leaves the backend. */
 export type JevStatus = {
@@ -1099,6 +1118,11 @@ export type NewChannel = {
 	name: string,
 	members: string[],
 };
+
+/**  A member to add. An agent may start under an orchestrator; a bot is always an orchestrator under no one. */
+export type NewTeamMember = { kind: "agent"; role: string; harness: HarnessId; parentId: string | null; orchestrator: boolean; task: string; acceptance: string } | { kind: "bot"; botId: string; 
+/**  The bot's name in the run. */
+role: string };
 
 /**  When Lynx sends a system notification, while the window is not in front. */
 export type NotificationsConfig = {
@@ -1297,6 +1321,49 @@ export type RunningCommand = {
 	startedAt: number,
 	/**  The last lines it printed. */
 	output: string,
+};
+
+/**  The team changed: a run, a member or a line between members. The screen reads the snapshot again. */
+export type TeamChanged = Record<string, never>;
+
+export type TeamMember = {
+	id: string,
+	runId: string,
+	kind: TeamMemberKind,
+	role: string,
+	/**  The agent's harness. Only agents have one. */
+	harness: HarnessId | null,
+	/**  The Lynx bot. Only bots have one. */
+	botId: string | null,
+	/**  The orchestrator this member answers to. None means it belongs to none. */
+	parentId: string | null,
+	/**  Whether it may have members under it. A bot always is. */
+	orchestrator: boolean,
+	/**  Only a member with an orchestrator has a task and a "done when" line; otherwise both are empty. */
+	task: string,
+	acceptance: string,
+};
+
+/**  A CLI agent in a worktree, or a Lynx bot. A bot only orchestrates. */
+export type TeamMemberKind = "agent" | "bot";
+
+/**  A permission for two members to talk. Stored once, with the lower id first. */
+export type TeamPair = {
+	a: string,
+	b: string,
+};
+
+export type TeamRun = {
+	id: string,
+	/**  The run's goal. It is not a task of any member. */
+	title: string,
+};
+
+/**  Everything the team screen shows, in the order it was made. */
+export type TeamSnapshot = {
+	runs: TeamRun[],
+	members: TeamMember[],
+	pairs: TeamPair[],
 };
 
 export type TerminalConfig = {

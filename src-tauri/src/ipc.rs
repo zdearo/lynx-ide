@@ -20,6 +20,8 @@ use crate::config::config_events::ConfigChanged;
 use crate::files::files_commands as files;
 use crate::links;
 use crate::pull_request::pull_request_commands as pull_request;
+use crate::team::team_commands as team;
+use crate::team::team_events::TeamChanged;
 use crate::terminal::terminal_commands as terminal;
 use crate::terminal::terminal_events::{AgentStatusChanged, TerminalCreated, TerminalExit};
 use crate::updates::update_commands as updates;
@@ -186,6 +188,16 @@ pub fn builder() -> Builder<tauri::Wry> {
             updates::check_for_updates,
             updates::install_update,
             updates::restart_to_update,
+            team::team_snapshot,
+            team::team_create_run,
+            team::team_delete_run,
+            team::team_add_member,
+            team::team_set_parent,
+            team::team_set_orchestrator,
+            team::team_set_role,
+            team::team_set_task,
+            team::team_dismiss_member,
+            team::team_set_linked,
         ])
         .events(collect_events![
             TerminalCreated,
@@ -205,6 +217,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             BotReplyDelta,
             ChannelStatus,
             ChatMessageAdded,
+            TeamChanged,
         ])
 }
 

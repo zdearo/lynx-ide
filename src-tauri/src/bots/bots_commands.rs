@@ -10,6 +10,8 @@ use tauri_specta::Event;
 use crate::error::{AppError, IpcError};
 use crate::orchestration::service::{Orchestration, WorkerRow};
 use crate::process::blocking_task::run_blocking;
+use crate::team::team_events::TeamChanged;
+use crate::team::team_service::TeamService;
 
 use super::bot_access::{AccessState, Grant, RegisteredRepos, RequestKind};
 use super::bot_chat::{BotChat, BotReply};
@@ -340,19 +342,42 @@ pub async fn channels_update_members(
 #[tauri::command]
 #[specta::specta]
 pub async fn bots_delete(
+    app: AppHandle,
     chat: State<'_, Arc<BotChat>>,
     processes: State<'_, Arc<BotProcesses>>,
+    team: State<'_, Arc<TeamService>>,
     id: String,
 ) -> Result<(), IpcError> {
     let chat = Arc::clone(chat.inner());
     let processes = Arc::clone(processes.inner());
-    run_blocking(move || {
-        chat.delete(&id)?;
-        // What the bot left running goes with it.
-        processes.stop_all(&id);
-        Ok::<_, AppError>(())
-    })
-    .await
+    let team = Arc::clone(team.inner());
+    let team_changed =
+        run_blocking(move || Ok::<_, AppError>(delete_bot(&chat, &processes, &team, &id)?)).await?;
+    if team_changed {
+        let _ = TeamChanged {}.emit(&app);
+    }
+    Ok(())
+}
+
+/// The folder goes first, so a bot that is answering is refused before the team is touched. Once the folder is
+/// gone the bot is gone, so a team that fails to drop it is logged and the delete still succeeds. Returns
+/// whether the team lost a member.
+fn delete_bot(
+    chat: &BotChat,
+    processes: &BotProcesses,
+    team: &TeamService,
+    id: &str,
+) -> Result<bool, BotError> {
+    chat.delete(id)?;
+    // What the bot left running goes with it.
+    processes.stop_all(id);
+    match team.remove_bot(id) {
+        Ok(removed) => Ok(removed > 0),
+        Err(error) => {
+            log::error!("could not remove bot {id} from the team: {error}");
+            Ok(false)
+        }
+    }
 }
 
 /// How a bot's own tools show a message they saved: as a chat event, so the chat shows it at once.
@@ -770,4 +795,104 @@ pub async fn bots_chatgpt_sign_out(
 ) -> Result<ChatGptStatus, IpcError> {
     let login = Arc::clone(login.inner());
     run_blocking(move || Ok::<_, AppError>(login.sign_out())).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bots::bot_processes::CommandHost;
+    use crate::bots::claude_cli::ClaudeCli;
+    use crate::persistence::AppDatabase;
+    use crate::team::team_error::TeamError;
+    use crate::team::team_model::NewTeamMember;
+    use tempfile::TempDir;
+
+    /// Bots here run no commands, so no terminal is ever asked for one.
+    struct NoTerminals;
+
+    impl CommandHost for NoTerminals {
+        fn start(&self, _cwd: &Path, _command: &str) -> Result<String, String> {
+            Err("no terminals in tests".to_owned())
+        }
+        fn running(&self, _session: &str) -> bool {
+            false
+        }
+        fn output(&self, _session: &str) -> String {
+            String::new()
+        }
+        fn stop(&self, _session: &str) {}
+    }
+
+    /// The team as the app builds it: a bot joins only while its folder is under `bots`.
+    fn team_over(database: &Arc<AppDatabase>, bots: &Path) -> TeamService {
+        let bots = bots.to_path_buf();
+        TeamService::new(
+            Arc::clone(database),
+            Box::new(move |bot_id: &str| bot_folder::folder_of(&bots, bot_id).is_ok()),
+        )
+    }
+
+    /// The bot's parts over one database file in `dir`, where the bot folder `docs` exists.
+    fn parts(dir: &TempDir) -> (BotChat, BotProcesses, Arc<AppDatabase>) {
+        let bots = dir.path().join("bots");
+        bot_folder::BotFolder::open(&bots, "docs").expect("the folder opens");
+        let claude = Arc::new(ClaudeCli::new(bots.clone(), dir.path().to_path_buf()));
+        let chat = BotChat::new(bots.clone(), claude);
+        let processes = BotProcesses::new(Arc::new(NoTerminals), bots);
+        let database = Arc::new(AppDatabase::open(&dir.path().join("app.db")).expect("open"));
+        (chat, processes, database)
+    }
+
+    #[test]
+    fn deleting_a_bot_removes_its_folder_and_its_place_in_the_team() {
+        let dir = TempDir::new().expect("a temporary folder");
+        let (chat, processes, database) = parts(&dir);
+        let team = team_over(&database, &dir.path().join("bots"));
+        team.create_run("Docs", Some("docs")).expect("create");
+
+        assert!(delete_bot(&chat, &processes, &team, "docs").expect("delete"));
+
+        assert!(!dir.path().join("bots").join("docs").exists());
+        let snapshot = team.snapshot().expect("snapshot");
+        assert_eq!(snapshot.runs.len(), 1, "the run stays");
+        assert!(snapshot.members.is_empty());
+    }
+
+    #[test]
+    fn a_deleted_bot_cannot_join_a_team_again() {
+        let dir = TempDir::new().expect("a temporary folder");
+        let (chat, processes, database) = parts(&dir);
+        let team = team_over(&database, &dir.path().join("bots"));
+        let run = team.create_run("Docs", None).expect("create");
+        delete_bot(&chat, &processes, &team, "docs").expect("delete");
+
+        let joined = team.add_member(
+            &run.id,
+            NewTeamMember::Bot {
+                bot_id: "docs".to_owned(),
+                role: "Docs".to_owned(),
+            },
+        );
+
+        assert!(matches!(joined, Err(TeamError::UnknownBot)));
+        // Only the Claude lead the run started with is left.
+        assert_eq!(team.snapshot().expect("snapshot").members.len(), 1);
+    }
+
+    #[test]
+    fn a_team_that_cannot_drop_the_bot_does_not_undo_its_deletion() {
+        let dir = TempDir::new().expect("a temporary folder");
+        let (chat, processes, database) = parts(&dir);
+        let team = team_over(&database, &dir.path().join("bots"));
+        team.create_run("Docs", Some("docs")).expect("create");
+        // The team's table is gone, so its change fails.
+        database
+            .lock()
+            .execute_batch("DROP TABLE team_members")
+            .expect("drop");
+
+        assert!(!delete_bot(&chat, &processes, &team, "docs").expect("delete"));
+
+        assert!(!dir.path().join("bots").join("docs").exists());
+    }
 }

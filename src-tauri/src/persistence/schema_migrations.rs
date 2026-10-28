@@ -99,6 +99,35 @@ const MIGRATIONS: &[&str] = &[
     // Runs keep no approval state or budget: the user's orchestration settings decide instead.
     "ALTER TABLE orchestration_runs DROP COLUMN state;
      ALTER TABLE orchestration_runs DROP COLUMN budget;",
+    // The team: runs with their members, and the lines of conversation between members. Who may
+    // orchestrate whom is checked by the team rules; these checks keep a row from being half-formed.
+    "CREATE TABLE team_runs (
+         id    TEXT PRIMARY KEY,
+         title TEXT NOT NULL
+     );
+     CREATE TABLE team_members (
+         id           TEXT PRIMARY KEY,
+         run_id       TEXT NOT NULL REFERENCES team_runs (id) ON DELETE CASCADE,
+         kind         TEXT NOT NULL CHECK (kind IN ('agent', 'bot')),
+         role         TEXT NOT NULL,
+         harness      TEXT,
+         bot_id       TEXT,
+         parent_id    TEXT REFERENCES team_members (id) ON DELETE SET NULL,
+         orchestrator INTEGER NOT NULL DEFAULT 0,
+         task         TEXT NOT NULL DEFAULT '',
+         acceptance   TEXT NOT NULL DEFAULT '',
+         CHECK (
+             (kind = 'agent' AND harness IS NOT NULL AND bot_id IS NULL)
+             OR (kind = 'bot' AND harness IS NULL AND bot_id IS NOT NULL)
+         ),
+         CHECK (parent_id IS NULL OR parent_id <> id)
+     );
+     CREATE TABLE team_pairs (
+         a TEXT NOT NULL REFERENCES team_members (id) ON DELETE CASCADE,
+         b TEXT NOT NULL REFERENCES team_members (id) ON DELETE CASCADE,
+         PRIMARY KEY (a, b),
+         CHECK (a < b)
+     );",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -213,9 +242,13 @@ mod tests {
 
     #[test]
     fn a_run_stored_with_an_approval_keeps_its_row_without_the_columns_it_lost() {
-        // Before the last migration, each run kept an approval state and a budget; the last one drops both.
+        // Before the migration that drops them, each run kept an approval state and a budget.
+        let drop_columns = MIGRATIONS
+            .iter()
+            .position(|sql| sql.contains("DROP COLUMN state"))
+            .expect("a migration drops the columns");
         let mut connection = Connection::open_in_memory().expect("open");
-        for (index, sql) in MIGRATIONS.iter().enumerate().take(MIGRATIONS.len() - 1) {
+        for (index, sql) in MIGRATIONS.iter().enumerate().take(drop_columns) {
             apply(&mut connection, index as u32 + 1, sql).expect("apply");
         }
         connection

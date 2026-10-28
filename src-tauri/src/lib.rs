@@ -15,6 +15,7 @@ mod persistence;
 mod private_file;
 mod process;
 mod pull_request;
+mod team;
 mod terminal;
 mod updates;
 mod usage;
@@ -227,6 +228,16 @@ pub fn run() {
                 )),
             ));
             app.manage(Arc::clone(&orchestration));
+            // The team has its own connection to the same file, as orchestration does.
+            // A bot joins a team only while its folder is under the bots folder.
+            let team_database = Arc::new(AppDatabase::open(&database_file)?);
+            let team_bots = bots_dir.clone();
+            app.manage(Arc::new(team::team_service::TeamService::new(
+                team_database,
+                Box::new(move |bot_id: &str| {
+                    bots::bot_folder::folder_of(&team_bots, bot_id).is_ok()
+                }),
+            )));
             let announce = bots::bots_commands::announce_message(app.handle().clone());
             let bot_chat = Arc::clone(&*app.state::<Arc<bots::bot_chat::BotChat>>());
             bot_chat.attach_announce(Arc::clone(&announce));

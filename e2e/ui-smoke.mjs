@@ -4840,7 +4840,7 @@ await session("?mock=full", 1400, 800, async (p) => {
 // Bots: with no bot the Bots view says so and offers the wizard. The wizard makes a bot in steps, and
 // the new bot is picked, so the main area becomes its chat: a reply comes back after the bot's status
 // says it is thinking. The side panel then shows the bot's own tabs, not the worktree's.
-await session("?mock=full", 1400, 800, async (p) => {
+await session("?mock=empty", 1400, 800, async (p) => {
   await p.getByRole("button", { name: "Bots", exact: true }).click();
   await p.waitForTimeout(400);
   check(
@@ -5610,8 +5610,51 @@ await session("?mock=full", 1400, 800, async (p) => {
   );
 });
 
-// The team is a prototype of a coordinator's run, so only the mock offers it. A card on the map,
-// a panel over the map for the picked member, and a terminal dialog over the central area.
+// The team is a prototype of a coordinator's run, so only the mock offers it. The org chart draws
+// the run, a member's panel opens over it, and a member's terminal dialog covers the central area.
+const teamEdges = (p) => p.locator(".react-flow__edge").count();
+const teamNodes = (p) => p.locator(".react-flow__node").count();
+// The transform of a card on the map, in flow pixels.
+const cardAt = (p, id) =>
+  p.evaluate((id) => {
+    const node = document.querySelector(`.react-flow__node[data-id="${id}"]`);
+    const m = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(
+      node?.style.transform ?? "",
+    );
+    return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
+  }, id);
+// How much the map is zoomed: a drag of one row on screen is ROW * zoom pixels.
+const mapZoom = (p) =>
+  p.evaluate(() => {
+    const viewport = document.querySelector(".react-flow__viewport");
+    return new DOMMatrix(getComputedStyle(viewport).transform).a;
+  });
+// Selects a pair line by its hit path (the tree's lines are not selectable).
+const clickEdge = (p, id) =>
+  p.evaluate((id) => {
+    const path = document.querySelector(
+      `.react-flow__edge[data-id="${id}"] .react-flow__edge-interaction`,
+    );
+    path?.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+      }),
+    );
+  }, id);
+// Opens a submenu (Radix opens it on click, or on the arrow key from its trigger).
+const openSubmenu = async (p, name) => {
+  const trigger = p.getByRole("menuitem", { name, exact: true });
+  await trigger.click();
+  await settle(p, 300);
+  if ((await p.getByRole("menuitemcheckbox").count()) === 0) {
+    await trigger.focus();
+    await p.keyboard.press("ArrowRight");
+    await settle(p, 300);
+  }
+};
+
 await session("?mock=full", 1400, 860, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await settle(p, 300);
@@ -5625,6 +5668,8 @@ await session("?mock=full", 1400, 860, async (p) => {
         .count()) === 1,
   );
   await p.getByRole("button", { name: "Team", exact: true }).click();
+  // The team view loads on demand: wait for the map, not a fixed time.
+  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
   await settle(p, 600);
   check(
     "Team puts the team bar in place of the terminal tabs",
@@ -5632,37 +5677,18 @@ await session("?mock=full", 1400, 860, async (p) => {
       (await p.getByText("Auth refactor", { exact: true }).count()) === 1,
   );
   check(
-    "the org chart draws the five members, joined by five lines",
-    (await p.locator(".react-flow__node").count()) === 5 &&
-      (await p.locator(".react-flow__edge").count()) === 5,
-    `${await p.locator(".react-flow__node").count()} nodes, ${await p.locator(".react-flow__edge").count()} edges`,
+    "the org chart draws the five members, joined by four lines (three tree lines and the Builder-Reviewer pair)",
+    (await teamNodes(p)) === 5 && (await teamEdges(p)) === 4,
+    `${await teamNodes(p)} nodes, ${await teamEdges(p)} edges`,
   );
   check(
-    "the pair is labelled",
-    (await p.getByText("asks for review", { exact: true }).count()) === 1,
-  );
-  check(
-    "the member that needs the user opens in a panel, and only the panel has the reply",
+    "the member that needs the user opens in a panel, which shows the question and no Reply",
     (await p
       .getByRole("dialog", { name: "Researcher · OpenCode", exact: true })
       .count()) === 1 &&
+      (await p.getByText("which OAuth lib?", { exact: true }).count()) === 1 &&
       (await p.getByRole("button", { name: "Reply", exact: true }).count()) ===
-        1,
-  );
-
-  await p.getByRole("button", { name: "Reply", exact: true }).click();
-  await p
-    .getByRole("textbox", { name: "Reply to Researcher", exact: true })
-    .fill("passport-oauth2");
-  await p.getByRole("button", { name: "Send", exact: true }).click();
-  await settle(p, 300);
-  check(
-    "a reply sends the member back to work, and the focus stays in the panel",
-    (await p.getByText("3 working", { exact: true }).count()) === 1 &&
-      (await p.getByRole("button", { name: "Reply", exact: true }).count()) ===
-        0 &&
-      (await p.evaluate(() => document.activeElement?.getAttribute("role"))) ===
-        "dialog",
+        0,
   );
 
   await p.keyboard.press("Escape");
@@ -5744,7 +5770,7 @@ await session("?mock=full", 1400, 860, async (p) => {
     .click({ button: "right" });
   await settle(p, 200);
   check(
-    "right-click on a card opens its actions",
+    "right-click on a card opens its actions, with Connect to… as a submenu",
     (await p
       .getByRole("menuitem", { name: "Open terminal", exact: true })
       .count()) === 1 &&
@@ -5836,20 +5862,199 @@ await session("?mock=full", 1400, 860, async (p) => {
   await p.keyboard.press("Escape");
   await settle(p, 200);
 
-  await p.getByRole("button", { name: "Show as list", exact: true }).click();
+  // Connect to…: linking two members draws a new dashed line, and the menu shows it as checked.
+  await p
+    .locator('.react-flow__node[data-id="researcher"]')
+    .click({ button: "right" });
+  await settle(p, 200);
+  await openSubmenu(p, "Connect to…");
+  await p
+    .getByRole("menuitemcheckbox", { name: "Tester · OMP", exact: true })
+    .click();
   await settle(p, 300);
   check(
-    "the list shows the same run as a tree, with the picked member's panel still over it",
-    (await p.getByRole("treeitem").count()) === 5 &&
-      (await p
-        .getByRole("dialog", { name: "Tester · OMP", exact: true })
-        .count()) === 1,
+    "Connect to… draws a new pair line between the two members",
+    (await teamEdges(p)) === 5,
+    `${await teamEdges(p)} edges`,
   );
-  await p.getByRole("button", { name: "Show as map", exact: true }).click();
+  await p
+    .locator('.react-flow__node[data-id="researcher"]')
+    .click({ button: "right" });
+  await settle(p, 200);
+  await openSubmenu(p, "Connect to…");
+  check(
+    "the submenu marks the linked member as checked",
+    (await p
+      .getByRole("menuitemcheckbox", { name: "Tester · OMP", exact: true })
+      .getAttribute("aria-checked")) === "true",
+  );
+  await p.keyboard.press("Escape");
+  await settle(p, 200);
+
+  // The × on the picked member's panel removes the line again.
+  await p.locator('.react-flow__node[data-id="researcher"]').click();
+  await settle(p, 200);
+  const researcherPanel = p.getByRole("dialog", {
+    name: "Researcher · OpenCode",
+    exact: true,
+  });
+  await researcherPanel
+    .getByRole("button", { name: "Disconnect from Tester", exact: true })
+    .click();
   await settle(p, 300);
   check(
-    "the map comes back from the list",
-    (await p.locator(".react-flow").count()) === 1,
+    "the × on the panel removes the pair, and the panel stays open",
+    (await teamEdges(p)) === 4 && (await researcherPanel.count()) === 1,
+  );
+
+  // Expanding Builder shows its tester; Alt+Up/Down then moves the card, and its tester with it.
+  await p.getByRole("button", { name: "Expand Builder", exact: true }).click();
+  await settle(p, 300);
+  check(
+    "expanding Builder shows its tester under it",
+    (await teamNodes(p)) === 6,
+  );
+  const before = {
+    builder: await cardAt(p, "builder"),
+    test: await cardAt(p, "login-tests"),
+  };
+  await p.locator('[data-team-id="builder"]').focus();
+  await p.keyboard.press("Alt+ArrowDown");
+  await settle(p, 300);
+  const down = {
+    builder: await cardAt(p, "builder"),
+    test: await cardAt(p, "login-tests"),
+  };
+  const step = down.builder.y - before.builder.y;
+  check(
+    "Alt+Down moves a card one row down, and the card under it moves too",
+    step > 0 &&
+      Math.abs(down.test.y - before.test.y - step) < 1 &&
+      // Its own member stays right under it, wherever the row packing puts the pair.
+      Math.abs(down.test.x - down.builder.x) < 1,
+    JSON.stringify({ before, down }),
+  );
+  await p.keyboard.press("Alt+ArrowUp");
+  await settle(p, 300);
+  const back = await cardAt(p, "builder");
+  check(
+    "Alt+Up moves the card back to its row",
+    Math.abs(back.y - before.builder.y) < 1,
+    JSON.stringify({ back, before: before.builder }),
+  );
+
+  // A mouse drag: only the height follows the pointer, and the card lands on the row it is over.
+  const zoom = await mapZoom(p);
+  const reviewerBefore = await cardAt(p, "researcher");
+  const card = await p.locator('[data-team-id="researcher"]').boundingBox();
+  const cx = card.x + card.width / 2;
+  const cy = card.y + card.height / 2;
+  await p.mouse.move(cx, cy);
+  await p.mouse.down();
+  await p.mouse.move(cx + 10, cy + 40 * zoom, { steps: 4 });
+  await p.mouse.move(cx, cy + 176 * zoom, { steps: 10 });
+  await p.mouse.up();
+  await settle(p, 300);
+  const reviewerAfter = await cardAt(p, "researcher");
+  check(
+    "dragging a card down snaps it one row lower",
+    Math.abs(reviewerAfter.y - reviewerBefore.y - 176) < 2,
+    JSON.stringify({ reviewerBefore, reviewerAfter, zoom }),
+  );
+  // The cards it left on the row sit side by side again: 224 px wide and 32 apart, no gap where it was.
+  const stayed = [];
+  for (const id of ["builder", "reviewer", "tester"]) {
+    stayed.push(await cardAt(p, id));
+  }
+  stayed.sort((a, b) => a.x - b.x);
+  check(
+    "the cards it left behind close up around the gap",
+    stayed.every(
+      (card, i) => i === 0 || Math.abs(card.x - stayed[i - 1].x - 256) < 2,
+    ),
+    JSON.stringify(stayed),
+  );
+
+  // A handle drag draws a pair too: any handle can join any handle.
+  const builderHandle = await p
+    .locator('[data-nodeid="builder"][data-handleid="right"]')
+    .boundingBox();
+  const testerHandle = await p
+    .locator('[data-nodeid="tester"][data-handleid="left"]')
+    .boundingBox();
+  await p.locator('[data-team-id="builder"]').hover();
+  await p.mouse.move(
+    builderHandle.x + builderHandle.width / 2,
+    builderHandle.y + builderHandle.height / 2,
+  );
+  await p.mouse.down();
+  await p.mouse.move(
+    testerHandle.x + testerHandle.width / 2,
+    testerHandle.y + testerHandle.height / 2,
+    { steps: 10 },
+  );
+  await p.mouse.up();
+  await settle(p, 300);
+  check(
+    "dragging from a side handle to another card draws a pair",
+    (await teamEdges(p)) === 6,
+    `${await teamEdges(p)} edges`,
+  );
+
+  // The Delete key removes a picked line.
+  await clickEdge(p, "builder|tester");
+  await settle(p, 200);
+  await p.keyboard.press("Delete");
+  await settle(p, 300);
+  check(
+    "Delete removes the picked pair line",
+    (await teamEdges(p)) === 5,
+    `${await teamEdges(p)} edges`,
+  );
+  // A line of the tree can be picked too: taking it away leaves the member answering to no one, on the top row.
+  await clickEdge(p, "lead-builder");
+  await settle(p, 200);
+  await p.keyboard.press("Delete");
+  await settle(p, 300);
+  const leadCard = await cardAt(p, "lead");
+  const loose = await cardAt(p, "builder");
+  check(
+    "Delete removes a line of the tree and the member goes to the top row",
+    (await teamEdges(p)) === 4 && Math.abs(loose.y - leadCard.y) < 2,
+    JSON.stringify({ edges: await teamEdges(p), leadCard, loose }),
+  );
+  // From the orchestrator's bottom handle to the member's top handle, it answers to it again.
+  const drag = async (fromId, fromHandle, toId, toHandle) => {
+    await p.locator(`[data-team-id="${fromId}"]`).hover();
+    const from = await p
+      .locator(`[data-nodeid="${fromId}"][data-handleid="${fromHandle}"]`)
+      .boundingBox();
+    const to = await p
+      .locator(`[data-nodeid="${toId}"][data-handleid="${toHandle}"]`)
+      .boundingBox();
+    await p.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await p.mouse.down();
+    await p.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+      steps: 10,
+    });
+    await p.mouse.up();
+    await settle(p, 400);
+  };
+  await drag("lead", "bottom", "builder", "top");
+  const reattached = await cardAt(p, "builder");
+  check(
+    "dragging from a bottom handle to a top handle puts the member under the orchestrator",
+    (await teamEdges(p)) === 5 && reattached.y > leadCard.y + 100,
+    JSON.stringify({ edges: await teamEdges(p), reattached }),
+  );
+  check(
+    "only an orchestrator has a bottom handle",
+    (await p
+      .locator('[data-nodeid="tester"][data-handleid="bottom"]')
+      .count()) === 0 &&
+      (await p
+        .locator('[data-nodeid="lead"][data-handleid="bottom"]')
+        .count()) === 1,
   );
 
   await p.locator('.react-flow__node[data-id="builder"]').click();
@@ -5913,30 +6118,21 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
 });
 
-// Below 1100 px the team is the tree, and the panel still opens over it, so a narrow window can reply.
+// A narrow window keeps the map: the picked member's panel still opens over it.
 await session("?mock=full", 1000, 860, async (p) => {
-  await p.keyboard.press("Control+Shift+B");
-  await settle(p, 300);
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await settle(p, 300);
-  await p.keyboard.press("Control+Shift+B");
-  await settle(p, 300);
   await p.getByRole("button", { name: "Team", exact: true }).click();
-  await settle(p, 300);
-  await p.keyboard.press("Escape");
+  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
   await settle(p, 400);
   check(
-    "a narrow window shows the team as the tree, with the reply in the panel",
-    (await p.getByRole("treeitem").count()) === 5 &&
-      (await p.locator(".react-flow").count()) === 0 &&
+    "a narrow window shows the team as the map, with the question in the panel and no Reply",
+    (await p.locator(".react-flow__node").count()) === 5 &&
+      (await p
+        .getByRole("dialog", { name: "Researcher · OpenCode", exact: true })
+        .count()) === 1 &&
       (await p.getByRole("button", { name: "Reply", exact: true }).count()) ===
-        1,
-  );
-  check(
-    "the map toggle is disabled there",
-    await p
-      .getByRole("button", { name: "Show as map", exact: true })
-      .isDisabled(),
+        0,
   );
   check(
     "no horizontal scroll with the team in a narrow window",

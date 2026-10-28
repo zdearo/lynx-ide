@@ -1,6 +1,6 @@
-import { toast } from "sonner";
-
+import { useBotsStore } from "@/bots/bots-store";
 import {
+  ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
@@ -9,6 +9,7 @@ import {
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
 import {
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -17,41 +18,106 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { TEAM_ROLES, type TeamMember } from "@/team/team-fixtures";
-import { useTeamStore } from "@/team/team-store";
+import { orchestratorOptionsOf } from "@/team/team-hierarchy";
+import { linkOptionsOf } from "@/team/team-pairs";
+import {
+  engineOf,
+  openMember,
+  useRunMembers,
+  useTeamStore,
+} from "@/team/team-store";
 import { copy } from "@/ui-copy";
 
 /** The actions of one member on a tree row or in the sheet. Give it to a DropdownMenu. */
 export function TeamMemberMenu({ member }: { member: TeamMember }) {
-  const isLead = member.parentId === null;
+  const members = useRunMembers();
+  const pairs = useTeamStore((state) => state.pairs);
+  const bots = useBotsStore((state) => state.bots);
+  const hasMembers = members.some((other) => other.parentId === member.id);
+  // A bot has no terminal and no role to take, and it is always an orchestrator under no one.
+  const isBot = member.kind === "bot";
 
   return (
     <DropdownMenuContent align="end" className="min-w-52">
-      <DropdownMenuItem
-        onSelect={() => useTeamStore.getState().openTerminal(member.id)}
-      >
-        {copy.team.openTerminal}
+      <DropdownMenuItem onSelect={() => openMember(member.id)}>
+        {isBot ? copy.team.openChat : copy.team.openTerminal}
       </DropdownMenuItem>
+      {!isBot && (
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>{copy.team.reassign}</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            {TEAM_ROLES.filter((role) => role !== member.role).map((role) => (
+              <DropdownMenuItem
+                key={role}
+                onSelect={() =>
+                  useTeamStore.getState().setRole(member.id, role)
+                }
+              >
+                {role}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      )}
+      <DropdownMenuCheckboxItem
+        checked={member.orchestrator}
+        disabled={isBot || hasMembers}
+        onCheckedChange={(next) =>
+          useTeamStore.getState().setOrchestrator(member.id, next)
+        }
+      >
+        {copy.team.orchestrator}
+      </DropdownMenuCheckboxItem>
       <DropdownMenuSub>
-        <DropdownMenuSubTrigger disabled={isLead}>
-          {copy.team.reassign}
+        <DropdownMenuSubTrigger disabled={isBot}>
+          {copy.team.answersTo}
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent>
-          {TEAM_ROLES.filter((role) => role !== member.role).map((role) => (
-            <DropdownMenuItem
-              key={role}
-              onSelect={() => useTeamStore.getState().setRole(member.id, role)}
-            >
-              {role}
-            </DropdownMenuItem>
-          ))}
+          <DropdownMenuCheckboxItem
+            checked={member.parentId === null}
+            onCheckedChange={() =>
+              useTeamStore.getState().setParent(member.id, null)
+            }
+          >
+            {copy.team.answersToNoOne}
+          </DropdownMenuCheckboxItem>
+          {orchestratorOptionsOf(member.id, members).map(
+            ({ member: other, current, enabled }) => (
+              <DropdownMenuCheckboxItem
+                key={other.id}
+                checked={current}
+                disabled={!enabled}
+                onCheckedChange={() =>
+                  useTeamStore.getState().setParent(member.id, other.id)
+                }
+              >
+                {copy.team.sheetLabel(other.role, engineOf(other, bots))}
+              </DropdownMenuCheckboxItem>
+            ),
+          )}
         </DropdownMenuSubContent>
       </DropdownMenuSub>
-      <DropdownMenuItem onSelect={() => toast.info(copy.team.connectNotWired)}>
-        {copy.team.connect}
-      </DropdownMenuItem>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>{copy.team.connect}</DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          {linkOptionsOf(member.id, members, pairs).map(
+            ({ member: other, linked, enabled }) => (
+              <DropdownMenuCheckboxItem
+                key={other.id}
+                checked={linked}
+                disabled={!enabled}
+                onCheckedChange={(next) =>
+                  useTeamStore.getState().setLinked(member.id, other.id, next)
+                }
+              >
+                {copy.team.sheetLabel(other.role, engineOf(other, bots))}
+              </DropdownMenuCheckboxItem>
+            ),
+          )}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
       <DropdownMenuSeparator />
       <DropdownMenuItem
-        disabled={isLead}
         onSelect={() => useTeamStore.getState().dismiss(member.id)}
       >
         {copy.team.dismiss}
@@ -62,36 +128,93 @@ export function TeamMemberMenu({ member }: { member: TeamMember }) {
 
 /** The same actions on a map card's right-click menu. Give it to a ContextMenu. */
 export function TeamMemberContextMenu({ member }: { member: TeamMember }) {
-  const isLead = member.parentId === null;
+  const members = useRunMembers();
+  const pairs = useTeamStore((state) => state.pairs);
+  const bots = useBotsStore((state) => state.bots);
+  const hasMembers = members.some((other) => other.parentId === member.id);
+  const isBot = member.kind === "bot";
 
   return (
     <ContextMenuContent className="min-w-52">
-      <ContextMenuItem
-        onSelect={() => useTeamStore.getState().openTerminal(member.id)}
-      >
-        {copy.team.openTerminal}
+      <ContextMenuItem onSelect={() => openMember(member.id)}>
+        {isBot ? copy.team.openChat : copy.team.openTerminal}
       </ContextMenuItem>
+      {!isBot && (
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>{copy.team.reassign}</ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            {TEAM_ROLES.filter((role) => role !== member.role).map((role) => (
+              <ContextMenuItem
+                key={role}
+                onSelect={() =>
+                  useTeamStore.getState().setRole(member.id, role)
+                }
+              >
+                {role}
+              </ContextMenuItem>
+            ))}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      )}
+      <ContextMenuCheckboxItem
+        checked={member.orchestrator}
+        disabled={isBot || hasMembers}
+        onCheckedChange={(next) =>
+          useTeamStore.getState().setOrchestrator(member.id, next)
+        }
+      >
+        {copy.team.orchestrator}
+      </ContextMenuCheckboxItem>
       <ContextMenuSub>
-        <ContextMenuSubTrigger disabled={isLead}>
-          {copy.team.reassign}
+        <ContextMenuSubTrigger disabled={isBot}>
+          {copy.team.answersTo}
         </ContextMenuSubTrigger>
         <ContextMenuSubContent>
-          {TEAM_ROLES.filter((role) => role !== member.role).map((role) => (
-            <ContextMenuItem
-              key={role}
-              onSelect={() => useTeamStore.getState().setRole(member.id, role)}
-            >
-              {role}
-            </ContextMenuItem>
-          ))}
+          <ContextMenuCheckboxItem
+            checked={member.parentId === null}
+            onCheckedChange={() =>
+              useTeamStore.getState().setParent(member.id, null)
+            }
+          >
+            {copy.team.answersToNoOne}
+          </ContextMenuCheckboxItem>
+          {orchestratorOptionsOf(member.id, members).map(
+            ({ member: other, current, enabled }) => (
+              <ContextMenuCheckboxItem
+                key={other.id}
+                checked={current}
+                disabled={!enabled}
+                onCheckedChange={() =>
+                  useTeamStore.getState().setParent(member.id, other.id)
+                }
+              >
+                {copy.team.sheetLabel(other.role, engineOf(other, bots))}
+              </ContextMenuCheckboxItem>
+            ),
+          )}
         </ContextMenuSubContent>
       </ContextMenuSub>
-      <ContextMenuItem onSelect={() => toast.info(copy.team.connectNotWired)}>
-        {copy.team.connect}
-      </ContextMenuItem>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>{copy.team.connect}</ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          {linkOptionsOf(member.id, members, pairs).map(
+            ({ member: other, linked, enabled }) => (
+              <ContextMenuCheckboxItem
+                key={other.id}
+                checked={linked}
+                disabled={!enabled}
+                onCheckedChange={(next) =>
+                  useTeamStore.getState().setLinked(member.id, other.id, next)
+                }
+              >
+                {copy.team.sheetLabel(other.role, engineOf(other, bots))}
+              </ContextMenuCheckboxItem>
+            ),
+          )}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
       <ContextMenuSeparator />
       <ContextMenuItem
-        disabled={isLead}
         onSelect={() => useTeamStore.getState().dismiss(member.id)}
       >
         {copy.team.dismiss}

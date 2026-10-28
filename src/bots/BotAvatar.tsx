@@ -1,5 +1,11 @@
 import { cn } from "@/lib/utils";
 
+const SIZES = {
+  xs: "size-4 text-meta",
+  sm: "size-6 text-meta",
+  lg: "size-10 text-ui",
+} as const;
+
 /** A bot's face in the interface: its colour, with the first letter of its name on it. */
 export function BotAvatar({
   name,
@@ -8,7 +14,7 @@ export function BotAvatar({
 }: {
   name: string;
   color: string;
-  size?: "sm" | "lg";
+  size?: keyof typeof SIZES;
 }) {
   const initial = name.trim().charAt(0).toUpperCase() || "?";
   return (
@@ -16,7 +22,7 @@ export function BotAvatar({
       aria-hidden="true"
       className={cn(
         "inline-flex shrink-0 items-center justify-center rounded-md font-medium text-[var(--bot-ink)]",
-        size === "sm" ? "size-6 text-meta" : "size-10 text-ui",
+        SIZES[size],
       )}
       style={{ backgroundColor: `var(--bot-${color})` }}
     >

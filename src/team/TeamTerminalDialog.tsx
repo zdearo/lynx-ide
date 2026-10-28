@@ -1,3 +1,10 @@
+import { useEffect, type ReactNode } from "react";
+import { toast } from "sonner";
+
+import { BotAvatar } from "@/bots/BotAvatar";
+import { botThread } from "@/bots/bot-chat-store";
+import { useBotsStore } from "@/bots/bots-store";
+import { Conversation } from "@/bots/Conversation";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
@@ -7,22 +14,29 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { TeamMember } from "@/team/team-fixtures";
+import { errorMessage } from "@/lib/error-message";
+import type { TeamAgent, TeamBot, TeamMember } from "@/team/team-fixtures";
 import { focusMemberCard } from "@/team/team-focus";
-import { TeamStatusIcon } from "@/team/TeamTree";
-import { agentNameOf, useTeamStore } from "@/team/team-store";
+import { TeamStatusIcon } from "@/team/TeamStatus";
+import {
+  agentNameOf,
+  botOf,
+  engineOf,
+  useRunMembers,
+  useTeamStore,
+} from "@/team/team-store";
 import { copy } from "@/ui-copy";
 
 /**
- * A member's terminal, in a dialog over the central area. Members have no session in this prototype,
- * so the body shows the simulated output from the fixtures and says so.
+ * A member's terminal, or a bot's chat, in a dialog over the central area. Members have no session in this prototype,
+ * so a terminal shows the simulated output from the fixtures and says so.
  */
 export function TeamTerminalDialog({
   container,
 }: {
   container: HTMLElement | null;
 }) {
-  const members = useTeamStore((state) => state.members);
+  const members = useRunMembers();
   const terminalFor = useTeamStore((state) => state.terminalFor);
   const open = useTeamStore((state) => state.terminalOpen);
   const member = members.find((candidate) => candidate.id === terminalFor);
@@ -49,34 +63,61 @@ export function TeamTerminalDialog({
         }}
         className="absolute inset-[5%] flex h-auto w-auto max-w-none translate-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none"
       >
-        {member && <TerminalPane member={member} />}
+        {member?.kind === "bot" && <BotChatPane member={member} />}
+        {member?.kind === "agent" && <TerminalPane member={member} />}
       </DialogContent>
     </Dialog>
   );
 }
 
-function TerminalPane({ member }: { member: TeamMember }) {
+/** The title bar of both panes: the member's icon and title, its status, and the close button. */
+function PaneHeader({
+  member,
+  icon,
+  title,
+}: {
+  member: TeamMember;
+  icon: ReactNode;
+  title: string;
+}) {
+  return (
+    <header className="flex min-w-0 items-center gap-2 border-b px-3 py-2 pr-10">
+      {icon}
+      <DialogTitle className="min-w-0 truncate text-ui font-medium">
+        {title}
+      </DialogTitle>
+      <span className="ml-auto flex shrink-0 items-center gap-1.5 text-meta text-muted-foreground">
+        <TeamStatusIcon status={member.status} />
+        {copy.team.status[member.status]}
+      </span>
+      <TooltipIconButton
+        label={
+          member.kind === "bot" ? copy.team.closeChat : copy.team.closeTerminal
+        }
+        className="absolute top-2 right-2"
+        onClick={() => useTeamStore.getState().closeTerminal()}
+      >
+        <XmarkGlyph18 />
+      </TooltipIconButton>
+    </header>
+  );
+}
+
+function TerminalPane({ member }: { member: TeamAgent }) {
   const agent = agentNameOf(member.harness);
 
   return (
     <>
-      <header className="flex min-w-0 items-center gap-2 border-b px-3 py-2 pr-10">
-        <AgentBrandIcon harness={member.harness} className="size-4 shrink-0" />
-        <DialogTitle className="min-w-0 truncate text-ui font-medium">
-          {copy.team.sheetLabel(member.role, agent)}
-        </DialogTitle>
-        <span className="ml-auto flex shrink-0 items-center gap-1.5 text-meta text-muted-foreground">
-          <TeamStatusIcon status={member.status} />
-          {copy.team.status[member.status]}
-        </span>
-        <TooltipIconButton
-          label={copy.team.closeTerminal}
-          className="absolute top-2 right-2"
-          onClick={() => useTeamStore.getState().closeTerminal()}
-        >
-          <XmarkGlyph18 />
-        </TooltipIconButton>
-      </header>
+      <PaneHeader
+        member={member}
+        icon={
+          <AgentBrandIcon
+            harness={member.harness}
+            className="size-4 shrink-0"
+          />
+        }
+        title={copy.team.sheetLabel(member.role, agent)}
+      />
       <DialogDescription className="border-b px-3 py-1.5 text-meta">
         {copy.team.simulatedTerminal}
       </DialogDescription>
@@ -86,6 +127,60 @@ function TerminalPane({ member }: { member: TeamMember }) {
             {line}
           </p>
         ))}
+      </div>
+    </>
+  );
+}
+
+/**
+ * A bot's conversation, in the same conversation view the Bots view uses. It shows the bot's most recent thread,
+ * with no list of threads beside it. A bot with no thread gets its first one when its threads are read.
+ */
+function BotChatPane({ member }: { member: TeamBot }) {
+  const text = copy.bots.chat;
+  const bots = useBotsStore((state) => state.bots);
+  const bot = botOf(member, bots);
+  const loadThreads = useBotsStore((state) => state.loadThreads);
+  const thread = useBotsStore(
+    (state) => state.threadsByBot[member.botId]?.[0]?.id,
+  );
+
+  useEffect(() => {
+    loadThreads(member.botId).catch((error: unknown) =>
+      toast.error(copy.bots.threads.loadFailed, {
+        description: errorMessage(error),
+      }),
+    );
+  }, [member.botId, loadThreads]);
+
+  return (
+    <>
+      <PaneHeader
+        member={member}
+        icon={
+          <BotAvatar
+            name={member.role}
+            color={bot?.color ?? "graphite"}
+            size="xs"
+          />
+        }
+        title={copy.team.sheetLabel(member.role, engineOf(member, bots))}
+      />
+      <DialogDescription className="sr-only">
+        {text.log(bot?.name ?? member.role)}
+      </DialogDescription>
+      <div className="flex min-h-0 flex-1 flex-col bg-background">
+        {bot && thread && (
+          <Conversation
+            key={thread}
+            thread={botThread(member.botId, thread)}
+            label={text.log(bot.name)}
+            placeholder={text.placeholder(bot.name)}
+            empty={text.empty(bot.name)}
+            loadFailed={text.loadFailed}
+            botOf={() => bot}
+          />
+        )}
       </div>
     </>
   );

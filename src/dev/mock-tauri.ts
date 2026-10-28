@@ -24,12 +24,25 @@ import type {
   HarnessId,
   NewBot,
   NewChannel,
+  NewTeamMember,
   PlanUsage,
   Repo,
+  TeamMember as TeamMemberRecord,
+  TeamRun,
+  TeamSnapshot,
   TerminalInfo,
   UpdateStatus,
   WorktreeInfo,
 } from "@/bindings";
+import {
+  TEAM_DOCS_MEMBERS,
+  TEAM_MEMBERS,
+  TEAM_PAIRS,
+  TEAM_RUNS,
+  type TeamMember as MockTeamMember,
+} from "@/team/team-fixtures";
+import { canOrchestrate } from "@/team/team-hierarchy";
+import { isValidConnection, pairKey, type TeamPair } from "@/team/team-pairs";
 
 type Args = Record<string, unknown>;
 
@@ -519,8 +532,21 @@ export function installMockTauri(scenario: string): void {
   const fileContents = new Map<string, { content: string; hash: string }>();
   let writeCounter = 0;
   // The ChatGPT sign-in in miniature: the browser step is skipped, and the answer comes a moment later.
-  // The bots in miniature: the list starts empty, as a new install does, and makes are kept here.
-  let mockBots: BotSummary[] = [];
+  // The bots in miniature: the list starts empty, as a new install does, and makes are kept here. The full
+  // mock has one bot, the Team's Lead in its docs run.
+  let mockBots: BotSummary[] =
+    scenario === "full"
+      ? [
+          {
+            id: "lead",
+            name: "Lead",
+            color: "indigo",
+            provider: "claude",
+            model: "sonnet",
+            team: null,
+          },
+        ]
+      : [];
   let mockChannels: ChannelSummary[] = [];
   const mockChannelConversations = new Map<string, ChatMessage[]>();
   // The instructions and the conversation of each mock bot, by id, as the backend keeps them.
@@ -990,6 +1016,159 @@ export function installMockTauri(scenario: string): void {
     );
   }
 
+  // The team in miniature. Its rules are the screen's own (team-hierarchy, team-pairs), so the mock refuses what
+  // the backend refuses; the messages are the backend's for the common refusals.
+  let mockRuns: TeamRun[] = scenario === "full" ? [...TEAM_RUNS] : [];
+  let mockMembers: MockTeamMember[] =
+    scenario === "full"
+      ? structuredClone([...TEAM_MEMBERS, ...TEAM_DOCS_MEMBERS])
+      : [];
+  let mockPairs: TeamPair[] =
+    scenario === "full" ? TEAM_PAIRS.map(([from, to]) => ({ from, to })) : [];
+  const teamError = (
+    kind: "teamNotFound" | "teamInvalid" | "teamRefused",
+    message: string,
+  ) => ({ kind, message });
+  const ROLE_MESSAGE = "the role needs 1 to 40 characters";
+  const TEXT_MESSAGE =
+    "the task and the done-when line need up to 2000 characters";
+  const cleanText = (
+    value: unknown,
+    min: number,
+    max: number,
+    message: string,
+  ) => {
+    const text = String(value).trim();
+    if (text.length < min || text.length > max) {
+      throw teamError("teamInvalid", message);
+    }
+    return text;
+  };
+  const memberNamed = (id: string) => {
+    const member = mockMembers.find((candidate) => candidate.id === id);
+    if (!member) throw teamError("teamNotFound", `no member with id ${id}`);
+    return member;
+  };
+  const runNamed = (id: string) => {
+    if (!mockRuns.some((run) => run.id === id)) {
+      throw teamError("teamNotFound", `no run with id ${id}`);
+    }
+  };
+  // A member the mock makes starts with nothing live, as the screen's own defaults.
+  const freshMember = (id: string, runId: string, role: string) => ({
+    id,
+    runId,
+    role,
+    status: "idle" as const,
+    parentId: null as string | null,
+    orchestrator: false,
+    task: "",
+    acceptance: "",
+    activity: { text: "", at: 0 },
+    branch: null as string | null,
+    added: 0,
+    removed: 0,
+    waitingOn: null as string | null,
+    note: null as string | null,
+    question: null as string | null,
+    output: [] as string[],
+  });
+  const recordOf = (member: MockTeamMember): TeamMemberRecord => ({
+    id: member.id,
+    runId: member.runId,
+    kind: member.kind,
+    role: member.role,
+    harness: member.kind === "agent" ? member.harness : null,
+    botId: member.kind === "bot" ? member.botId : null,
+    parentId: member.parentId,
+    orchestrator: member.orchestrator,
+    task: member.task,
+    acceptance: member.acceptance,
+  });
+  const teamSnapshot = (): TeamSnapshot => ({
+    runs: structuredClone(mockRuns),
+    members: mockMembers.map(recordOf),
+    pairs: mockPairs.map(({ from, to }) => ({
+      a: from < to ? from : to,
+      b: from < to ? to : from,
+    })),
+  });
+  // Throws the refusal when `parentId` cannot orchestrate `child`, which must be in `members`.
+  const checkParent = (
+    members: MockTeamMember[],
+    child: MockTeamMember,
+    parentId: string,
+  ) => {
+    if (canOrchestrate(members, parentId, child.id)) return;
+    if (child.kind === "bot") {
+      throw teamError(
+        "teamRefused",
+        "a bot only orchestrates, so it is never under an orchestrator",
+      );
+    }
+    const parent = members.find((member) => member.id === parentId);
+    if (!parent)
+      throw teamError("teamNotFound", `no member with id ${parentId}`);
+    if (parent.id === child.id) {
+      throw teamError(
+        "teamRefused",
+        "a member cannot be its own orchestrator or pair with itself",
+      );
+    }
+    if (parent.runId !== child.runId) {
+      throw teamError(
+        "teamRefused",
+        "members of different runs cannot be linked",
+      );
+    }
+    if (!parent.orchestrator) {
+      throw teamError(
+        "teamRefused",
+        "only an orchestrator can have members under it",
+      );
+    }
+    throw teamError(
+      "teamRefused",
+      "an orchestrator cannot answer to one of its own members",
+    );
+  };
+  // Throws the refusal when two members may not talk.
+  const checkLink = (a: string, b: string) => {
+    if (isValidConnection({ source: a, target: b }, mockMembers, mockPairs)) {
+      return;
+    }
+    const first = memberNamed(a);
+    const second = memberNamed(b);
+    if (a === b) {
+      throw teamError(
+        "teamRefused",
+        "a member cannot be its own orchestrator or pair with itself",
+      );
+    }
+    if (first.runId !== second.runId) {
+      throw teamError(
+        "teamRefused",
+        "members of different runs cannot be linked",
+      );
+    }
+    if (
+      mockPairs.some((pair) => pairKey(pair.from, pair.to) === pairKey(a, b))
+    ) {
+      throw teamError("teamRefused", "these two members already talk");
+    }
+    if (first.parentId === b || second.parentId === a) {
+      throw teamError(
+        "teamRefused",
+        "an orchestrator and its member already talk through the tree",
+      );
+    }
+    throw teamError("teamRefused", "two bots do not talk to each other");
+  };
+  const teamChanged = () => {
+    void emit("team-changed", {});
+    return null;
+  };
+
   mockIPC(
     async (command, payload) => {
       const args = (payload ?? {}) as Args;
@@ -1432,6 +1611,205 @@ export function installMockTauri(scenario: string): void {
           return ["/bin/bash", "/bin/zsh", "/usr/bin/fish"];
         case "get_config":
           return structuredClone(configSnapshot);
+        case "team_snapshot":
+          return teamSnapshot();
+        case "team_create_run": {
+          const title = cleanText(
+            args.title,
+            1,
+            80,
+            "the run needs a goal of 1 to 80 characters",
+          );
+          const runId = crypto.randomUUID();
+          const botId = typeof args.botId === "string" ? args.botId : null;
+          const lead: MockTeamMember =
+            botId === null
+              ? {
+                  ...freshMember(crypto.randomUUID(), runId, "Lead"),
+                  kind: "agent",
+                  harness: "claude",
+                  orchestrator: true,
+                }
+              : {
+                  ...freshMember(crypto.randomUUID(), runId, "Lead"),
+                  kind: "bot",
+                  botId,
+                  orchestrator: true,
+                };
+          mockRuns = [...mockRuns, { id: runId, title }];
+          mockMembers = [...mockMembers, lead];
+          teamChanged();
+          return { id: runId, title };
+        }
+        case "team_delete_run": {
+          const runId = String(args.runId);
+          runNamed(runId);
+          const gone = new Set(
+            mockMembers
+              .filter((member) => member.runId === runId)
+              .map((member) => member.id),
+          );
+          mockRuns = mockRuns.filter((run) => run.id !== runId);
+          mockMembers = mockMembers.filter((member) => member.runId !== runId);
+          mockPairs = mockPairs.filter(
+            (pair) => !gone.has(pair.from) && !gone.has(pair.to),
+          );
+          return teamChanged();
+        }
+        case "team_add_member": {
+          const runId = String(args.runId);
+          runNamed(runId);
+          const input = args.member as NewTeamMember;
+          const id = crypto.randomUUID();
+          let added: MockTeamMember;
+          if (input.kind === "agent") {
+            const role = cleanText(input.role, 1, 40, ROLE_MESSAGE);
+            const candidate: MockTeamMember = {
+              ...freshMember(id, runId, role),
+              kind: "agent",
+              harness: input.harness,
+              orchestrator: input.orchestrator,
+            };
+            // A member with no orchestrator keeps no task.
+            let task = "";
+            let acceptance = "";
+            if (input.parentId !== null) {
+              checkParent(
+                [...mockMembers, candidate],
+                candidate,
+                input.parentId,
+              );
+              task = cleanText(input.task, 0, 2000, TEXT_MESSAGE);
+              acceptance = cleanText(input.acceptance, 0, 2000, TEXT_MESSAGE);
+            }
+            added = {
+              ...candidate,
+              parentId: input.parentId,
+              task,
+              acceptance,
+            };
+          } else {
+            if (!/^[a-z0-9-]+$/.test(input.botId)) {
+              throw teamError("teamInvalid", "that is not a bot id");
+            }
+            if (
+              mockMembers.some(
+                (member) =>
+                  member.runId === runId &&
+                  member.kind === "bot" &&
+                  member.botId === input.botId,
+              )
+            ) {
+              throw teamError("teamRefused", "that bot is already in this run");
+            }
+            added = {
+              ...freshMember(
+                id,
+                runId,
+                cleanText(input.role, 1, 40, ROLE_MESSAGE),
+              ),
+              kind: "bot",
+              botId: input.botId,
+              orchestrator: true,
+            };
+          }
+          mockMembers = [...mockMembers, added];
+          teamChanged();
+          return recordOf(added);
+        }
+        case "team_set_parent": {
+          const member = memberNamed(String(args.memberId));
+          const parentId =
+            typeof args.parentId === "string" ? args.parentId : null;
+          if (parentId === null) {
+            member.parentId = null;
+            member.task = "";
+            member.acceptance = "";
+          } else {
+            checkParent(mockMembers, member, parentId);
+            member.parentId = parentId;
+            // Parent and child talk through the tree, so a line between them goes.
+            mockPairs = mockPairs.filter(
+              (pair) =>
+                pairKey(pair.from, pair.to) !== pairKey(member.id, parentId),
+            );
+          }
+          return teamChanged();
+        }
+        case "team_set_orchestrator": {
+          const member = memberNamed(String(args.memberId));
+          const on = Boolean(args.orchestrator);
+          if (!on) {
+            if (member.kind === "bot") {
+              throw teamError(
+                "teamRefused",
+                "a bot only orchestrates, so it stays an orchestrator",
+              );
+            }
+            if (mockMembers.some((other) => other.parentId === member.id)) {
+              throw teamError(
+                "teamRefused",
+                "a member with members under it cannot stop being an orchestrator",
+              );
+            }
+          }
+          member.orchestrator = on;
+          return teamChanged();
+        }
+        case "team_set_role": {
+          const member = memberNamed(String(args.memberId));
+          if (member.kind === "bot") {
+            throw teamError(
+              "teamRefused",
+              "a bot keeps its name as its role, so only agents take a new role",
+            );
+          }
+          member.role = cleanText(args.role, 1, 40, ROLE_MESSAGE);
+          return teamChanged();
+        }
+        case "team_set_task": {
+          const member = memberNamed(String(args.memberId));
+          if (member.parentId === null) {
+            throw teamError(
+              "teamRefused",
+              "a member with no orchestrator has no task",
+            );
+          }
+          const task = cleanText(args.task, 0, 2000, TEXT_MESSAGE);
+          const acceptance = cleanText(args.acceptance, 0, 2000, TEXT_MESSAGE);
+          member.task = task;
+          member.acceptance = acceptance;
+          return teamChanged();
+        }
+        case "team_dismiss_member": {
+          const id = String(args.memberId);
+          memberNamed(id);
+          // The members it orchestrated answer to no one, and lose their task.
+          for (const other of mockMembers) {
+            if (other.parentId !== id) continue;
+            other.parentId = null;
+            other.task = "";
+            other.acceptance = "";
+          }
+          mockMembers = mockMembers.filter((member) => member.id !== id);
+          mockPairs = mockPairs.filter(
+            (pair) => pair.from !== id && pair.to !== id,
+          );
+          return teamChanged();
+        }
+        case "team_set_linked": {
+          const a = String(args.a);
+          const b = String(args.b);
+          if (args.linked) {
+            checkLink(a, b);
+            mockPairs = [...mockPairs, { from: a, to: b }];
+          } else {
+            mockPairs = mockPairs.filter(
+              (pair) => pairKey(pair.from, pair.to) !== pairKey(a, b),
+            );
+          }
+          return teamChanged();
+        }
         case "bots_chatgpt_status":
           return structuredClone(chatGptStatus);
         case "bots_chatgpt_sign_in":

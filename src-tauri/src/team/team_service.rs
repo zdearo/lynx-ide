@@ -3,23 +3,19 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use crate::agents::harness::HarnessId;
 use crate::persistence::AppDatabase;
 
 use super::team_error::TeamError;
-use super::team_model::{
-    NewTeamMember, TeamMember, TeamMemberKind, TeamPair, TeamRun, TeamSnapshot,
-};
+use super::team_model::{NewTeamMember, TeamMember, TeamMemberKind, TeamPair, TeamSnapshot};
 use super::team_rules::{
-    check_bot_id, check_bot_join, check_has_orchestrator, check_orchestrator_off, check_pair,
-    check_parent, check_role_change, clean_role, clean_text, clean_title, member_of,
+    check_agent_only, check_bot_id, check_bot_join, check_has_orchestrator, check_orchestrator_off,
+    check_pair, check_parent, check_role_change, clean_role, clean_session_id, clean_text,
+    clean_worktree, member_of,
 };
 use super::team_store::{
-    clear_tasks_of, insert_member, insert_pair, insert_run, remove_member, remove_pair, remove_run,
-    update_member,
+    clear_tasks_of, insert_member, insert_pair, remove_member, remove_pair, update_expanded,
+    update_member, update_session,
 };
-
-const LEAD_ROLE: &str = "Lead";
 
 pub struct TeamService {
     database: Arc<AppDatabase>,
@@ -55,73 +51,21 @@ impl TeamService {
         }
     }
 
-    /// The run, or the error that says there is none. Callers hold the turn.
-    fn run_exists(&self, run_id: &str) -> Result<(), TeamError> {
-        if self
-            .database
-            .team_runs()?
-            .iter()
-            .any(|run| run.id == run_id)
-        {
-            return Ok(());
-        }
-        Err(TeamError::RunNotFound(run_id.to_owned()))
-    }
-
-    /// The whole team, read in one turn so the runs, members and lines belong together.
+    /// Every worktree's members and lines, read in one turn so they belong together.
     pub fn snapshot(&self) -> Result<TeamSnapshot, TeamError> {
         let _turn = self.turn();
         Ok(TeamSnapshot {
-            runs: self.database.team_runs()?,
             members: self.database.team_members()?,
             pairs: self.database.team_pairs()?,
         })
     }
 
-    /// Starts a run with its orchestrator at the top: a Claude agent called Lead, or the bot `bot_id`.
-    pub fn create_run(&self, title: &str, bot_id: Option<&str>) -> Result<TeamRun, TeamError> {
+    /// Adds a member to its worktree's team. An agent may start under an orchestrator of that worktree; without
+    /// one it is the root of a new tree and gets no task. A bot joins as an orchestrator.
+    pub fn add_member(&self, input: NewTeamMember) -> Result<TeamMember, TeamError> {
         let _turn = self.turn();
-        let run = TeamRun {
-            id: new_id(),
-            title: clean_title(title)?,
-        };
-        let lead = match bot_id {
-            Some(bot_id) => {
-                self.check_bot(bot_id)?;
-                TeamMember {
-                    bot_id: Some(bot_id.to_owned()),
-                    orchestrator: true,
-                    ..blank_member(&run.id, TeamMemberKind::Bot, LEAD_ROLE.to_owned())
-                }
-            }
-            None => TeamMember {
-                harness: Some(HarnessId::Claude),
-                orchestrator: true,
-                ..blank_member(&run.id, TeamMemberKind::Agent, LEAD_ROLE.to_owned())
-            },
-        };
-        self.database.team_transaction(|connection| {
-            insert_run(connection, &run)?;
-            insert_member(connection, &lead)
-        })?;
-        Ok(run)
-    }
-
-    /// Removes a run with its members and their lines. The others keep theirs.
-    pub fn delete_run(&self, run_id: &str) -> Result<(), TeamError> {
-        let _turn = self.turn();
-        self.run_exists(run_id)?;
-        self.database
-            .team_transaction(|connection| remove_run(connection, run_id))?;
-        Ok(())
-    }
-
-    /// Adds a member to a run. An agent may start under an orchestrator; without one it gets no task.
-    pub fn add_member(&self, run_id: &str, input: NewTeamMember) -> Result<TeamMember, TeamError> {
-        let _turn = self.turn();
-        self.run_exists(run_id)?;
         let members = self.database.team_members()?;
-        let member = match input {
+        let mut member = match input {
             NewTeamMember::Agent {
                 role,
                 harness,
@@ -129,11 +73,18 @@ impl TeamService {
                 orchestrator,
                 task,
                 acceptance,
+                worktree,
+                session_id,
             } => {
                 let mut member = TeamMember {
                     harness: Some(harness),
                     orchestrator,
-                    ..blank_member(run_id, TeamMemberKind::Agent, clean_role(&role)?)
+                    session_id: session_id.as_deref().map(clean_session_id).transpose()?,
+                    ..blank_member(
+                        clean_worktree(&worktree)?,
+                        TeamMemberKind::Agent,
+                        clean_role(&role)?,
+                    )
                 };
                 // A member with no orchestrator keeps no task, so the task is only read with a parent.
                 if let Some(parent_id) = parent_id {
@@ -144,19 +95,35 @@ impl TeamService {
                 }
                 member
             }
-            NewTeamMember::Bot { bot_id, role } => {
+            NewTeamMember::Bot {
+                bot_id,
+                role,
+                worktree,
+            } => {
+                let worktree = clean_worktree(&worktree)?;
                 self.check_bot(&bot_id)?;
-                check_bot_join(&members, run_id, &bot_id)?;
+                check_bot_join(&members, &worktree, &bot_id)?;
                 TeamMember {
                     bot_id: Some(bot_id),
                     orchestrator: true,
-                    ..blank_member(run_id, TeamMemberKind::Bot, clean_role(&role)?)
+                    ..blank_member(worktree, TeamMemberKind::Bot, clean_role(&role)?)
                 }
             }
         };
+        // A root orchestrator opens its branch; anything else starts closed.
+        member.expanded = member.orchestrator && member.parent_id.is_none();
         self.database
             .team_transaction(|connection| insert_member(connection, &member))?;
         Ok(member)
+    }
+
+    /// Opens or closes a member's branch in the team tree. The screen reads it back from the snapshot.
+    pub fn set_expanded(&self, member_id: &str, expanded: bool) -> Result<(), TeamError> {
+        let _turn = self.turn();
+        member_of(&self.database.team_members()?, member_id)?;
+        self.database
+            .team_transaction(|connection| update_expanded(connection, member_id, expanded))?;
+        Ok(())
     }
 
     /// Puts a member under an orchestrator, or under no one. Leaving the orchestrator clears the member's task,
@@ -226,24 +193,63 @@ impl TeamService {
         Ok(())
     }
 
-    /// Removes a member. Its lines go with it. The members it orchestrated answer to no one, and lose their task.
-    pub fn dismiss_member(&self, member_id: &str) -> Result<(), TeamError> {
+    /// Attaches a terminal session to an agent, or detaches it with None. The worktree stays, so a session
+    /// restored later goes back there.
+    pub fn set_session(&self, member_id: &str, session_id: Option<&str>) -> Result<(), TeamError> {
         let _turn = self.turn();
-        member_of(&self.database.team_members()?, member_id)?;
+        let mut member = member_of(&self.database.team_members()?, member_id)?.clone();
+        check_agent_only(&member)?;
+        member.session_id = session_id.map(clean_session_id).transpose()?;
+        self.database
+            .team_transaction(|connection| update_session(connection, &member))?;
+        Ok(())
+    }
+
+    /// Removes a member. Its lines go with it. The members it orchestrated answer to no one, and lose their task.
+    /// Returns the terminal session the member ran in, so the screen can close it.
+    pub fn dismiss_member(&self, member_id: &str) -> Result<Option<String>, TeamError> {
+        let _turn = self.turn();
+        let members = self.database.team_members()?;
+        let session_id = member_of(&members, member_id)?.session_id.clone();
         self.database.team_transaction(|connection| {
             clear_tasks_of(connection, member_id)?;
             remove_member(connection, member_id)
         })?;
-        Ok(())
+        Ok(session_id)
     }
 
-    /// Removes a bot from every run: its members, the members under them at any depth, and their lines. Nothing
-    /// refuses it, since the person already deleted the bot. Returns how many members went.
+    /// Removes a bot from every worktree's team: its members, the members under them at any depth, and their
+    /// lines. Nothing refuses it, since the person already deleted the bot. Returns how many members went.
     pub fn remove_bot(&self, bot_id: &str) -> Result<usize, TeamError> {
         let _turn = self.turn();
         let gone = bot_and_its_members(&self.database.team_members()?, bot_id);
+        self.remove_members(&gone)
+    }
+
+    /// Removes every bot that `bot_exists` no longer accepts, each with the same cascade as `remove_bot`, in one
+    /// transaction. The app calls it once at startup, to clear a bot deleted before its team lines went with it.
+    /// Returns how many members went.
+    pub fn remove_missing_bots(
+        &self,
+        bot_exists: impl Fn(&str) -> bool,
+    ) -> Result<usize, TeamError> {
+        let _turn = self.turn();
+        let members = self.database.team_members()?;
+        let mut gone: Vec<String> = members
+            .iter()
+            .filter_map(|member| member.bot_id.as_deref())
+            .filter(|bot_id| !bot_exists(bot_id))
+            .flat_map(|bot_id| bot_and_its_members(&members, bot_id))
+            .collect();
+        gone.sort_unstable();
+        gone.dedup();
+        self.remove_members(&gone)
+    }
+
+    /// Removes the members in one transaction, and returns how many were listed.
+    fn remove_members(&self, gone: &[String]) -> Result<usize, TeamError> {
         self.database.team_transaction(|connection| {
-            for id in &gone {
+            for id in gone {
                 remove_member(connection, id)?;
             }
             Ok(())
@@ -270,10 +276,10 @@ impl TeamService {
 }
 
 /// A new member under no one, with no task and not an orchestrator. The caller sets the rest.
-fn blank_member(run_id: &str, kind: TeamMemberKind, role: String) -> TeamMember {
+fn blank_member(worktree: String, kind: TeamMemberKind, role: String) -> TeamMember {
     TeamMember {
         id: new_id(),
-        run_id: run_id.to_owned(),
+        worktree,
         kind,
         role,
         harness: None,
@@ -282,10 +288,12 @@ fn blank_member(run_id: &str, kind: TeamMemberKind, role: String) -> TeamMember 
         orchestrator: false,
         task: String::new(),
         acceptance: String::new(),
+        session_id: None,
+        expanded: false,
     }
 }
 
-/// The bot's members in every run, then every member under them at any depth. Each id is listed once, so a
+/// The bot's members in every worktree, then every member under them at any depth. Each id is listed once, so a
 /// loop in the stored parents still ends.
 fn bot_and_its_members(members: &[TeamMember], bot_id: &str) -> Vec<String> {
     let mut found: Vec<String> = members

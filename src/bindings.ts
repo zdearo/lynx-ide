@@ -362,18 +362,21 @@ export const commands = {
 	 *  daemon's keep running, and the new version rejoins them.
 	 */
 	restartToUpdate: () => __TAURI_INVOKE<void>("restart_to_update"),
-	/**  The whole team: its runs, members and lines. */
+	/**  Every worktree's team: its members and lines. */
 	teamSnapshot: () => typedError<TeamSnapshot, IpcError>(__TAURI_INVOKE("team_snapshot")),
-	/**  Starts a run with its orchestrator at the top: Lead, or the bot `bot_id` when one is given. */
-	teamCreateRun: (title: string, botId: string | null) => typedError<TeamRun, IpcError>(__TAURI_INVOKE("team_create_run", { title, botId })),
-	teamDeleteRun: (runId: string) => typedError<null, IpcError>(__TAURI_INVOKE("team_delete_run", { runId })),
-	teamAddMember: (runId: string, member: NewTeamMember) => typedError<TeamMember, IpcError>(__TAURI_INVOKE("team_add_member", { runId, member })),
+	/**  Adds a member to the team of its worktree. */
+	teamAddMember: (member: NewTeamMember) => typedError<TeamMember, IpcError>(__TAURI_INVOKE("team_add_member", { member })),
 	teamSetParent: (memberId: string, parentId: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_parent", { memberId, parentId })),
 	teamSetOrchestrator: (memberId: string, orchestrator: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_orchestrator", { memberId, orchestrator })),
 	teamSetRole: (memberId: string, role: string) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_role", { memberId, role })),
 	teamSetTask: (memberId: string, task: string, acceptance: string) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_task", { memberId, task, acceptance })),
-	teamDismissMember: (memberId: string) => typedError<null, IpcError>(__TAURI_INVOKE("team_dismiss_member", { memberId })),
+	/**  Removes a member. Returns the terminal session it ran in, if any, so the screen can close that terminal. */
+	teamDismissMember: (memberId: string) => typedError<string | null, IpcError>(__TAURI_INVOKE("team_dismiss_member", { memberId })),
+	/**  Attaches the terminal session to an agent, or detaches it when `session_id` is None. */
+	teamSetSession: (memberId: string, sessionId: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_session", { memberId, sessionId })),
 	teamSetLinked: (a: string, b: string, linked: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_linked", { a, b, linked })),
+	/**  Opens or closes a member's branch in the team tree. */
+	teamSetExpanded: (memberId: string, expanded: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_expanded", { memberId, expanded })),
 };
 
 /** Events */
@@ -1024,9 +1027,9 @@ export type IpcError = {
 };
 
 export type IpcErrorKind = "notAGitRepo" | "bareRepo" | "repoNotFound" | "worktreeNotFound" | "invalidName" | "invalidCommit" | "commitDraft" | "ghNotInstalled" | "ghNotLoggedIn" | "ghNoRemote" | "pullRequest" | "invalidLink" | "pushUnavailable" | "changeRefused" | "invalidRepoName" | "invalidPullRequest" | "pullRequestExists" | "noDifference" | "remoteNameTaken" | "remoteAlreadyExists" | "gitHub" | "alreadyExists" | "worktreeHasChanges" | "cannotRemoveMainWorktree" | "folderNotFound" | "folderCycle" | "linkedFolder" | "git" | "storage" | "invalidConfig" | "invalidPath" | "pathNotFound" | "notADirectory" | "notAFile" | "fileTooLarge" | "binaryFile" | "fileChanged" | "fileSystem" | "brokenConfigFile" | "terminalNotFound" | "terminalNotRunning" | "terminal" | "orchestration" | "agentHooks" | "browserEngineMissing" | "browserEngineOutdated" | "browser" | "update" | "invalidBot" | 
-/**  The team has no run or member with that id. */
+/**  The team has no member with that id. */
 "teamNotFound" | 
-/**  A team value is malformed: an empty goal, a role or a text that is too long. */
+/**  A team value is malformed: a role, a text, a bot id, a worktree or a session id that is not valid. */
 "teamInvalid" | 
 /**  A team rule refuses the change, e.g. a cycle or two bots in a line. */
 "teamRefused" | "internal";
@@ -1119,10 +1122,19 @@ export type NewChannel = {
 	members: string[],
 };
 
-/**  A member to add. An agent may start under an orchestrator; a bot is always an orchestrator under no one. */
-export type NewTeamMember = { kind: "agent"; role: string; harness: HarnessId; parentId: string | null; orchestrator: boolean; task: string; acceptance: string } | { kind: "bot"; botId: string; 
-/**  The bot's name in the run. */
-role: string };
+/**
+ *  A member to add, in the worktree it joins. An agent may start under an orchestrator of that worktree;
+ *  a bot is always an orchestrator and never under one.
+ */
+export type NewTeamMember = { kind: "agent"; role: string; harness: HarnessId; parentId: string | null; orchestrator: boolean; task: string; acceptance: string; 
+/**  The absolute path of the worktree the agent works in. */
+worktree: string; 
+/**  The terminal session the screen opened for the agent in `worktree`. */
+sessionId: string | null } | { kind: "bot"; botId: string; 
+/**  The bot's name in the team. */
+role: string; 
+/**  The absolute path of the worktree whose team the bot joins. */
+worktree: string };
 
 /**  When Lynx sends a system notification, while the window is not in front. */
 export type NotificationsConfig = {
@@ -1323,25 +1335,36 @@ export type RunningCommand = {
 	output: string,
 };
 
-/**  The team changed: a run, a member or a line between members. The screen reads the snapshot again. */
+/**  The team changed: a member or a line between members. The screen reads the snapshot again. */
 export type TeamChanged = Record<string, never>;
 
 export type TeamMember = {
 	id: string,
-	runId: string,
+	/**
+	 *  The absolute path of the worktree whose team this member is in. It stays when the session
+	 *  closes, so a session restored later goes back there.
+	 */
+	worktree: string,
 	kind: TeamMemberKind,
 	role: string,
 	/**  The agent's harness. Only agents have one. */
 	harness: HarnessId | null,
 	/**  The Lynx bot. Only bots have one. */
 	botId: string | null,
-	/**  The orchestrator this member answers to. None means it belongs to none. */
+	/**  The orchestrator this member answers to. None means it is the root of a tree. */
 	parentId: string | null,
 	/**  Whether it may have members under it. A bot always is. */
 	orchestrator: boolean,
 	/**  Only a member with an orchestrator has a task and a "done when" line; otherwise both are empty. */
 	task: string,
 	acceptance: string,
+	/**  The terminal session the agent runs in. Only agents have one, and it is cleared when it closes. */
+	sessionId: string | null,
+	/**
+	 *  Whether the member's branch is open in the team tree. A new root starts open; every other new member
+	 *  starts closed.
+	 */
+	expanded: boolean,
 };
 
 /**  A CLI agent in a worktree, or a Lynx bot. A bot only orchestrates. */
@@ -1353,15 +1376,8 @@ export type TeamPair = {
 	b: string,
 };
 
-export type TeamRun = {
-	id: string,
-	/**  The run's goal. It is not a task of any member. */
-	title: string,
-};
-
-/**  Everything the team screen shows, in the order it was made. */
+/**  Every worktree's members and lines, in the order they were made. The screen filters by worktree. */
 export type TeamSnapshot = {
-	runs: TeamRun[],
 	members: TeamMember[],
 	pairs: TeamPair[],
 };

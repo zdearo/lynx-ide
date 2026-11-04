@@ -1,23 +1,16 @@
-//! The team's rules, checked against the members and lines a run holds. Nothing here writes: the
+//! The team's rules, checked against the members and lines of a worktree's team. Nothing here writes: the
 //! service applies a change only once these say it is allowed.
+
+use std::path::{Component, Path};
 
 use crate::bots::bot_folder::valid_id;
 
 use super::team_error::TeamError;
 use super::team_model::{TeamMember, TeamMemberKind, TeamPair};
 
-pub const MAX_TITLE_CHARS: usize = 80;
 pub const MAX_ROLE_CHARS: usize = 40;
 pub const MAX_TEXT_CHARS: usize = 2000;
-
-/// The run's goal, trimmed. It must not be empty.
-pub fn clean_title(title: &str) -> Result<String, TeamError> {
-    let title = title.trim();
-    if title.is_empty() || title.chars().count() > MAX_TITLE_CHARS {
-        return Err(TeamError::InvalidTitle);
-    }
-    Ok(title.to_owned())
-}
+pub const MAX_SESSION_ID_CHARS: usize = 128;
 
 /// A role, trimmed. It must not be empty.
 pub fn clean_role(role: &str) -> Result<String, TeamError> {
@@ -46,6 +39,42 @@ pub fn check_bot_id(bot_id: &str) -> Result<(), TeamError> {
     }
 }
 
+/// A worktree a member joins: an absolute path with no `..` step, so it names one place.
+pub fn clean_worktree(worktree: &str) -> Result<String, TeamError> {
+    let path = Path::new(worktree);
+    let plain = !worktree.is_empty()
+        && path.is_absolute()
+        && path.components().all(|part| part != Component::ParentDir);
+    if plain {
+        Ok(worktree.to_owned())
+    } else {
+        Err(TeamError::InvalidWorktree)
+    }
+}
+
+/// A terminal session id, as the terminal makes it: letters, digits, `-` and `_`, the same plain
+/// names a resumed conversation takes.
+pub fn clean_session_id(session_id: &str) -> Result<String, TeamError> {
+    let plain = !session_id.is_empty()
+        && session_id.chars().count() <= MAX_SESSION_ID_CHARS
+        && session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if plain {
+        Ok(session_id.to_owned())
+    } else {
+        Err(TeamError::InvalidSession)
+    }
+}
+
+/// A bot runs no terminal session, so only an agent takes one.
+pub fn check_agent_only(member: &TeamMember) -> Result<(), TeamError> {
+    if member.kind == TeamMemberKind::Bot {
+        return Err(TeamError::BotSession);
+    }
+    Ok(())
+}
+
 pub fn member_of<'a>(members: &'a [TeamMember], id: &str) -> Result<&'a TeamMember, TeamError> {
     members
         .iter()
@@ -72,7 +101,7 @@ fn is_under(members: &[TeamMember], member: &TeamMember, ancestor_id: &str) -> b
 }
 
 /// Whether `child` may answer to `parent_id`: a bot never does, and the parent must be another
-/// orchestrator of the same run that is not under the child.
+/// orchestrator of the same worktree that is not under the child.
 pub fn check_parent(
     members: &[TeamMember],
     child: &TeamMember,
@@ -85,8 +114,8 @@ pub fn check_parent(
     if parent.id == child.id {
         return Err(TeamError::SameMember);
     }
-    if parent.run_id != child.run_id {
-        return Err(TeamError::OtherRun);
+    if parent.worktree != child.worktree {
+        return Err(TeamError::OtherWorktree);
     }
     if !parent.orchestrator {
         return Err(TeamError::NotAnOrchestrator);
@@ -112,8 +141,8 @@ pub fn check_orchestrator_off(members: &[TeamMember], id: &str) -> Result<(), Te
     Ok(())
 }
 
-/// Whether two members may talk: different and in the same run, not already talking, not parent and child,
-/// and not two bots.
+/// Whether two members may talk: different and in the same worktree, not already talking, not parent and
+/// child, and not two bots.
 pub fn check_pair(
     members: &[TeamMember],
     pairs: &[TeamPair],
@@ -125,8 +154,8 @@ pub fn check_pair(
     if a == b {
         return Err(TeamError::SameMember);
     }
-    if first.run_id != second.run_id {
-        return Err(TeamError::OtherRun);
+    if first.worktree != second.worktree {
+        return Err(TeamError::OtherWorktree);
     }
     let pair = TeamPair::between(a, b);
     if pairs.contains(&pair) {
@@ -141,15 +170,19 @@ pub fn check_pair(
     Ok(())
 }
 
-/// A bot joins a run once, so its id is not in the run already.
-pub fn check_bot_join(members: &[TeamMember], run_id: &str, bot_id: &str) -> Result<(), TeamError> {
+/// A bot joins a worktree's team once, so its id is not in that team already. It may join another worktree's.
+pub fn check_bot_join(
+    members: &[TeamMember],
+    worktree: &str,
+    bot_id: &str,
+) -> Result<(), TeamError> {
     let taken = members.iter().any(|member| {
-        member.run_id == run_id
+        member.worktree == worktree
             && member.kind == TeamMemberKind::Bot
             && member.bot_id.as_deref() == Some(bot_id)
     });
     if taken {
-        return Err(TeamError::BotInRun);
+        return Err(TeamError::BotInWorktree);
     }
     Ok(())
 }
@@ -179,7 +212,7 @@ mod tests {
     fn agent(id: &str, parent: Option<&str>, orchestrator: bool) -> TeamMember {
         TeamMember {
             id: id.to_owned(),
-            run_id: "run".to_owned(),
+            worktree: "/repo".to_owned(),
             kind: TeamMemberKind::Agent,
             role: id.to_owned(),
             harness: Some(HarnessId::Claude),
@@ -188,22 +221,15 @@ mod tests {
             orchestrator,
             task: String::new(),
             acceptance: String::new(),
+            session_id: None,
+            expanded: false,
         }
     }
 
     #[test]
-    fn a_title_and_a_role_are_trimmed_and_bounded() {
-        assert_eq!(
-            clean_title("  Auth refactor  ").ok().as_deref(),
-            Some("Auth refactor")
-        );
-        assert!(matches!(clean_title("   "), Err(TeamError::InvalidTitle)));
-        assert!(clean_title(&"x".repeat(MAX_TITLE_CHARS)).is_ok());
-        assert!(matches!(
-            clean_title(&"x".repeat(MAX_TITLE_CHARS + 1)),
-            Err(TeamError::InvalidTitle)
-        ));
-        assert!(matches!(clean_role(""), Err(TeamError::InvalidRole)));
+    fn a_role_is_trimmed_and_bounded() {
+        assert_eq!(clean_role("  Tester  ").ok().as_deref(), Some("Tester"));
+        assert!(matches!(clean_role("   "), Err(TeamError::InvalidRole)));
         assert!(matches!(
             clean_role(&"x".repeat(MAX_ROLE_CHARS + 1)),
             Err(TeamError::InvalidRole)
@@ -221,7 +247,7 @@ mod tests {
 
     #[test]
     fn a_parent_cycle_is_refused_and_the_other_parent_rules_still_apply() {
-        // lead is the root, builder answers to lead, tester answers to builder and is not an orchestrator.
+        // lead is a root, builder answers to lead, tester answers to builder and is not an orchestrator.
         let members = vec![
             agent("lead", None, true),
             agent("builder", Some("lead"), true),

@@ -832,6 +832,15 @@ mod tests {
         )
     }
 
+    /// The docs bot joining the team of `/repo`.
+    fn docs_joins() -> NewTeamMember {
+        NewTeamMember::Bot {
+            bot_id: "docs".to_owned(),
+            role: "Docs".to_owned(),
+            worktree: "/repo".to_owned(),
+        }
+    }
+
     /// The bot's parts over one database file in `dir`, where the bot folder `docs` exists.
     fn parts(dir: &TempDir) -> (BotChat, BotProcesses, Arc<AppDatabase>) {
         let bots = dir.path().join("bots");
@@ -848,14 +857,12 @@ mod tests {
         let dir = TempDir::new().expect("a temporary folder");
         let (chat, processes, database) = parts(&dir);
         let team = team_over(&database, &dir.path().join("bots"));
-        team.create_run("Docs", Some("docs")).expect("create");
+        team.add_member(docs_joins()).expect("join");
 
         assert!(delete_bot(&chat, &processes, &team, "docs").expect("delete"));
 
         assert!(!dir.path().join("bots").join("docs").exists());
-        let snapshot = team.snapshot().expect("snapshot");
-        assert_eq!(snapshot.runs.len(), 1, "the run stays");
-        assert!(snapshot.members.is_empty());
+        assert!(team.snapshot().expect("snapshot").members.is_empty());
     }
 
     #[test]
@@ -863,20 +870,13 @@ mod tests {
         let dir = TempDir::new().expect("a temporary folder");
         let (chat, processes, database) = parts(&dir);
         let team = team_over(&database, &dir.path().join("bots"));
-        let run = team.create_run("Docs", None).expect("create");
+        team.add_member(docs_joins()).expect("join");
         delete_bot(&chat, &processes, &team, "docs").expect("delete");
 
-        let joined = team.add_member(
-            &run.id,
-            NewTeamMember::Bot {
-                bot_id: "docs".to_owned(),
-                role: "Docs".to_owned(),
-            },
-        );
+        let joined = team.add_member(docs_joins());
 
         assert!(matches!(joined, Err(TeamError::UnknownBot)));
-        // Only the Claude lead the run started with is left.
-        assert_eq!(team.snapshot().expect("snapshot").members.len(), 1);
+        assert!(team.snapshot().expect("snapshot").members.is_empty());
     }
 
     #[test]
@@ -884,7 +884,7 @@ mod tests {
         let dir = TempDir::new().expect("a temporary folder");
         let (chat, processes, database) = parts(&dir);
         let team = team_over(&database, &dir.path().join("bots"));
-        team.create_run("Docs", Some("docs")).expect("create");
+        team.add_member(docs_joins()).expect("join");
         // The team's table is gone, so its change fails.
         database
             .lock()

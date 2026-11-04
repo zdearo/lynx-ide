@@ -1,4 +1,4 @@
-//! The team: the members of each run, who orchestrates whom, and the lines of conversation between
+//! The team: the members of each worktree, who orchestrates whom, and the lines of conversation between
 //! them. Its rules are enforced here and in the store, not in the screen.
 
 pub mod team_commands;

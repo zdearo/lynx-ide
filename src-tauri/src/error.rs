@@ -154,9 +154,9 @@ pub enum IpcErrorKind {
     Browser,
     Update,
     InvalidBot,
-    /// The team has no run or member with that id.
+    /// The team has no member with that id.
     TeamNotFound,
-    /// A team value is malformed: an empty goal, a role or a text that is too long.
+    /// A team value is malformed: a role, a text, a bot id, a worktree or a session id that is not valid.
     TeamInvalid,
     /// A team rule refuses the change, e.g. a cycle or two bots in a line.
     TeamRefused,
@@ -241,14 +241,13 @@ impl From<AppError> for IpcError {
             AppError::Update(_) => IpcErrorKind::Update,
             AppError::Bot(_) => IpcErrorKind::InvalidBot,
             AppError::Team(error) => match error {
-                TeamError::RunNotFound(_) | TeamError::MemberNotFound(_) => {
-                    IpcErrorKind::TeamNotFound
-                }
+                TeamError::MemberNotFound(_) => IpcErrorKind::TeamNotFound,
                 TeamError::Database(_) => IpcErrorKind::Storage,
-                TeamError::InvalidTitle
-                | TeamError::InvalidRole
+                TeamError::InvalidRole
                 | TeamError::InvalidText
-                | TeamError::InvalidBot => IpcErrorKind::TeamInvalid,
+                | TeamError::InvalidBot
+                | TeamError::InvalidWorktree
+                | TeamError::InvalidSession => IpcErrorKind::TeamInvalid,
                 _ => IpcErrorKind::TeamRefused,
             },
             AppError::TaskFailed(_) => IpcErrorKind::Internal,

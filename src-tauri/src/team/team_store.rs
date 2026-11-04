@@ -7,10 +7,9 @@ use rusqlite::{Connection, Row, params};
 use crate::agents::harness::{harness_name, harness_named};
 use crate::persistence::{AppDatabase, DatabaseError};
 
-use super::team_model::{TeamMember, TeamMemberKind, TeamPair, TeamRun};
+use super::team_model::{TeamMember, TeamMemberKind, TeamPair};
 
-const MEMBER_COLUMNS: &str =
-    "id, run_id, kind, role, harness, bot_id, parent_id, orchestrator, task, acceptance";
+const MEMBER_COLUMNS: &str = "id, worktree, kind, role, harness, bot_id, parent_id, orchestrator, task, acceptance, session_id, expanded";
 
 /// A stored value the model cannot read. The table's checks keep this from happening.
 fn unreadable(index: usize) -> rusqlite::Error {
@@ -22,7 +21,7 @@ fn member_from(row: &Row<'_>) -> rusqlite::Result<TeamMember> {
     let harness: Option<String> = row.get(4)?;
     Ok(TeamMember {
         id: row.get(0)?,
-        run_id: row.get(1)?,
+        worktree: row.get(1)?,
         kind: TeamMemberKind::parse(&kind).ok_or_else(|| unreadable(2))?,
         role: row.get(3)?,
         harness: harness
@@ -33,26 +32,13 @@ fn member_from(row: &Row<'_>) -> rusqlite::Result<TeamMember> {
         orchestrator: row.get(7)?,
         task: row.get(8)?,
         acceptance: row.get(9)?,
+        session_id: row.get(10)?,
+        expanded: row.get(11)?,
     })
 }
 
 impl AppDatabase {
-    /// The runs, in the order they were made.
-    pub fn team_runs(&self) -> Result<Vec<TeamRun>, DatabaseError> {
-        let connection = self.lock();
-        let mut statement = connection.prepare("SELECT id, title FROM team_runs ORDER BY rowid")?;
-        let runs = statement
-            .query_map([], |row| {
-                Ok(TeamRun {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(runs)
-    }
-
-    /// Every member of every run, in the order they were added.
+    /// Every member of every worktree's team, in the order they were added.
     pub fn team_members(&self) -> Result<Vec<TeamMember>, DatabaseError> {
         let connection = self.lock();
         let mut statement = connection.prepare(&format!(
@@ -93,31 +79,17 @@ impl AppDatabase {
 }
 
 /// Writes for `team_transaction`. They take the connection the transaction gives them.
-pub(super) fn insert_run(connection: &Connection, run: &TeamRun) -> Result<(), DatabaseError> {
-    connection.execute(
-        "INSERT INTO team_runs (id, title) VALUES (?1, ?2)",
-        params![run.id, run.title],
-    )?;
-    Ok(())
-}
-
-/// Removing a run removes its members and their lines too (the tables cascade).
-pub(super) fn remove_run(connection: &Connection, id: &str) -> Result<(), DatabaseError> {
-    connection.execute("DELETE FROM team_runs WHERE id = ?1", [id])?;
-    Ok(())
-}
-
 pub(super) fn insert_member(
     connection: &Connection,
     member: &TeamMember,
 ) -> Result<(), DatabaseError> {
     connection.execute(
         &format!(
-            "INSERT INTO team_members ({MEMBER_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+            "INSERT INTO team_members ({MEMBER_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
         ),
         params![
             member.id,
-            member.run_id,
+            member.worktree,
             member.kind.as_str(),
             member.role,
             member.harness.map(harness_name),
@@ -126,12 +98,39 @@ pub(super) fn insert_member(
             member.orchestrator,
             member.task,
             member.acceptance,
+            member.session_id,
+            member.expanded,
         ],
     )?;
     Ok(())
 }
 
-/// Writes the fields a change can move. The kind, the run and the bot never change.
+/// Writes whether a member's branch is open. Nothing else of the member moves.
+pub(super) fn update_expanded(
+    connection: &Connection,
+    member_id: &str,
+    expanded: bool,
+) -> Result<(), DatabaseError> {
+    connection.execute(
+        "UPDATE team_members SET expanded = ?2 WHERE id = ?1",
+        params![member_id, expanded],
+    )?;
+    Ok(())
+}
+
+/// Writes the terminal session of an agent. The worktree stays, and so do the other fields.
+pub(super) fn update_session(
+    connection: &Connection,
+    member: &TeamMember,
+) -> Result<(), DatabaseError> {
+    connection.execute(
+        "UPDATE team_members SET session_id = ?2 WHERE id = ?1",
+        params![member.id, member.session_id],
+    )?;
+    Ok(())
+}
+
+/// Writes the fields a change can move. The kind, the worktree and the bot never change.
 pub(super) fn update_member(
     connection: &Connection,
     member: &TeamMember,

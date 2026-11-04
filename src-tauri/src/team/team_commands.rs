@@ -11,7 +11,7 @@ use crate::process::blocking_task::run_blocking;
 
 use super::team_error::TeamError;
 use super::team_events::TeamChanged;
-use super::team_model::{NewTeamMember, TeamMember, TeamRun, TeamSnapshot};
+use super::team_model::{NewTeamMember, TeamMember, TeamSnapshot};
 use super::team_service::TeamService;
 
 /// Runs a change, and announces it only when it was written.
@@ -25,7 +25,7 @@ where
     Ok(value)
 }
 
-/// The whole team: its runs, members and lines.
+/// Every worktree's team: its members and lines.
 #[tauri::command]
 #[specta::specta]
 pub async fn team_snapshot(service: State<'_, Arc<TeamService>>) -> Result<TeamSnapshot, IpcError> {
@@ -33,40 +33,16 @@ pub async fn team_snapshot(service: State<'_, Arc<TeamService>>) -> Result<TeamS
     run_blocking(move || service.snapshot().map_err(AppError::from)).await
 }
 
-/// Starts a run with its orchestrator at the top: Lead, or the bot `bot_id` when one is given.
-#[tauri::command]
-#[specta::specta]
-pub async fn team_create_run(
-    app: AppHandle,
-    service: State<'_, Arc<TeamService>>,
-    title: String,
-    bot_id: Option<String>,
-) -> Result<TeamRun, IpcError> {
-    let service = Arc::clone(service.inner());
-    change(&app, move || service.create_run(&title, bot_id.as_deref())).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn team_delete_run(
-    app: AppHandle,
-    service: State<'_, Arc<TeamService>>,
-    run_id: String,
-) -> Result<(), IpcError> {
-    let service = Arc::clone(service.inner());
-    change(&app, move || service.delete_run(&run_id)).await
-}
-
+/// Adds a member to the team of its worktree.
 #[tauri::command]
 #[specta::specta]
 pub async fn team_add_member(
     app: AppHandle,
     service: State<'_, Arc<TeamService>>,
-    run_id: String,
     member: NewTeamMember,
 ) -> Result<TeamMember, IpcError> {
     let service = Arc::clone(service.inner());
-    change(&app, move || service.add_member(&run_id, member)).await
+    change(&app, move || service.add_member(member)).await
 }
 
 #[tauri::command]
@@ -127,15 +103,45 @@ pub async fn team_set_task(
     .await
 }
 
+/// Removes a member. Returns the terminal session it ran in, if any, so the screen can close that terminal.
 #[tauri::command]
 #[specta::specta]
 pub async fn team_dismiss_member(
     app: AppHandle,
     service: State<'_, Arc<TeamService>>,
     member_id: String,
-) -> Result<(), IpcError> {
+) -> Result<Option<String>, IpcError> {
     let service = Arc::clone(service.inner());
     change(&app, move || service.dismiss_member(&member_id)).await
+}
+
+/// Attaches the terminal session to an agent, or detaches it when `session_id` is None.
+#[tauri::command]
+#[specta::specta]
+pub async fn team_set_session(
+    app: AppHandle,
+    service: State<'_, Arc<TeamService>>,
+    member_id: String,
+    session_id: Option<String>,
+) -> Result<(), IpcError> {
+    let service = Arc::clone(service.inner());
+    change(&app, move || {
+        service.set_session(&member_id, session_id.as_deref())
+    })
+    .await
+}
+
+/// Opens or closes a member's branch in the team tree.
+#[tauri::command]
+#[specta::specta]
+pub async fn team_set_expanded(
+    app: AppHandle,
+    service: State<'_, Arc<TeamService>>,
+    member_id: String,
+    expanded: bool,
+) -> Result<(), IpcError> {
+    let service = Arc::clone(service.inner());
+    change(&app, move || service.set_expanded(&member_id, expanded)).await
 }
 
 #[tauri::command]

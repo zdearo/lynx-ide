@@ -128,6 +128,47 @@ const MIGRATIONS: &[&str] = &[
          PRIMARY KEY (a, b),
          CHECK (a < b)
      );",
+    // The agents' place: the worktree an agent works in and the terminal session it runs in. Only an
+    // agent has either, and a session needs a worktree; the checks keep a row from being half-formed.
+    "ALTER TABLE team_members ADD COLUMN worktree TEXT
+         CHECK (worktree IS NULL OR (kind = 'agent' AND worktree <> ''));
+     ALTER TABLE team_members ADD COLUMN session_id TEXT
+         CHECK (
+             session_id IS NULL
+             OR (kind = 'agent' AND session_id <> '' AND worktree IS NOT NULL)
+         );",
+    // The team is one per worktree: runs go, and every member names the worktree whose team it is in.
+    // The team is unreleased, so its rows from the run schema are dropped, not moved. Pairs go first,
+    // since they point at members.
+    "DROP TABLE team_pairs;
+     DROP TABLE team_members;
+     DROP TABLE team_runs;
+     CREATE TABLE team_members (
+         id           TEXT PRIMARY KEY,
+         worktree     TEXT NOT NULL CHECK (worktree <> ''),
+         kind         TEXT NOT NULL CHECK (kind IN ('agent', 'bot')),
+         role         TEXT NOT NULL,
+         harness      TEXT,
+         bot_id       TEXT,
+         parent_id    TEXT REFERENCES team_members (id) ON DELETE SET NULL,
+         orchestrator INTEGER NOT NULL DEFAULT 0,
+         task         TEXT NOT NULL DEFAULT '',
+         acceptance   TEXT NOT NULL DEFAULT '',
+         session_id   TEXT CHECK (session_id IS NULL OR (kind = 'agent' AND session_id <> '')),
+         CHECK (
+             (kind = 'agent' AND harness IS NOT NULL AND bot_id IS NULL)
+             OR (kind = 'bot' AND harness IS NULL AND bot_id IS NOT NULL)
+         ),
+         CHECK (parent_id IS NULL OR parent_id <> id)
+     );
+     CREATE TABLE team_pairs (
+         a TEXT NOT NULL REFERENCES team_members (id) ON DELETE CASCADE,
+         b TEXT NOT NULL REFERENCES team_members (id) ON DELETE CASCADE,
+         PRIMARY KEY (a, b),
+         CHECK (a < b)
+     );",
+    // Whether a member's branch is open in the team tree, kept with the team so it is the same on every screen.
+    "ALTER TABLE team_members ADD COLUMN expanded INTEGER NOT NULL DEFAULT 0 CHECK (expanded IN (0, 1));",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -281,5 +322,77 @@ mod tests {
                 .iter()
                 .any(|name| name == "state" || name == "budget")
         );
+    }
+
+    #[test]
+    fn the_team_of_runs_is_dropped_when_the_team_moves_to_worktrees() {
+        // Before the migration that drops runs, each member belonged to a run and had no worktree.
+        let drop_runs = MIGRATIONS
+            .iter()
+            .position(|sql| sql.contains("DROP TABLE team_runs"))
+            .expect("a migration drops the runs");
+        let mut connection = Connection::open_in_memory().expect("open");
+        for (index, sql) in MIGRATIONS.iter().enumerate().take(drop_runs) {
+            apply(&mut connection, index as u32 + 1, sql).expect("apply");
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO team_runs (id, title) VALUES ('run', 'Auth');
+                 INSERT INTO team_members (id, run_id, kind, role, harness, orchestrator)
+                 VALUES ('lead', 'run', 'agent', 'Lead', 'claude', 1);
+                 INSERT INTO team_members (id, run_id, kind, role, harness)
+                 VALUES ('builder', 'run', 'agent', 'Builder', 'codex');
+                 INSERT INTO team_pairs (a, b) VALUES ('builder', 'lead');",
+            )
+            .expect("insert");
+
+        migrate(&mut connection).expect("migrate");
+
+        // The team was never released, so its old rows are dropped rather than moved to a worktree.
+        let left: u32 = connection
+            .query_row("SELECT COUNT(*) FROM team_members", [], |row| row.get(0))
+            .expect("count");
+        let runs: u32 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'team_runs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!((left, runs), (0, 0));
+    }
+
+    #[test]
+    fn a_member_names_a_worktree_and_a_bot_never_has_a_session() {
+        let mut connection = Connection::open_in_memory().expect("open");
+        migrate(&mut connection).expect("migrate");
+        let refused = |sql: &str| connection.execute(sql, []).is_err();
+
+        connection
+            .execute_batch(
+                "INSERT INTO team_members (id, worktree, kind, role, harness, orchestrator)
+                 VALUES ('lead', '/repo', 'agent', 'Lead', 'claude', 1);
+                 INSERT INTO team_members (id, worktree, kind, role, bot_id, orchestrator)
+                 VALUES ('docs', '/repo', 'bot', 'Docs', 'docs', 1);
+                 INSERT INTO team_members (id, worktree, kind, role, harness, session_id)
+                 VALUES ('builder', '/repo', 'agent', 'Builder', 'claude', 'session');",
+            )
+            .expect("a bot and agents in a worktree are stored");
+        assert!(refused(
+            "INSERT INTO team_members (id, kind, role, harness)
+             VALUES ('nowhere', 'agent', 'Tester', 'claude')"
+        ));
+        assert!(refused(
+            "INSERT INTO team_members (id, worktree, kind, role, harness)
+             VALUES ('empty', '', 'agent', 'Tester', 'claude')"
+        ));
+        assert!(refused(
+            "INSERT INTO team_members (id, worktree, kind, role, bot_id, session_id)
+             VALUES ('bot', '/repo', 'bot', 'Docs', 'docs', 'session')"
+        ));
+        assert!(refused(
+            "INSERT INTO team_members (id, worktree, kind, role, harness, session_id)
+             VALUES ('blank', '/repo', 'agent', 'Tester', 'claude', '')"
+        ));
     }
 }

@@ -5,6 +5,8 @@ mod bots;
 mod browser;
 mod changes;
 mod config;
+#[cfg(debug_assertions)]
+mod dev_scope;
 mod error;
 mod files;
 mod git;
@@ -42,10 +44,40 @@ use watching::watch_commands::WatchState;
 use workspace::workspace_service::WorkspaceService;
 
 /// `LYNX_HOME` wins, so tests and portable setups can keep everything in one folder.
+#[cfg(not(debug_assertions))]
 fn lynx_home(user_home: PathBuf) -> PathBuf {
     std::env::var_os("LYNX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| user_home.join(".lynx"))
+}
+
+/// A debug build keeps to its branch's own folder unless `LYNX_HOME` says otherwise.
+#[cfg(debug_assertions)]
+fn lynx_home(user_home: PathBuf) -> PathBuf {
+    match std::env::var_os("LYNX_HOME") {
+        Some(home) => PathBuf::from(home),
+        None => dev_scope::dev_home(dev_scope_branch(), &user_home),
+    }
+}
+
+/// The branch of this debug build, read once: every call must agree, or the data would split.
+#[cfg(debug_assertions)]
+fn dev_scope_branch() -> &'static str {
+    static BRANCH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BRANCH.get_or_init(|| {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        dev_scope::dev_branch(manifest.parent().unwrap_or(manifest))
+    })
+}
+
+#[cfg(not(debug_assertions))]
+fn app_database_file(app_data: PathBuf) -> PathBuf {
+    app_data.join("app.db")
+}
+
+#[cfg(debug_assertions)]
+fn app_database_file(app_data: PathBuf) -> PathBuf {
+    dev_scope::dev_database(&app_data, dev_scope_branch())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -100,6 +132,12 @@ pub fn run() {
             if let Err(error) = app_log::init(&lynx_home(user_home.clone())) {
                 eprintln!("lynx: could not start the log: {error}");
             }
+            #[cfg(debug_assertions)]
+            log::info!(
+                "debug build on branch \"{}\": LYNX_HOME {}",
+                dev_scope_branch(),
+                lynx_home(user_home.clone()).display()
+            );
             let executable = app_image_environment::launch_executable(std::env::current_exe().ok());
             let hook_targets = HookTargets::from_environment(&user_home, executable.as_deref());
             // Agents turned on before the browser tools existed get them too; this waits on the
@@ -165,7 +203,8 @@ pub fn run() {
             )));
             app.manage(channel_chat);
 
-            let database_file = app.path().app_data_dir()?.join("app.db");
+            // AppDatabase::open creates the folder the file sits in.
+            let database_file = app_database_file(app.path().app_data_dir()?);
             let worktrees_config = Arc::clone(&config);
             app.manage(WorkspaceService::new(
                 AppDatabase::open(&database_file)?,
@@ -229,15 +268,28 @@ pub fn run() {
             ));
             app.manage(Arc::clone(&orchestration));
             // The team has its own connection to the same file, as orchestration does.
-            // A bot joins a team only while its folder is under the bots folder.
+            // A bot joins a team only while its folder is under the bots folder. One check is built here:
+            // the service keeps a copy and the startup reconcile below reads the same bots folder.
             let team_database = Arc::new(AppDatabase::open(&database_file)?);
             let team_bots = bots_dir.clone();
-            app.manage(Arc::new(team::team_service::TeamService::new(
+            let bot_exists =
+                move |bot_id: &str| bots::bot_folder::folder_of(&team_bots, bot_id).is_ok();
+            let team = Arc::new(team::team_service::TeamService::new(
                 team_database,
-                Box::new(move |bot_id: &str| {
-                    bots::bot_folder::folder_of(&team_bots, bot_id).is_ok()
-                }),
-            )));
+                Box::new(bot_exists.clone()),
+            ));
+            app.manage(Arc::clone(&team));
+            // A bot deleted before its team lines went with it may have left members behind. Only a folder that is
+            // really gone counts: an unreadable bot.json must not clear a bot's team. Best effort: a failure is
+            // logged and the app still starts.
+            let bot_folder_gone = |bot_id: &str| !bots_dir.join(bot_id).is_dir();
+            match team.remove_missing_bots(bot_folder_gone) {
+                Ok(0) => {}
+                Ok(removed) => {
+                    log::info!("removed {removed} team members of bots that no longer exist")
+                }
+                Err(error) => log::error!("could not clear the team of deleted bots: {error}"),
+            }
             let announce = bots::bots_commands::announce_message(app.handle().clone());
             let bot_chat = Arc::clone(&*app.state::<Arc<bots::bot_chat::BotChat>>());
             bot_chat.attach_announce(Arc::clone(&announce));

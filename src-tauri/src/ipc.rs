@@ -189,15 +189,15 @@ pub fn builder() -> Builder<tauri::Wry> {
             updates::install_update,
             updates::restart_to_update,
             team::team_snapshot,
-            team::team_create_run,
-            team::team_delete_run,
             team::team_add_member,
             team::team_set_parent,
             team::team_set_orchestrator,
             team::team_set_role,
             team::team_set_task,
             team::team_dismiss_member,
+            team::team_set_session,
             team::team_set_linked,
+            team::team_set_expanded,
         ])
         .events(collect_events![
             TerminalCreated,

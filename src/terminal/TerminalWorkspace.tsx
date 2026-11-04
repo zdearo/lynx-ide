@@ -23,7 +23,11 @@ import { TerminalTabs } from "@/terminal/TerminalTabs";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalView } from "@/terminal/TerminalView";
 import { TeamTopBar } from "@/team/TeamTopBar";
-import { teamModeOf, useTeamStore } from "@/team/team-store";
+import {
+  teamDialogSessionId,
+  teamModeOf,
+  useTeamStore,
+} from "@/team/team-store";
 import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
 import {
@@ -68,6 +72,10 @@ export function TerminalWorkspace({
   const browserOpen = useBrowserStore((state) => state.open);
   const teamMode =
     useTeamStore((state) => teamModeOf(state.modeByWorktree, path)) === "team";
+  // The session the team's terminal dialog draws: this element leaves it out, so only one view attaches to it.
+  const teamSession = useTeamStore((state) =>
+    teamMode ? teamDialogSessionId(state, path) : null,
+  );
   // In the Bots view the main area is the chat with the picked bot; the terminals stay mounted, hidden.
   const botsView = useNavigationStore((state) => state.activeView === "bots");
   const bot = useBotsStore(selectedBotOf);
@@ -96,12 +104,17 @@ export function TerminalWorkspace({
     useBrowserStore.getState().setOpen(false);
     useEditorStore.getState().show(path, null);
   }, [teamMode, path]);
-  // A terminal started from anywhere (the + menu, the shortcut) comes in front of the team.
+  // A terminal started from anywhere (the + menu, the shortcut) comes in front of the team. An agent the team
+  // adds starts in the background: the team stays on screen.
   useEffect(
     () =>
       useTerminalStore.subscribe((state, previous) => {
         const created = state.sessions[state.sessions.length - 1];
-        if (state.sessions.length > previous.sessions.length && created) {
+        if (
+          state.sessions.length > previous.sessions.length &&
+          created &&
+          !useTeamStore.getState().addingSession
+        ) {
           useTeamStore.getState().setMode(created.worktreePath, "terminal");
         }
       }),
@@ -140,32 +153,34 @@ export function TerminalWorkspace({
       {!botsView && !teamMode && path && <FileTabs worktreePath={path} />}
       <div className="relative min-h-0 flex-1">
         {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. */}
-        {sessions.map((session) => (
-          // A hidden session must leave the layout too: its box would still take the clicks meant for the visible one.
-          <div
-            key={session.id}
-            className={cn(
-              "absolute inset-0",
-              (session.id !== activeId ||
-                openFile ||
-                browserOpen ||
-                teamMode ||
-                botsView) &&
-                "hidden",
-            )}
-          >
-            <TerminalView
-              terminalId={session.id}
-              active={
-                session.id === activeId &&
-                !openFile &&
-                !browserOpen &&
-                !teamMode &&
-                !botsView
-              }
-            />
-          </div>
-        ))}
+        {sessions.map((session) =>
+          session.id === teamSession ? null : (
+            // A hidden session must leave the layout too: its box would still take the clicks meant for the visible one.
+            <div
+              key={session.id}
+              className={cn(
+                "absolute inset-0",
+                (session.id !== activeId ||
+                  openFile ||
+                  browserOpen ||
+                  teamMode ||
+                  botsView) &&
+                  "hidden",
+              )}
+            >
+              <TerminalView
+                terminalId={session.id}
+                active={
+                  session.id === activeId &&
+                  !openFile &&
+                  !browserOpen &&
+                  !teamMode &&
+                  !botsView
+                }
+              />
+            </div>
+          ),
+        )}
         {botsView && <BotArea />}
         {!botsView && loaded && repoCount === 0 && <Welcome />}
         {!botsView && path && openFile && (

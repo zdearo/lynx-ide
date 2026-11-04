@@ -17,6 +17,7 @@ import type {
   ChannelSummary,
   ChatGptStatus,
   ChatMessage,
+  ResumableSession,
   RunningCommand,
   ThreadSummary,
   ConfigSnapshot,
@@ -28,17 +29,17 @@ import type {
   PlanUsage,
   Repo,
   TeamMember as TeamMemberRecord,
-  TeamRun,
   TeamSnapshot,
   TerminalInfo,
   UpdateStatus,
   WorktreeInfo,
 } from "@/bindings";
 import {
+  TEAM_AUTH_WORKTREE,
   TEAM_DOCS_MEMBERS,
   TEAM_MEMBERS,
   TEAM_PAIRS,
-  TEAM_RUNS,
+  TEAM_ROOT_ID,
   type TeamMember as MockTeamMember,
 } from "@/team/team-fixtures";
 import { canOrchestrate } from "@/team/team-hierarchy";
@@ -533,7 +534,7 @@ export function installMockTauri(scenario: string): void {
   let writeCounter = 0;
   // The ChatGPT sign-in in miniature: the browser step is skipped, and the answer comes a moment later.
   // The bots in miniature: the list starts empty, as a new install does, and makes are kept here. The full
-  // mock has one bot, the Team's Lead in its docs run.
+  // mock has one bot, the Team's Lead in the docs team.
   let mockBots: BotSummary[] =
     scenario === "full"
       ? [
@@ -707,6 +708,20 @@ export function installMockTauri(scenario: string): void {
 
   let nextSessionId = 0;
   const sessions: TerminalInfo[] = [];
+  // Ended agent sessions per worktree, as the resumable list shows them. The login tests agent's session ended here.
+  const resumable: Record<string, ResumableSession[]> =
+    scenario === "full"
+      ? {
+          [TEAM_AUTH_WORKTREE]: [
+            {
+              id: "ended-login-tests",
+              harness: "claude",
+              resumeArguments: ["--resume", "7c1f0e2a-login-tests"],
+              endedAt: Math.floor(Date.now() / 1000) - 1800,
+            },
+          ],
+        }
+      : {};
   const transcripts = new Map<string, string>();
   const seq = new Map<string, number>();
 
@@ -1018,13 +1033,16 @@ export function installMockTauri(scenario: string): void {
 
   // The team in miniature. Its rules are the screen's own (team-hierarchy, team-pairs), so the mock refuses what
   // the backend refuses; the messages are the backend's for the common refusals.
-  let mockRuns: TeamRun[] = scenario === "full" ? [...TEAM_RUNS] : [];
   let mockMembers: MockTeamMember[] =
     scenario === "full"
       ? structuredClone([...TEAM_MEMBERS, ...TEAM_DOCS_MEMBERS])
       : [];
   let mockPairs: TeamPair[] =
     scenario === "full" ? TEAM_PAIRS.map(([from, to]) => ({ from, to })) : [];
+  // The members whose branch is open: the seeded lead and docs bot, as the backend seeds a root orchestrator.
+  const mockExpanded = new Set<string>(
+    scenario === "full" ? [TEAM_ROOT_ID, "docs-lead"] : [],
+  );
   const teamError = (
     kind: "teamNotFound" | "teamInvalid" | "teamRefused",
     message: string,
@@ -1049,21 +1067,28 @@ export function installMockTauri(scenario: string): void {
     if (!member) throw teamError("teamNotFound", `no member with id ${id}`);
     return member;
   };
-  const runNamed = (id: string) => {
-    if (!mockRuns.some((run) => run.id === id)) {
-      throw teamError("teamNotFound", `no run with id ${id}`);
+  // The worktree a member joins: an absolute path with no .. step, as the backend checks it.
+  const worktreeOf = (value: unknown) => {
+    const path = String(value);
+    if (!path.startsWith("/") || path.split("/").includes("..")) {
+      throw teamError(
+        "teamInvalid",
+        "the worktree needs an absolute path with no .. steps",
+      );
     }
+    return path;
   };
   // A member the mock makes starts with nothing live, as the screen's own defaults.
-  const freshMember = (id: string, runId: string, role: string) => ({
+  const freshMember = (id: string, worktree: string, role: string) => ({
     id,
-    runId,
+    worktree,
     role,
     status: "idle" as const,
     parentId: null as string | null,
     orchestrator: false,
     task: "",
     acceptance: "",
+    sessionId: null as string | null,
     activity: { text: "", at: 0 },
     branch: null as string | null,
     added: 0,
@@ -1075,7 +1100,7 @@ export function installMockTauri(scenario: string): void {
   });
   const recordOf = (member: MockTeamMember): TeamMemberRecord => ({
     id: member.id,
-    runId: member.runId,
+    worktree: member.worktree,
     kind: member.kind,
     role: member.role,
     harness: member.kind === "agent" ? member.harness : null,
@@ -1084,9 +1109,10 @@ export function installMockTauri(scenario: string): void {
     orchestrator: member.orchestrator,
     task: member.task,
     acceptance: member.acceptance,
+    sessionId: member.kind === "agent" ? member.sessionId : null,
+    expanded: mockExpanded.has(member.id),
   });
   const teamSnapshot = (): TeamSnapshot => ({
-    runs: structuredClone(mockRuns),
     members: mockMembers.map(recordOf),
     pairs: mockPairs.map(({ from, to }) => ({
       a: from < to ? from : to,
@@ -1115,10 +1141,10 @@ export function installMockTauri(scenario: string): void {
         "a member cannot be its own orchestrator or pair with itself",
       );
     }
-    if (parent.runId !== child.runId) {
+    if (parent.worktree !== child.worktree) {
       throw teamError(
         "teamRefused",
-        "members of different runs cannot be linked",
+        "members of different worktrees cannot be linked or answer to each other",
       );
     }
     if (!parent.orchestrator) {
@@ -1145,10 +1171,10 @@ export function installMockTauri(scenario: string): void {
         "a member cannot be its own orchestrator or pair with itself",
       );
     }
-    if (first.runId !== second.runId) {
+    if (first.worktree !== second.worktree) {
       throw teamError(
         "teamRefused",
-        "members of different runs cannot be linked",
+        "members of different worktrees cannot be linked or answer to each other",
       );
     }
     if (
@@ -1613,62 +1639,18 @@ export function installMockTauri(scenario: string): void {
           return structuredClone(configSnapshot);
         case "team_snapshot":
           return teamSnapshot();
-        case "team_create_run": {
-          const title = cleanText(
-            args.title,
-            1,
-            80,
-            "the run needs a goal of 1 to 80 characters",
-          );
-          const runId = crypto.randomUUID();
-          const botId = typeof args.botId === "string" ? args.botId : null;
-          const lead: MockTeamMember =
-            botId === null
-              ? {
-                  ...freshMember(crypto.randomUUID(), runId, "Lead"),
-                  kind: "agent",
-                  harness: "claude",
-                  orchestrator: true,
-                }
-              : {
-                  ...freshMember(crypto.randomUUID(), runId, "Lead"),
-                  kind: "bot",
-                  botId,
-                  orchestrator: true,
-                };
-          mockRuns = [...mockRuns, { id: runId, title }];
-          mockMembers = [...mockMembers, lead];
-          teamChanged();
-          return { id: runId, title };
-        }
-        case "team_delete_run": {
-          const runId = String(args.runId);
-          runNamed(runId);
-          const gone = new Set(
-            mockMembers
-              .filter((member) => member.runId === runId)
-              .map((member) => member.id),
-          );
-          mockRuns = mockRuns.filter((run) => run.id !== runId);
-          mockMembers = mockMembers.filter((member) => member.runId !== runId);
-          mockPairs = mockPairs.filter(
-            (pair) => !gone.has(pair.from) && !gone.has(pair.to),
-          );
-          return teamChanged();
-        }
         case "team_add_member": {
-          const runId = String(args.runId);
-          runNamed(runId);
           const input = args.member as NewTeamMember;
           const id = crypto.randomUUID();
           let added: MockTeamMember;
           if (input.kind === "agent") {
             const role = cleanText(input.role, 1, 40, ROLE_MESSAGE);
             const candidate: MockTeamMember = {
-              ...freshMember(id, runId, role),
+              ...freshMember(id, worktreeOf(input.worktree), role),
               kind: "agent",
               harness: input.harness,
               orchestrator: input.orchestrator,
+              sessionId: input.sessionId,
             };
             // A member with no orchestrator keeps no task.
             let task = "";
@@ -1689,23 +1671,28 @@ export function installMockTauri(scenario: string): void {
               acceptance,
             };
           } else {
+            const worktree = worktreeOf(input.worktree);
             if (!/^[a-z0-9-]+$/.test(input.botId)) {
               throw teamError("teamInvalid", "that is not a bot id");
             }
+            // A bot joins a worktree's team once.
             if (
               mockMembers.some(
                 (member) =>
-                  member.runId === runId &&
+                  member.worktree === worktree &&
                   member.kind === "bot" &&
                   member.botId === input.botId,
               )
             ) {
-              throw teamError("teamRefused", "that bot is already in this run");
+              throw teamError(
+                "teamRefused",
+                "that bot is already in this worktree's team",
+              );
             }
             added = {
               ...freshMember(
                 id,
-                runId,
+                worktree,
                 cleanText(input.role, 1, 40, ROLE_MESSAGE),
               ),
               kind: "bot",
@@ -1714,6 +1701,10 @@ export function installMockTauri(scenario: string): void {
             };
           }
           mockMembers = [...mockMembers, added];
+          // A root orchestrator opens its branch; anything else starts closed.
+          if (added.orchestrator && added.parentId === null) {
+            mockExpanded.add(added.id);
+          }
           teamChanged();
           return recordOf(added);
         }
@@ -1781,9 +1772,20 @@ export function installMockTauri(scenario: string): void {
           member.acceptance = acceptance;
           return teamChanged();
         }
+        case "team_set_session": {
+          const member = memberNamed(String(args.memberId));
+          if (member.kind === "bot") {
+            throw teamError("teamRefused", "a bot runs no terminal session");
+          }
+          const sessionId =
+            typeof args.sessionId === "string" ? args.sessionId : null;
+          // Clearing the session keeps the worktree, so a session started later goes back there.
+          member.sessionId = sessionId;
+          return teamChanged();
+        }
         case "team_dismiss_member": {
           const id = String(args.memberId);
-          memberNamed(id);
+          const dismissed = memberNamed(id);
           // The members it orchestrated answer to no one, and lose their task.
           for (const other of mockMembers) {
             if (other.parentId !== id) continue;
@@ -1795,6 +1797,15 @@ export function installMockTauri(scenario: string): void {
           mockPairs = mockPairs.filter(
             (pair) => pair.from !== id && pair.to !== id,
           );
+          teamChanged();
+          // The session the member ran in, so the screen can close it.
+          return dismissed.kind === "agent" ? dismissed.sessionId : null;
+        }
+        case "team_set_expanded": {
+          const id = String(args.memberId);
+          memberNamed(id);
+          if (args.expanded) mockExpanded.add(id);
+          else mockExpanded.delete(id);
           return teamChanged();
         }
         case "team_set_linked": {
@@ -2745,10 +2756,16 @@ export function installMockTauri(scenario: string): void {
           return null;
         case "hibernate_terminal":
           return null;
-        case "forget_resumable_session":
+        case "forget_resumable_session": {
+          // The backend drops every ended record of the conversation; each mock session is its own, so its id is enough.
+          const id = String(args.id);
+          for (const [path, rows] of Object.entries(resumable)) {
+            resumable[path] = rows.filter((row) => row.id !== id);
+          }
           return null;
+        }
         case "list_resumable_sessions":
-          return [];
+          return structuredClone(resumable[String(args.worktreePath)] ?? []);
         case "prepare_quit":
           return null;
         case "mark_agent_seen":

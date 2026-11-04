@@ -1,10 +1,25 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
-import type { TeamSnapshot } from "@/bindings";
+import type {
+  AgentStatus,
+  ResumableSession,
+  TeamSnapshot,
+  TerminalInfo,
+} from "@/bindings";
 import { IpcRequestError } from "@/lib/ipc-result";
 import { onTeamChanged, teamBackend } from "@/team/team-backend";
-import { useTeamStore, watchTeam } from "@/team/team-store";
+import {
+  agentNameOf,
+  membersOfWorktree,
+  statusOfSession,
+  teamDialogSessionId,
+  useTeamStore,
+  watchTeam,
+} from "@/team/team-store";
+import { requestCloseTerminal, resumeLine } from "@/terminal/terminal-actions";
+import { useTerminalStore } from "@/terminal/terminal-store";
+import { useWorkspaceStore } from "@/workspace/workspace-store";
 import { copy } from "@/ui-copy";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
@@ -13,31 +28,52 @@ vi.mock("@/dev/mock-mode", () => ({ isMockBackend: () => false }));
 vi.mock("@/team/team-backend", () => ({
   teamBackend: {
     snapshot: vi.fn(),
-    createRun: vi.fn(),
-    deleteRun: vi.fn(),
     addMember: vi.fn(),
     setParent: vi.fn(),
     setOrchestrator: vi.fn(),
     setRole: vi.fn(),
     setTask: vi.fn(),
+    setSession: vi.fn(),
     dismissMember: vi.fn(),
     setLinked: vi.fn(),
+    setExpanded: vi.fn(),
   },
   onTeamChanged: vi.fn(),
+}));
+// The terminal is the session store's: a fake that records what the team asks of it.
+const terminal = vi.hoisted(() => ({
+  create: vi.fn(),
+  close: vi.fn(),
+  sessions: [] as TerminalInfo[],
+}));
+vi.mock("@/terminal/terminal-store", () => ({
+  useTerminalStore: { getState: () => terminal, subscribe: vi.fn() },
+}));
+vi.mock("@/terminal/terminal-actions", () => ({
+  resumeLine: vi.fn(),
+  requestCloseTerminal: vi.fn(),
+}));
+// The ended sessions the list holds, by worktree, and the calls the team makes of the list.
+const resumable = vi.hoisted(() => ({
+  byWorktree: {} as Record<string, ResumableSession[]>,
+  refresh: vi.fn(),
+  remove: vi.fn(),
+}));
+vi.mock("@/workspace/resumable-store", () => ({
+  useResumableStore: { getState: () => resumable },
 }));
 
 const api = vi.mocked(teamBackend);
 const initialState = useTeamStore.getState();
 
+const AUTH = "/work/auth";
+const DOCS = "/work/docs";
+
 const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
-  runs: [
-    { id: "auth", title: "Auth refactor" },
-    { id: "docs", title: "Docs rewrite" },
-  ],
   members: [
     {
       id: "lead",
-      runId: "auth",
+      worktree: AUTH,
       kind: "agent",
       role: "Lead",
       harness: "claude",
@@ -46,10 +82,12 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       orchestrator: true,
       task: "",
       acceptance: "",
+      sessionId: null,
+      expanded: false,
     },
     {
       id: "builder",
-      runId: "auth",
+      worktree: AUTH,
       kind: "agent",
       role: "Builder",
       harness: "codex",
@@ -58,10 +96,12 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       orchestrator: true,
       task: "login form",
       acceptance: "The form submits.",
+      sessionId: null,
+      expanded: false,
     },
     {
       id: "reviewer",
-      runId: "auth",
+      worktree: AUTH,
       kind: "agent",
       role: "Reviewer",
       harness: "claude",
@@ -70,10 +110,12 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       orchestrator: false,
       task: "",
       acceptance: "",
+      sessionId: null,
+      expanded: false,
     },
     {
       id: "docs-lead",
-      runId: "docs",
+      worktree: DOCS,
       kind: "bot",
       role: "Lead",
       harness: null,
@@ -82,9 +124,29 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       orchestrator: true,
       task: "",
       acceptance: "",
+      sessionId: null,
+      expanded: false,
     },
   ],
   pairs: [{ a: "builder", b: "reviewer" }],
+  ...overrides,
+});
+
+/** A terminal session as the store lists it: a Claude agent in the selected worktree, running. */
+const session = (
+  id: string,
+  overrides: Partial<TerminalInfo> = {},
+): TerminalInfo => ({
+  id,
+  worktreePath: AUTH,
+  command: "claude",
+  shell: "zsh",
+  running: true,
+  hibernated: false,
+  exitCode: null,
+  startedAt: 0,
+  harness: "claude",
+  agentStatus: "idle",
   ...overrides,
 });
 
@@ -100,21 +162,36 @@ async function loadTeam(team: TeamSnapshot = snapshot()) {
 const refused = (message: string) =>
   new IpcRequestError({ kind: "teamRefused", message });
 
+/** The default team with the given members' branches open, as the backend flags them. */
+const withExpanded = (ids: string[]): TeamSnapshot => {
+  const base = snapshot();
+  return {
+    ...base,
+    members: base.members.map((member) => ({
+      ...member,
+      expanded: ids.includes(member.id),
+    })),
+  };
+};
+
 beforeEach(() => {
   vi.resetAllMocks();
+  terminal.sessions = [];
+  resumable.byWorktree = {};
+  resumable.remove.mockResolvedValue(undefined);
   useTeamStore.setState(initialState, true);
+  useWorkspaceStore.setState({ selectedWorktreePath: null });
 });
 
 describe("team load", () => {
-  it("shows the runs, members and lines the backend sends, with the first run on screen", async () => {
+  it("shows the members and lines the backend sends, each in its worktree", async () => {
     await loadTeam();
 
     expect(store()).toMatchObject({
       loaded: true,
-      runId: "auth",
-      runs: [{ id: "auth" }, { id: "docs" }],
       pairs: [{ from: "builder", to: "reviewer" }],
     });
+    expect(member("lead")).toMatchObject({ worktree: AUTH });
     expect(member("builder")).toMatchObject({
       kind: "agent",
       harness: "codex",
@@ -125,17 +202,14 @@ describe("team load", () => {
     expect(member("docs-lead")).toMatchObject({ kind: "bot", botId: "lead" });
   });
 
-  it("keeps the run on screen while it exists, and falls back to the first run once it is gone", async () => {
+  it("gives the members of one worktree, and none with no worktree selected", async () => {
     await loadTeam();
-    store().setRun("docs");
 
-    await loadTeam(snapshot());
-    expect(store().runId).toBe("docs");
-
-    await loadTeam(
-      snapshot({ runs: [{ id: "auth", title: "Auth refactor" }] }),
-    );
-    expect(store().runId).toBe("auth");
+    const ids = (worktree: string | null) =>
+      membersOfWorktree(store().members, worktree).map((m) => m.id);
+    expect(ids(AUTH)).toEqual(["lead", "builder", "reviewer"]);
+    expect(ids(DOCS)).toEqual(["docs-lead"]);
+    expect(ids(null)).toEqual([]);
   });
 
   it("drops a read that a newer read overtakes", async () => {
@@ -146,14 +220,14 @@ describe("team load", () => {
           finishOlder = resolve;
         }),
       )
-      .mockResolvedValueOnce(snapshot({ runs: [] }));
+      .mockResolvedValueOnce(snapshot({ members: [], pairs: [] }));
 
     const older = store().load();
     await store().load();
     finishOlder(snapshot());
     await older;
 
-    expect(store().runs).toEqual([]);
+    expect(store().members).toEqual([]);
   });
 
   it("shows a message and keeps the screen when the backend cannot send the team", async () => {
@@ -207,6 +281,9 @@ describe("team layout", () => {
 describe("team changes", () => {
   beforeEach(async () => {
     await loadTeam();
+    useWorkspaceStore.setState({ selectedWorktreePath: AUTH });
+    vi.mocked(resumeLine).mockResolvedValue("claude");
+    terminal.create.mockResolvedValue({ id: "s1" });
   });
 
   it("sends a role change to the backend, and shows nothing until the team is read again", async () => {
@@ -234,13 +311,23 @@ describe("team changes", () => {
     expect(member("lead")?.parentId).toBeNull();
   });
 
-  it("shows a member under its new orchestrator, unfolded, once the backend accepts it", async () => {
+  it("opens a shut new orchestrator through the backend once it accepts the member", async () => {
+    api.setParent.mockResolvedValue(null);
+    api.setExpanded.mockResolvedValue(null);
+
+    await store().setParent("reviewer", "builder");
+
+    expect(api.setExpanded).toHaveBeenCalledWith("builder", true);
+    expect(store().extraRows.reviewer).toBe(0);
+  });
+
+  it("does not ask for a new orchestrator that is already open", async () => {
+    await loadTeam(withExpanded(["builder"]));
     api.setParent.mockResolvedValue(null);
 
     await store().setParent("reviewer", "builder");
 
-    expect(store().expanded).toContain("builder");
-    expect(store().extraRows.reviewer).toBe(0);
+    expect(api.setExpanded).not.toHaveBeenCalled();
   });
 
   it("forgets a dismissed member that was picked", async () => {
@@ -284,17 +371,20 @@ describe("team changes", () => {
       harness: "claude",
       parentId: "lead",
       orchestrator: false,
-      task: "check it",
-      acceptance: "",
     });
 
     expect(added).toBe(true);
+    // No task is sent: the orchestrator gives it later.
     expect(api.addMember).toHaveBeenCalledWith(
-      "auth",
-      expect.objectContaining({ role: "Scout", parentId: "lead" }),
+      expect.objectContaining({
+        role: "Scout",
+        parentId: "lead",
+        task: "",
+        worktree: AUTH,
+      }),
     );
     expect(store()).toMatchObject({ selectedId: "scout", addOpen: false });
-    expect(store().expanded).toContain("lead");
+    expect(api.setExpanded).toHaveBeenCalledWith("lead", true);
   });
 
   it("keeps the dialog open when the backend refuses a member", async () => {
@@ -308,8 +398,6 @@ describe("team changes", () => {
       harness: "claude",
       parentId: "reviewer",
       orchestrator: false,
-      task: "",
-      acceptance: "",
     });
 
     expect(added).toBe(false);
@@ -317,36 +405,6 @@ describe("team changes", () => {
       description: "only an orchestrator can have members under it",
     });
     expect(store().selectedId).toBeNull();
-  });
-
-  it("starts a run and shows it", async () => {
-    api.createRun.mockResolvedValue({ id: "release", title: "Release notes" });
-
-    const started = await store().addRun("Release notes");
-
-    expect(started).toBe(true);
-    expect(api.createRun).toHaveBeenCalledWith("Release notes");
-    expect(store().runId).toBe("release");
-  });
-
-  it("deletes a run through the backend", async () => {
-    api.deleteRun.mockResolvedValue(null);
-
-    await store().deleteRun("docs");
-
-    expect(api.deleteRun).toHaveBeenCalledWith("docs");
-  });
-
-  it("closes the delete confirmation once the run is gone, and keeps it open when refused", async () => {
-    store().setDeleteRunOpen(true);
-    api.deleteRun.mockRejectedValueOnce(refused("the run is busy"));
-
-    await store().deleteRun("docs");
-    expect(store().deleteRunOpen).toBe(true);
-
-    api.deleteRun.mockResolvedValueOnce(null);
-    await store().deleteRun("docs");
-    expect(store().deleteRunOpen).toBe(false);
   });
 
   it("changes a member's task through the backend, and says so when it refuses the change", async () => {
@@ -372,56 +430,670 @@ describe("team changes", () => {
 });
 
 describe("team expansion", () => {
-  /** An in-memory localStorage: the tests run without a browser. */
-  function storageWith(
-    setItem: (key: string, value: string) => void = () => {},
-  ) {
-    const items = new Map<string, string>();
+  it("opens the members the backend flags as expanded, and no others", async () => {
+    await loadTeam(withExpanded(["lead"]));
+
+    expect(store().expanded).toEqual(["lead"]);
+  });
+
+  it("asks the backend to open a shut member, and shows nothing until the team is read again", async () => {
+    await loadTeam();
+    api.setExpanded.mockResolvedValue(null);
+
+    await store().toggle("builder");
+
+    expect(api.setExpanded).toHaveBeenCalledWith("builder", true);
+    expect(store().expanded).toEqual([]);
+  });
+
+  it("asks the backend to shut an open member, and keeps it open until the team is read", async () => {
+    await loadTeam(withExpanded(["lead"]));
+    api.setExpanded.mockResolvedValue(null);
+
+    await store().toggle("lead");
+
+    expect(api.setExpanded).toHaveBeenCalledWith("lead", false);
+    expect(store().expanded).toEqual(["lead"]);
+  });
+
+  it("shows the flag the backend sends back, once the team is read again", async () => {
+    await loadTeam();
+    api.setExpanded.mockResolvedValue(null);
+    await store().toggle("builder");
+
+    await loadTeam(withExpanded(["builder"]));
+
+    expect(store().expanded).toEqual(["builder"]);
+  });
+
+  it("shows the backend's message for a refused toggle, and leaves the member as it was", async () => {
+    await loadTeam();
+    api.setExpanded.mockRejectedValue(refused("no member with id builder"));
+
+    await store().toggle("builder");
+
+    expect(toast.error).toHaveBeenCalledWith(copy.team.changeRefused, {
+      description: "no member with id builder",
+    });
+    expect(store().expanded).toEqual([]);
+  });
+});
+
+describe("team sessions", () => {
+  // The listener the store subscribed to the terminal store when it loaded.
+  const onTerminalChange = vi.mocked(useTerminalStore.subscribe).mock
+    .calls[0]?.[0] as (state: unknown, previous: unknown) => void;
+  const agentDraft = {
+    kind: "agent" as const,
+    role: "Scout",
+    harness: "claude" as const,
+    parentId: "lead",
+    orchestrator: false,
+    task: "check it",
+    acceptance: "",
+  };
+
+  /** The team the backend sends, with the given agents running in sessions in the selected worktree. */
+  function teamWithSessions(
+    sessions: Record<string, string>,
+    members = snapshot().members,
+  ): TeamSnapshot {
     return {
-      getItem: (key: string) => items.get(key) ?? null,
-      setItem: (key: string, value: string) => {
-        setItem(key, value);
-        items.set(key, value);
-      },
+      ...snapshot(),
+      members: members.map((member) =>
+        member.id in sessions
+          ? {
+              ...member,
+              worktree: AUTH,
+              sessionId: sessions[member.id],
+            }
+          : member,
+      ),
     };
   }
 
-  /** The store as a page load makes it: a fresh module, which reads what was stored. */
-  async function loadedAfterReload() {
-    vi.resetModules();
-    const fresh = await import("@/team/team-store");
-    const backend = await import("@/team/team-backend");
-    vi.mocked(backend.teamBackend.snapshot).mockResolvedValue(snapshot());
-    await fresh.useTeamStore.getState().load();
-    return fresh.useTeamStore;
-  }
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  beforeEach(async () => {
+    await loadTeam();
+    useWorkspaceStore.setState({ selectedWorktreePath: AUTH });
+    vi.mocked(resumeLine).mockResolvedValue("claude");
+    terminal.create.mockResolvedValue({ id: "s1" });
   });
 
-  it("keeps a member the user folded folded when the team is read after a reload", async () => {
-    vi.stubGlobal("localStorage", storageWith());
+  it("starts the agent in the selected worktree and adds it with that session", async () => {
+    api.addMember.mockResolvedValue({
+      ...snapshot().members[2],
+      id: "scout",
+      role: "Scout",
+      worktree: AUTH,
+      sessionId: "s1",
+    });
 
-    const first = await loadedAfterReload();
-    expect(first.getState().expanded).toContain("lead");
-    first.getState().toggle("lead");
+    expect(await store().addMember(agentDraft)).toBe(true);
 
-    const second = await loadedAfterReload();
-    expect(second.getState().expanded).not.toContain("lead");
-  });
-
-  it("still folds a member when storage refuses to save", async () => {
-    vi.stubGlobal(
-      "localStorage",
-      storageWith(() => {
-        throw new Error("storage is full");
+    expect(resumeLine).toHaveBeenCalledWith("claude", []);
+    expect(terminal.create).toHaveBeenCalledWith(AUTH, "claude");
+    expect(api.addMember).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "Scout",
+        worktree: AUTH,
+        sessionId: "s1",
       }),
     );
+    expect(store().addingSession).toBe(false);
+  });
 
-    const blocked = await loadedAfterReload();
-    blocked.getState().toggle("lead");
+  it("marks the add as starting a session only while the terminal is created", async () => {
+    let flagDuringCreate = false;
+    terminal.create.mockImplementation(async () => {
+      flagDuringCreate = store().addingSession;
+      return { id: "s1" };
+    });
+    api.addMember.mockResolvedValue(snapshot().members[2]);
 
-    expect(blocked.getState().expanded).not.toContain("lead");
+    await store().addMember(agentDraft);
+
+    expect(flagDuringCreate).toBe(true);
+    expect(store().addingSession).toBe(false);
+  });
+
+  it("refuses an agent when no worktree is selected, and changes nothing", async () => {
+    useWorkspaceStore.setState({ selectedWorktreePath: null });
+
+    expect(await store().addMember(agentDraft)).toBe(false);
+
+    expect(toast.error).toHaveBeenCalledWith(copy.team.add.noWorktree);
+    expect(terminal.create).not.toHaveBeenCalled();
+    expect(api.addMember).not.toHaveBeenCalled();
+    expect(store().addOpen).toBe(false);
+  });
+
+  it("closes the session it started when the team refuses the member", async () => {
+    api.addMember.mockRejectedValue(
+      refused("an orchestrator cannot answer to one of its own members"),
+    );
+    store().setAddOpen(true);
+
+    expect(await store().addMember(agentDraft)).toBe(false);
+
+    expect(terminal.close).toHaveBeenCalledWith("s1");
+    expect(toast.error).toHaveBeenCalledWith(copy.team.changeRefused, {
+      description: "an orchestrator cannot answer to one of its own members",
+    });
+    expect(store().addOpen).toBe(true);
+  });
+
+  it("adds a bot to the selected worktree's team, with no session, and starts no terminal", async () => {
+    api.addMember.mockResolvedValue(snapshot().members[3]);
+
+    expect(
+      await store().addMember({ kind: "bot", botId: "lead", role: "Lead" }),
+    ).toBe(true);
+
+    expect(api.addMember).toHaveBeenCalledWith({
+      kind: "bot",
+      botId: "lead",
+      role: "Lead",
+      worktree: AUTH,
+    });
+    expect(terminal.create).not.toHaveBeenCalled();
+  });
+
+  it("returns the session of a dismissed agent to the close policy", async () => {
+    await loadTeam(teamWithSessions({ builder: "s1" }));
+    api.dismissMember.mockResolvedValue("s1");
+
+    await store().dismiss("builder");
+    // The backend sends the team again once the member is gone.
+    await loadTeam(
+      teamWithSessions(
+        {},
+        snapshot().members.filter((member) => member.id !== "builder"),
+      ),
+    );
+
+    expect(api.dismissMember).toHaveBeenCalledWith("builder");
+    expect(requestCloseTerminal).toHaveBeenCalledWith("s1");
+    expect(terminal.close).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing about a terminal when a bot is dismissed", async () => {
+    api.dismissMember.mockResolvedValue(null);
+
+    await store().dismiss("docs-lead");
+
+    expect(requestCloseTerminal).not.toHaveBeenCalled();
+  });
+
+  it("closes nothing on the first read, even with agents in sessions", async () => {
+    // Back to a store that has not read the team yet: the first read has no team before it.
+    useTeamStore.setState({ loaded: false, members: [] });
+
+    await loadTeam(teamWithSessions({ reviewer: "s2", lead: "s3" }));
+
+    expect(terminal.close).not.toHaveBeenCalled();
+  });
+
+  it("closes the session of an agent that left the team, and keeps the ones still in it", async () => {
+    await loadTeam(teamWithSessions({ reviewer: "s2", lead: "s3" }));
+
+    await loadTeam(
+      teamWithSessions(
+        { lead: "s3" },
+        snapshot().members.filter((member) => member.id !== "reviewer"),
+      ),
+    );
+
+    expect(terminal.close).toHaveBeenCalledTimes(1);
+    expect(terminal.close).toHaveBeenCalledWith("s2");
+  });
+
+  it("does not close a dismissed agent's session when the team read drops it first", async () => {
+    await loadTeam(teamWithSessions({ builder: "s1" }));
+    // The backend sends the team again before the dismiss has answered.
+    api.dismissMember.mockImplementation(async () => {
+      await loadTeam(
+        teamWithSessions(
+          {},
+          snapshot().members.filter((member) => member.id !== "builder"),
+        ),
+      );
+      return "s1";
+    });
+
+    await store().dismiss("builder");
+
+    expect(terminal.close).not.toHaveBeenCalled();
+    expect(requestCloseTerminal).toHaveBeenCalledWith("s1");
+  });
+
+  it("dismisses the agent whose terminal was closed, and leaves the others", async () => {
+    await loadTeam(teamWithSessions({ builder: "s1", reviewer: "s2" }));
+    api.dismissMember.mockResolvedValue(null);
+
+    onTerminalChange(
+      { sessions: [{ id: "s2" }] } as never,
+      { sessions: [{ id: "s1" }, { id: "s2" }] } as never,
+    );
+
+    expect(api.dismissMember).toHaveBeenCalledTimes(1);
+    expect(api.dismissMember).toHaveBeenCalledWith("builder");
+  });
+
+  it("does not dismiss again an agent the team already dismissed", async () => {
+    await loadTeam(teamWithSessions({ builder: "s1" }));
+    api.dismissMember.mockResolvedValue("s1");
+
+    await store().dismiss("builder");
+    onTerminalChange(
+      { sessions: [] } as never,
+      { sessions: [{ id: "s1" }] } as never,
+    );
+
+    expect(api.dismissMember).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a closed session that no agent of the team owns", async () => {
+    await loadTeam(teamWithSessions({ builder: "s1" }));
+
+    onTerminalChange(
+      { sessions: [] } as never,
+      { sessions: [{ id: "other" }] } as never,
+    );
+
+    expect(api.dismissMember).not.toHaveBeenCalled();
+  });
+
+  it("watches a new member that takes the id of a dismissed one", async () => {
+    await loadTeam(teamWithSessions({ builder: "s1" }));
+    api.dismissMember.mockResolvedValue(null);
+    await store().dismiss("builder");
+    // The team reads again without the Builder; a new Builder comes with the same id and its own session.
+    await loadTeam(
+      teamWithSessions(
+        {},
+        snapshot().members.filter((m) => m.id !== "builder"),
+      ),
+    );
+    await loadTeam(teamWithSessions({ builder: "s9" }));
+    api.dismissMember.mockClear();
+
+    onTerminalChange(
+      { sessions: [] } as never,
+      { sessions: [{ id: "s9" }] } as never,
+    );
+
+    expect(api.dismissMember).toHaveBeenCalledWith("builder");
+  });
+
+  it.each<[string, TerminalInfo | undefined, AgentStatus]>([
+    ["working", session("s", { agentStatus: "working" }), "working"],
+    ["needs you", session("s", { agentStatus: "needsYou" }), "needsYou"],
+    ["done", session("s", { agentStatus: "done" }), "done"],
+    ["idle when the agent reports nothing", session("s"), "idle"],
+    [
+      "done once the program has ended",
+      session("s", { running: false, exitCode: 0 }),
+      "done",
+    ],
+    ["idle when the session is gone", undefined, "idle"],
+  ])("maps a session to a card's status: %s", (_name, input, status) => {
+    expect(statusOfSession(input)).toBe(status);
+  });
+
+  it("draws the dialog's session only for a member of the selected worktree", async () => {
+    await loadTeam(teamWithSessions({ builder: "s1" }));
+    store().openTerminal("builder");
+
+    expect(teamDialogSessionId(store(), AUTH)).toBe("s1");
+    expect(teamDialogSessionId(store(), DOCS)).toBeNull();
+  });
+
+  it("clears the pick and closes the terminal dialog when the worktree changes", async () => {
+    await loadTeam();
+    store().select("builder");
+    store().openTerminal("builder");
+
+    useWorkspaceStore.setState({ selectedWorktreePath: DOCS });
+
+    expect(store()).toMatchObject({ selectedId: null, terminalOpen: false });
+  });
+
+  it("shows an agent's status from its session, and follows the terminal as it changes", async () => {
+    terminal.sessions = [session("s1", { agentStatus: "working" })];
+    await loadTeam(teamWithSessions({ builder: "s1" }));
+    expect(member("builder")?.status).toBe("working");
+
+    onTerminalChange(
+      { sessions: [session("s1", { agentStatus: "needsYou" })] } as never,
+      { sessions: terminal.sessions } as never,
+    );
+    expect(member("builder")?.status).toBe("needsYou");
+
+    onTerminalChange(
+      { sessions: [session("s1", { running: false })] } as never,
+      { sessions: [session("s1", { agentStatus: "needsYou" })] } as never,
+    );
+    expect(member("builder")?.status).toBe("done");
+  });
+
+  it("shows idle for an agent whose session is gone", async () => {
+    terminal.sessions = [];
+    await loadTeam(teamWithSessions({ builder: "s9" }));
+
+    expect(member("builder")?.status).toBe("idle");
+  });
+
+  it("adds a terminal agent to the team of the worktree it runs in, as a loose member", () => {
+    api.addMember.mockResolvedValue(snapshot().members[2]);
+
+    onTerminalChange(
+      { sessions: [session("a1")] } as never,
+      { sessions: [] } as never,
+    );
+
+    expect(api.addMember).toHaveBeenCalledTimes(1);
+    expect(api.addMember).toHaveBeenCalledWith({
+      kind: "agent",
+      role: agentNameOf("claude"),
+      harness: "claude",
+      parentId: null,
+      orchestrator: false,
+      task: "",
+      acceptance: "",
+      worktree: AUTH,
+      sessionId: "a1",
+    });
+  });
+
+  it("adopts an agent into its own worktree's team, whichever worktree is selected", () => {
+    api.addMember.mockResolvedValue(snapshot().members[2]);
+    useWorkspaceStore.setState({ selectedWorktreePath: null });
+
+    onTerminalChange(
+      { sessions: [session("a8", { worktreePath: DOCS })] } as never,
+      { sessions: [] } as never,
+    );
+
+    expect(api.addMember).toHaveBeenCalledWith(
+      expect.objectContaining({ worktree: DOCS, sessionId: "a8" }),
+    );
+  });
+
+  it("does not add a plain shell", () => {
+    onTerminalChange(
+      { sessions: [session("sh1", { harness: null, command: null })] } as never,
+      { sessions: [] } as never,
+    );
+
+    expect(api.addMember).not.toHaveBeenCalled();
+  });
+
+  it("does not add a session a member already runs in, even when a restart reloads it", async () => {
+    await loadTeam(teamWithSessions({ builder: "a2" }));
+
+    onTerminalChange(
+      { sessions: [session("a2", { harness: "codex" })] } as never,
+      { sessions: [] } as never,
+    );
+
+    expect(api.addMember).not.toHaveBeenCalled();
+  });
+
+  it("leaves the session the team's own add is starting to that add", async () => {
+    terminal.create.mockImplementation(async (worktree: string) => {
+      const started = session("t1", { worktreePath: worktree });
+      // The terminal store takes the session while the team starts it.
+      onTerminalChange(
+        { sessions: [started] } as never,
+        { sessions: [] } as never,
+      );
+      return started;
+    });
+    api.addMember.mockResolvedValue({
+      ...snapshot().members[2],
+      id: "scout",
+      sessionId: "t1",
+    });
+
+    expect(await store().addMember(agentDraft)).toBe(true);
+
+    expect(api.addMember).toHaveBeenCalledTimes(1);
+    expect(api.addMember).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "t1" }),
+    );
+  });
+
+  it("adds nothing while the team is adding a session", () => {
+    useTeamStore.setState({ addingSession: true });
+
+    onTerminalChange(
+      { sessions: [session("a6")] } as never,
+      { sessions: [] } as never,
+    );
+
+    expect(api.addMember).not.toHaveBeenCalled();
+  });
+
+  it("adds nothing before the team is read, and adds the session once a team read brings it", async () => {
+    useTeamStore.setState({ loaded: false });
+    api.addMember.mockResolvedValue(snapshot().members[2]);
+
+    onTerminalChange(
+      { sessions: [session("a7")] } as never,
+      { sessions: [] } as never,
+    );
+    expect(api.addMember).not.toHaveBeenCalled();
+
+    terminal.sessions = [session("a7")];
+    await loadTeam();
+
+    expect(api.addMember).toHaveBeenCalledTimes(1);
+    expect(api.addMember).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "a7" }),
+    );
+  });
+
+  it("adds a session once even when the store reports it again", async () => {
+    api.addMember.mockResolvedValue(snapshot().members[2]);
+    const reported = { sessions: [session("a3")] } as never;
+
+    onTerminalChange(reported, { sessions: [] } as never);
+    // The team reads before its member is in the list, so only the taken set keeps the session out.
+    await loadTeam();
+    onTerminalChange(reported, { sessions: [] } as never);
+
+    expect(api.addMember).toHaveBeenCalledTimes(1);
+  });
+
+  it("dismisses an adopted member once, when its session closes", async () => {
+    const adopted = {
+      ...snapshot().members[2],
+      id: "scout",
+      worktree: AUTH,
+      sessionId: "a4",
+    };
+    terminal.sessions = [session("a4")];
+    api.addMember.mockResolvedValue(adopted);
+    api.dismissMember.mockResolvedValue("a4");
+    onTerminalChange(
+      { sessions: [session("a4")] } as never,
+      { sessions: [] } as never,
+    );
+    await vi.waitFor(() => expect(api.addMember).toHaveBeenCalledTimes(1));
+    await loadTeam({
+      ...snapshot(),
+      members: [...snapshot().members, adopted],
+    });
+
+    terminal.sessions = [];
+    onTerminalChange(
+      { sessions: [] } as never,
+      { sessions: [session("a4")] } as never,
+    );
+    onTerminalChange(
+      { sessions: [] } as never,
+      { sessions: [session("a4")] } as never,
+    );
+
+    expect(api.dismissMember).toHaveBeenCalledTimes(1);
+    expect(api.dismissMember).toHaveBeenCalledWith("scout");
+  });
+
+  it("dismisses an adopted member whose session closed while the team added it", async () => {
+    // The session is gone from the store by the time the team answers.
+    terminal.sessions = [];
+    api.addMember.mockResolvedValue({
+      ...snapshot().members[2],
+      id: "scout",
+      sessionId: "a5",
+    });
+    api.dismissMember.mockResolvedValue("a5");
+
+    onTerminalChange(
+      { sessions: [session("a5")] } as never,
+      { sessions: [] } as never,
+    );
+
+    await vi.waitFor(() =>
+      expect(api.dismissMember).toHaveBeenCalledWith("scout"),
+    );
+  });
+
+  describe("reviving an agent whose session ended", () => {
+    const ENDED: ResumableSession = {
+      id: "old-1",
+      harness: "claude",
+      resumeArguments: ["--resume", "conv-7"],
+      endedAt: 1,
+    };
+
+    /** The reviewer, a Claude agent, is on its old session, which is not open: its terminal is closed. */
+    const closedReviewer = () =>
+      loadTeam(teamWithSessions({ reviewer: "old-1" }));
+
+    it("resumes the conversation the list holds, and ties the new session to the member", async () => {
+      await closedReviewer();
+      resumable.byWorktree[AUTH] = [ENDED];
+      vi.mocked(resumeLine).mockResolvedValue("claude --resume conv-7");
+      terminal.create.mockResolvedValue(session("s2"));
+      api.setSession.mockResolvedValue(null);
+      api.snapshot.mockResolvedValue(teamWithSessions({ reviewer: "s2" }));
+
+      expect(await store().reviveMember("reviewer")).toBe(true);
+
+      expect(resumeLine).toHaveBeenCalledWith("claude", ["--resume", "conv-7"]);
+      expect(terminal.create).toHaveBeenCalledWith(
+        AUTH,
+        "claude --resume conv-7",
+      );
+      expect(api.setSession).toHaveBeenCalledWith("reviewer", "s2");
+      expect(resumable.remove).toHaveBeenCalledWith(AUTH, "old-1");
+      expect(member("reviewer")).toMatchObject({ sessionId: "s2" });
+      expect(api.addMember).not.toHaveBeenCalled();
+    });
+
+    it("starts a fresh agent in the same worktree when the list has no conversation of the member", async () => {
+      await closedReviewer();
+      vi.mocked(resumeLine).mockResolvedValue("claude");
+      terminal.create.mockResolvedValue(session("s2"));
+      api.setSession.mockResolvedValue(null);
+      api.snapshot.mockResolvedValue(teamWithSessions({ reviewer: "s2" }));
+
+      expect(await store().reviveMember("reviewer")).toBe(true);
+
+      expect(resumeLine).toHaveBeenCalledWith("claude", []);
+      expect(terminal.create).toHaveBeenCalledWith(AUTH, "claude");
+      expect(api.setSession).toHaveBeenCalledWith("reviewer", "s2");
+      expect(resumable.remove).not.toHaveBeenCalled();
+    });
+
+    it("does not adopt the new session as a second loose member, even when the store reports it while it is tied", async () => {
+      await closedReviewer();
+      resumable.byWorktree[AUTH] = [ENDED];
+      vi.mocked(resumeLine).mockResolvedValue("claude --resume conv-7");
+      const started = session("s2");
+      terminal.create.mockImplementation(async () => {
+        // The store takes the session while the team starts it: nothing is adopted meanwhile.
+        terminal.sessions = [started];
+        onTerminalChange(
+          { sessions: [started] } as never,
+          { sessions: [] } as never,
+        );
+        return started;
+      });
+      api.setSession.mockImplementation(async () => {
+        // The store reports the session again once the flag is clear: only the taken set keeps it out.
+        onTerminalChange(
+          { sessions: [started] } as never,
+          { sessions: [] } as never,
+        );
+        return null;
+      });
+      api.snapshot.mockResolvedValue(teamWithSessions({ reviewer: "s2" }));
+
+      expect(await store().reviveMember("reviewer")).toBe(true);
+
+      expect(api.addMember).not.toHaveBeenCalled();
+      expect(api.setSession).toHaveBeenCalledWith("reviewer", "s2");
+    });
+
+    it("closes the new session and keeps the old one when the backend refuses the tie", async () => {
+      await closedReviewer();
+      resumable.byWorktree[AUTH] = [ENDED];
+      vi.mocked(resumeLine).mockResolvedValue("claude --resume conv-7");
+      terminal.create.mockResolvedValue(session("s2"));
+      api.setSession.mockRejectedValue(
+        refused("the session belongs to another member"),
+      );
+
+      expect(await store().reviveMember("reviewer")).toBe(false);
+
+      expect(terminal.close).toHaveBeenCalledWith("s2");
+      expect(toast.error).toHaveBeenCalledWith(copy.team.changeRefused, {
+        description: "the session belongs to another member",
+      });
+      expect(resumable.remove).not.toHaveBeenCalled();
+      expect(member("reviewer")).toMatchObject({ sessionId: "old-1" });
+    });
+
+    it("keeps the member and shows the reason when its terminal cannot start", async () => {
+      await closedReviewer();
+      terminal.create.mockRejectedValue(new Error("no shell"));
+
+      expect(await store().reviveMember("reviewer")).toBe(false);
+
+      expect(toast.error).toHaveBeenCalledWith(copy.terminal.createFailed, {
+        description: "no shell",
+      });
+      expect(api.setSession).not.toHaveBeenCalled();
+    });
+
+    it("starts nothing for a member whose session is still open", async () => {
+      terminal.sessions = [session("old-1")];
+      await closedReviewer();
+
+      expect(await store().reviveMember("reviewer")).toBe(false);
+
+      expect(terminal.create).not.toHaveBeenCalled();
+    });
+
+    it("starts nothing on a second request while the first one runs", async () => {
+      await closedReviewer();
+      let finishStart: (started: TerminalInfo) => void = () => {};
+      terminal.create.mockReturnValue(
+        new Promise<TerminalInfo>((resolve) => {
+          finishStart = resolve;
+        }),
+      );
+      api.setSession.mockResolvedValue(null);
+      api.snapshot.mockResolvedValue(teamWithSessions({ reviewer: "s2" }));
+
+      const first = store().reviveMember("reviewer");
+      expect(await store().reviveMember("reviewer")).toBe(false);
+      finishStart(session("s2"));
+
+      expect(await first).toBe(true);
+      expect(terminal.create).toHaveBeenCalledTimes(1);
+    });
   });
 });

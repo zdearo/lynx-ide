@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { BotAvatar } from "@/bots/BotAvatar";
@@ -8,6 +8,7 @@ import { Conversation } from "@/bots/Conversation";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -22,21 +23,25 @@ import {
   agentNameOf,
   botOf,
   engineOf,
-  useRunMembers,
+  isSeededMember,
+  useTeamMembers,
   useTeamStore,
 } from "@/team/team-store";
+import { TerminalView } from "@/terminal/TerminalView";
+import { useTerminalStore } from "@/terminal/terminal-store";
+import { useResumableStore } from "@/workspace/resumable-store";
 import { copy } from "@/ui-copy";
 
 /**
- * A member's terminal, or a bot's chat, in a dialog over the central area. Members have no session in this prototype,
- * so a terminal shows the simulated output from the fixtures and says so.
+ * A member's terminal, or a bot's chat, in a dialog over the central area. An agent's terminal is its real session, the
+ * same one the terminal tabs show. The seeded mock members have no session and show their simulated output.
  */
 export function TeamTerminalDialog({
   container,
 }: {
   container: HTMLElement | null;
 }) {
-  const members = useRunMembers();
+  const members = useTeamMembers();
   const terminalFor = useTeamStore((state) => state.terminalFor);
   const open = useTeamStore((state) => state.terminalOpen);
   const member = members.find((candidate) => candidate.id === terminalFor);
@@ -105,30 +110,103 @@ function PaneHeader({
 
 function TerminalPane({ member }: { member: TeamAgent }) {
   const agent = agentNameOf(member.harness);
+  const session = useTerminalStore((state) =>
+    member.sessionId
+      ? state.sessions.find((candidate) => candidate.id === member.sessionId)
+      : undefined,
+  );
+  const header = (
+    <PaneHeader
+      member={member}
+      icon={
+        <AgentBrandIcon harness={member.harness} className="size-4 shrink-0" />
+      }
+      title={copy.team.sheetLabel(member.role, agent)}
+    />
+  );
+
+  if (member.sessionId === null && isSeededMember(member.id)) {
+    return (
+      <>
+        {header}
+        <DialogDescription className="border-b px-3 py-1.5 text-meta">
+          {copy.team.simulatedTerminal}
+        </DialogDescription>
+        <div className="min-h-0 flex-1 overflow-y-auto bg-background p-3 font-mono text-ui">
+          {member.output.map((line, index) => (
+            <p key={index} className="break-words">
+              {line}
+            </p>
+          ))}
+        </div>
+      </>
+    );
+  }
+
+  if (!session) {
+    return (
+      <>
+        {header}
+        <DialogDescription className="border-b px-3 py-1.5 text-meta">
+          {copy.team.terminalClosed}
+        </DialogDescription>
+        <ClosedAgentPane key={member.id} member={member} />
+      </>
+    );
+  }
 
   return (
     <>
-      <PaneHeader
-        member={member}
-        icon={
-          <AgentBrandIcon
-            harness={member.harness}
-            className="size-4 shrink-0"
-          />
-        }
-        title={copy.team.sheetLabel(member.role, agent)}
-      />
-      <DialogDescription className="border-b px-3 py-1.5 text-meta">
-        {copy.team.simulatedTerminal}
+      {header}
+      <DialogDescription className="sr-only">
+        {copy.team.terminalDescription}
       </DialogDescription>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-background p-3 font-mono text-ui">
-        {member.output.map((line, index) => (
-          <p key={index} className="break-words">
-            {line}
-          </p>
-        ))}
+      <div className="flex min-h-0 flex-1 flex-col bg-background">
+        <TerminalView terminalId={session.id} active />
       </div>
     </>
+  );
+}
+
+/**
+ * The body of an agent whose session is not open. It offers the agent again: its own conversation when the list of ended
+ * sessions still has it, else a new agent in the same worktree. The list is read first, so the label is right.
+ */
+function ClosedAgentPane({ member }: { member: TeamAgent }) {
+  const refresh = useResumableStore((state) => state.refresh);
+  const resumable = useResumableStore((state) =>
+    state.byWorktree[member.worktree]?.find(
+      (item) => item.id === member.sessionId,
+    ),
+  );
+  const [listed, setListed] = useState(false);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    void refresh(member.worktree).then(() => setListed(true));
+  }, [refresh, member.worktree]);
+
+  const revive = () => {
+    setStarting(true);
+    void useTeamStore
+      .getState()
+      .reviveMember(member.id)
+      .finally(() => setStarting(false));
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-start gap-2 bg-background p-3">
+      {listed && (
+        <>
+          <Button size="sm" disabled={starting} onClick={revive}>
+            {resumable ? copy.team.resume : copy.team.startAgain}
+          </Button>
+          <p className="text-meta text-muted-foreground">
+            {resumable ? copy.team.resumeHint : copy.team.startAgainHint}
+          </p>
+        </>
+      )}
+    </div>
   );
 }
 

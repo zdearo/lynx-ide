@@ -5674,13 +5674,19 @@ await session("?mock=full", 1400, 860, async (p) => {
   check(
     "Team puts the team bar in place of the terminal tabs",
     (await p.getByRole("tablist", { name: "Terminals" }).count()) === 0 &&
-      (await p.getByText("Auth refactor", { exact: true }).count()) === 1,
+      (await p
+        .getByRole("button", { name: "Add member", exact: true })
+        .count()) === 1,
   );
   check(
-    "the org chart draws the five members, joined by four lines (three tree lines and the Builder-Reviewer pair)",
-    (await teamNodes(p)) === 5 && (await teamEdges(p)) === 4,
+    // Five members of the mock team, and the seeded Claude session of the worktree, adopted as a loose member.
+    "the org chart draws the team of the worktree, joined by four lines (three tree lines and the Builder-Reviewer pair)",
+    (await teamNodes(p)) === 6 && (await teamEdges(p)) === 4,
     `${await teamNodes(p)} nodes, ${await teamEdges(p)} edges`,
   );
+  // Nothing is picked when a worktree opens: pick the member that needs the user.
+  await p.locator('.react-flow__node[data-id="researcher"]').click();
+  await settle(p, 300);
   check(
     "the member that needs the user opens in a panel, which shows the question and no Reply",
     (await p
@@ -5912,7 +5918,7 @@ await session("?mock=full", 1400, 860, async (p) => {
   await settle(p, 300);
   check(
     "expanding Builder shows its tester under it",
-    (await teamNodes(p)) === 6,
+    (await teamNodes(p)) === 7,
   );
   const before = {
     builder: await cardAt(p, "builder"),
@@ -6125,9 +6131,11 @@ await session("?mock=full", 1000, 860, async (p) => {
   await p.getByRole("button", { name: "Team", exact: true }).click();
   await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
   await settle(p, 400);
+  await p.locator('.react-flow__node[data-id="researcher"]').click();
+  await settle(p, 300);
   check(
     "a narrow window shows the team as the map, with the question in the panel and no Reply",
-    (await p.locator(".react-flow__node").count()) === 5 &&
+    (await p.locator(".react-flow__node").count()) === 6 &&
       (await p
         .getByRole("dialog", { name: "Researcher · OpenCode", exact: true })
         .count()) === 1 &&

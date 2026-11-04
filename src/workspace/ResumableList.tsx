@@ -8,10 +8,8 @@ import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { errorMessage } from "@/lib/error-message";
 import { copy } from "@/ui-copy";
-import { TERMINAL_PRESETS } from "@/agents/agent-presets";
-import { launchLine, startTerminal } from "@/terminal/terminal-actions";
+import { resumeLine, startTerminal } from "@/terminal/terminal-actions";
 import { useResumableStore } from "@/workspace/resumable-store";
-import { resumeCommand } from "@/workspace/resume-command";
 
 /** Ended agent sessions of a worktree, each with a button that starts its conversation again. */
 export function ResumableList({ worktreePath }: { worktreePath: string }) {
@@ -27,11 +25,7 @@ export function ResumableList({ worktreePath }: { worktreePath: string }) {
   if (!items?.length) return null;
 
   const resume = async (item: ResumableSession) => {
-    const preset = TERMINAL_PRESETS.find(
-      (candidate) => candidate.harness === item.harness,
-    );
-    const launch = preset ? await launchLine(preset) : null;
-    const command = resumeCommand(launch, item.resumeArguments);
+    const command = await resumeLine(item.harness, item.resumeArguments);
     if (!command) {
       toast.error(copy.resumable.failed);
       return;

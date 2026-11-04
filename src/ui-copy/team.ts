@@ -20,27 +20,11 @@ export const teamCopy = {
     actions: (role: string) => `Actions for ${role}`,
     collapse: (role: string) => `Collapse ${role}`,
     expand: (role: string) => `Expand ${role}`,
-    runs: {
-      label: "Run",
-      none: "No run",
-      newRun: "New run…",
-      title: "New run",
-      description:
-        "A run has its own goal and its own team, with an orchestrator at the top.",
-      goal: "Goal",
-      placeholder: "Docs rewrite",
-      submit: "Create",
-      deleteItem: "Delete run…",
-      deleteTitle: (title: string) => `Delete ${title}?`,
-      deleteBody:
-        "Its members and their lines go with it. This cannot be undone.",
-      deleteConfirm: "Delete",
-      deleteCancel: "Cancel",
-    },
     empty: {
-      title: "No runs yet",
-      description:
-        "A run gives its goal to an orchestrator at the top, and the team works under it.",
+      noWorktree: "Select a worktree",
+      noMembers: "No agents in this worktree yet",
+      noMembersDescription:
+        "Agents started in this worktree's terminals join its team. Add one here, or a bot.",
     },
     loadFailed: "Could not load the team",
     changeRefused: "The team could not make that change",
@@ -55,7 +39,7 @@ export const teamCopy = {
       noBots: "There is no bot to add. Make one in the Bots view.",
       role: "Role",
       rolePlaceholder: "Reviewer",
-      answersTo: "Answers to",
+      noWorktree: "Select a worktree first",
       submit: "Add",
       cancel: "Cancel",
     },
@@ -89,5 +73,25 @@ export const teamCopy = {
     notes: "Notes",
     simulatedTerminal:
       "Simulated output: no session is attached to a team member in this prototype.",
+    terminalClosed: "This agent's terminal is closed.",
+    terminalDescription:
+      "The agent's terminal, the same session the terminal tabs show.",
+    resume: "Resume",
+    resumeHint: "Reopens this agent's conversation in its worktree.",
+    startAgain: "Start again",
+    startAgainHint:
+      "There is no conversation to reopen, so a new agent starts in its worktree.",
+    message: {
+      label: "Message",
+      to: "To",
+      placeholder: "Write a message",
+      send: "Send",
+      sent: (role: string) => `Sent to ${role}.`,
+      empty: "Write something before sending.",
+      tooLong: (max: number) => `Keep it to ${max} characters or fewer.`,
+      noRecipient: "No one to message yet",
+      respondsOnly: "Responds only: it does not start conversations.",
+      sendFailed: "The message could not be sent",
+    },
   },
 } as const;

@@ -9,7 +9,7 @@ interface Connection {
 
 /**
  * Only a member with an orchestrator above it has a task and an acceptance line. A member without one only
- * receives conversation and answers it, and the run's goal is not a task.
+ * receives conversation and answers it.
  */
 export const hasTask = (member: TeamMember): boolean =>
   member.parentId !== null;
@@ -38,8 +38,9 @@ export function linkOf(connection: Connection): TeamLink | null {
 }
 
 /**
- * Whether `parentId` can orchestrate `childId`: it is another member, it has orchestrator mode on, and it is
- * not under the child (a member cannot answer to its own member). A bot is never a child: it only orchestrates.
+ * Whether `parentId` can orchestrate `childId`: it is another member of the same worktree's team, it is an
+ * orchestrator, and it is not under the child (a member cannot answer to its own member). A bot is never a child:
+ * it only orchestrates.
  */
 export function canOrchestrate(
   members: readonly TeamMember[],
@@ -50,7 +51,8 @@ export function canOrchestrate(
   if (parentId === childId || !byId.has(childId)) return false;
   if (byId.get(childId)?.kind === "bot") return false;
   if (!byId.get(parentId)?.orchestrator) return false;
-  if (byId.get(parentId)?.runId !== byId.get(childId)?.runId) return false;
+  if (byId.get(parentId)?.worktree !== byId.get(childId)?.worktree)
+    return false;
   const seen = new Set<string>();
   for (
     let above = byId.get(parentId)?.parentId;

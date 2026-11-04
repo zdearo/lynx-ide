@@ -22,43 +22,40 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { useRunMembers, useTeamStore } from "@/team/team-store";
+import {
+  useTeamMembers,
+  useTeamStore,
+  type MemberDraft,
+} from "@/team/team-store";
 import { copy } from "@/ui-copy";
 
-const NO_ONE = "none";
 const AGENTS = TERMINAL_PRESETS.flatMap((preset) =>
   preset.harness ? [{ harness: preset.harness, label: preset.label }] : [],
 );
 const text = copy.team.add;
 
 /**
- * Adds a member to the run. An agent gets its role, its agent, the orchestrator it answers to and its task
- * if it has one. A bot is picked from the Bots list: it only orchestrates, so it answers to no one.
+ * Adds a member to the team of the worktree on the sidebar. An agent gets its role, its agent and whether it
+ * orchestrates; it answers to no one until an orchestrator takes it, from its menu. A bot is picked from the Bots
+ * list: it only orchestrates.
  */
 export function TeamAddDialog() {
   const open = useTeamStore((state) => state.addOpen);
-  const members = useRunMembers();
+  const members = useTeamMembers();
   const bots = useBotsStore((state) => state.bots);
-  const orchestrators = members.filter((member) => member.orchestrator);
-  // A bot joins a run once, so the bots already in this run are not offered.
-  const inRun = new Set(
+  // A bot joins a worktree's team once, so the bots already in this team are not offered.
+  const inTeam = new Set(
     members.flatMap((member) => (member.kind === "bot" ? [member.botId] : [])),
   );
-  const freeBots = (bots ?? []).filter((bot) => !inRun.has(bot.id));
+  const freeBots = (bots ?? []).filter((bot) => !inTeam.has(bot.id));
 
   const [kind, setKind] = useState<"agent" | "bot">("agent");
   const [pickedBot, setPickedBot] = useState<string | null>(null);
   const [role, setRole] = useState("");
   const [harness, setHarness] = useState<HarnessId>(AGENTS[0].harness);
-  const [parent, setParent] = useState<string | null>(null);
   const [orchestrator, setOrchestrator] = useState(false);
-  const [task, setTask] = useState("");
-  const [acceptance, setAcceptance] = useState("");
 
-  // Defaults to the first orchestrator, which is the usual place for a new member.
-  const parentId = parent ?? orchestrators[0]?.id ?? NO_ONE;
-  const hasTask = parentId !== NO_ONE;
-  // Defaults to the first bot that can still join the run.
+  // Defaults to the first bot that can still join the team.
   const bot = freeBots.find((item) => item.id === pickedBot) ?? freeBots[0];
 
   // A refused member keeps what was typed, so it can be fixed; the store closes the dialog once one is added.
@@ -75,21 +72,17 @@ export function TeamAddDialog() {
       return;
     }
     if (!role.trim()) return;
-    const added = await useTeamStore.getState().addMember({
+    const draft: MemberDraft = {
       kind: "agent",
       role: role.trim(),
       harness,
-      parentId: hasTask ? parentId : null,
+      parentId: null,
       orchestrator,
-      task: task.trim(),
-      acceptance: acceptance.trim(),
-    });
+    };
+    const added = await useTeamStore.getState().addMember(draft);
     if (!added) return;
     setRole("");
-    setTask("");
-    setAcceptance("");
     setOrchestrator(false);
-    setParent(null);
   };
 
   return (
@@ -148,46 +141,6 @@ export function TeamAddDialog() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="team-add-parent">{text.answersTo}</Label>
-                <Select value={parentId} onValueChange={setParent}>
-                  <SelectTrigger id="team-add-parent" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_ONE}>
-                      {copy.team.answersToNoOne}
-                    </SelectItem>
-                    {orchestrators.map((member) => (
-                      <SelectItem key={member.id} value={member.id}>
-                        {member.role}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {hasTask && (
-                <>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="team-add-task">{copy.team.task}</Label>
-                    <Input
-                      id="team-add-task"
-                      value={task}
-                      onChange={(event) => setTask(event.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="team-add-done">
-                      {copy.team.acceptance}
-                    </Label>
-                    <Input
-                      id="team-add-done"
-                      value={acceptance}
-                      onChange={(event) => setAcceptance(event.target.value)}
-                    />
-                  </div>
-                </>
-              )}
               <div className="flex items-center justify-between">
                 <Label htmlFor="team-add-orchestrator">
                   {copy.team.orchestrator}

@@ -1,12 +1,14 @@
 import { toast } from "sonner";
 
+import type { HarnessId } from "@/bindings";
 import { commands } from "@/bindings";
 import { useConfigStore } from "@/config/config-store";
 import { useDialogStore } from "@/dialog-store";
 import { copy } from "@/ui-copy";
 import { errorMessage } from "@/lib/error-message";
-import type { TerminalPreset } from "@/agents/agent-presets";
+import { TERMINAL_PRESETS, type TerminalPreset } from "@/agents/agent-presets";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
+import { resumeCommand } from "@/workspace/resume-command";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 /** The line that starts a preset's agent, as the backend builds it from Settings. Null for a shell. */
@@ -15,6 +17,23 @@ export async function launchLine(
 ): Promise<string | null> {
   if (preset.harness === null) return null;
   return commands.agentLaunchLine(preset.harness);
+}
+
+/**
+ * The line that starts a harness's agent with its resume arguments after it, or with none for a fresh agent. Null when
+ * the harness has no preset to start it from.
+ */
+export async function resumeLine(
+  harness: HarnessId,
+  resumeArguments: readonly string[],
+): Promise<string | null> {
+  const preset = TERMINAL_PRESETS.find(
+    (candidate) => candidate.harness === harness,
+  );
+  return resumeCommand(
+    preset ? await launchLine(preset) : null,
+    resumeArguments,
+  );
 }
 
 /** Starts a preset in a worktree, with the launch arguments Settings sets for its agent. */

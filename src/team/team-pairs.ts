@@ -42,8 +42,8 @@ export function isValidConnection(
   const { source, target } = connection;
   if (source === target || isLinked(pairs, source, target)) return false;
   const find = (id: string) => members.find((member) => member.id === id);
-  // Two runs are independent: a pair stays inside one.
-  if (find(source)?.runId !== find(target)?.runId) return false;
+  // Two worktrees' teams are independent: a pair stays inside one.
+  if (find(source)?.worktree !== find(target)?.worktree) return false;
   if (find(source)?.kind === "bot" && find(target)?.kind === "bot") {
     return false;
   }

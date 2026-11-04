@@ -7,7 +7,7 @@ import {
   type EdgeChange,
   type NodeChange,
 } from "@xyflow/react";
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import type { TeamMember } from "@/team/team-fixtures";
 import {
@@ -196,6 +196,17 @@ export function TeamMap({
     [members, base, expanded, selectedId, focus],
   );
 
+  // A card added or removed can land outside the view, so the map fits again. The wait lets React Flow measure
+  // the new cards first; shortcut: a fixed 50 ms, upgrade to onNodesInitialized if a slow machine misses it.
+  const cardIds = cards.map((card) => card.id).join("|");
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => useTeamStore.getState().fitMap?.(),
+      50,
+    );
+    return () => window.clearTimeout(timer);
+  }, [cardIds]);
+
   // Where the held card would land: the row nearest to it, under its parent.
   const spot = targets !== base && dragId ? targets.get(dragId) : undefined;
   const ghost = useMemo((): TeamGhostNode | null => {
@@ -316,7 +327,7 @@ export function TeamMap({
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       fitView
-      minZoom={0.4}
+      minZoom={0.2}
       maxZoom={1.5}
       nodeDragThreshold={4}
       nodesConnectable

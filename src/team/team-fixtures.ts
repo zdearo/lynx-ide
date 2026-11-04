@@ -9,14 +9,14 @@ export interface TeamActivity {
 /** What every member has, whether it is an agent or a bot. */
 export interface TeamMemberBase {
   id: string;
-  /** The run it belongs to: each run has its own goal and its own team. */
-  runId: string;
-  /** What the member does in the run. "Reassign role" changes it. */
+  /** The absolute path of the worktree whose team the member is in. */
+  worktree: string;
+  /** What the member does in its team. "Reassign role" changes it. */
   role: string;
   status: AgentStatus;
   /** The orchestrator this member answers to; null when it belongs to none. */
   parentId: string | null;
-  /** Whether it is the run's one orchestrator. Only it can have members under it. */
+  /** Whether it is an orchestrator. Only one can have members under it. */
   orchestrator: boolean;
   task: string;
   /** When the task counts as done. */
@@ -36,14 +36,19 @@ export interface TeamMemberBase {
   output: string[];
 }
 
-/** A CLI agent in the run: a session in a worktree, run by its harness. */
+/** A CLI agent in a worktree's team: a session in that worktree, run by its harness. */
 export interface TeamAgent extends TeamMemberBase {
   kind: "agent";
   harness: HarnessId;
+  /**
+   * The terminal session the agent runs in, cleared when it closes. Null for most seeded fixtures; the login tests one
+   * names a session that ended, which the mock lists as resumable.
+   */
+  sessionId: string | null;
 }
 
 /**
- * A Lynx bot in the run. It only orchestrates: always an orchestrator, never under anyone, with agents under it.
+ * A Lynx bot in a worktree's team. It only orchestrates: always an orchestrator, never under anyone, with agents under it.
  * Its name is the member's role; its avatar, engine and model come from the Bots list, by `botId`.
  */
 export interface TeamBot extends TeamMemberBase {
@@ -51,23 +56,16 @@ export interface TeamBot extends TeamMemberBase {
   botId: string;
 }
 
-/** One member of a run. Mock data: nothing here starts or reads a real session. */
+/** One member of a worktree's team. Mock data: nothing here starts or reads a real session. */
 export type TeamMember = TeamAgent | TeamBot;
 
-export const TEAM_RUN_ID = "auth";
-export interface TeamRun {
-  id: string;
-  /** The run's goal. It is not a task of any member. */
-  title: string;
-}
-export const TEAM_RUNS: readonly TeamRun[] = [
-  { id: TEAM_RUN_ID, title: "Auth refactor" },
-  { id: "docs", title: "Docs rewrite" },
-];
+/** The mock worktrees the seeded teams are in: the "feat/auth" one of lynx-ide and the "docs/readme" one of api-server. */
+export const TEAM_AUTH_WORKTREE = "/home/dev/lynx-ide-worktrees/feat-auth";
+export const TEAM_DOCS_WORKTREE = "/home/dev/api-server-worktrees/docs-readme";
 export const TEAM_ROOT_ID = "lead";
 /** The member that needs the user, so the team view opens on something to answer. */
 export const TEAM_NEEDS_YOU_ID = "researcher";
-/** The pairs the run starts with, by member id: a permission to talk. */
+/** The pairs the teams start with, by member id: a permission to talk. */
 export const TEAM_PAIRS: readonly [string, string][] = [
   ["builder", "reviewer"],
 ];
@@ -87,13 +85,14 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "lead",
     kind: "agent",
-    runId: TEAM_RUN_ID,
+    worktree: TEAM_AUTH_WORKTREE,
     role: "Lead",
     harness: "claude",
+    sessionId: null,
     status: "working",
     parentId: null,
     orchestrator: true,
-    // The run's goal is not a task: only a member with an orchestrator above it has one.
+    // Only a member with an orchestrator above it has a task.
     task: "",
     acceptance: "",
     activity: { text: "splitting the work", at: NOW_SECONDS - 240 },
@@ -111,9 +110,10 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "builder",
     kind: "agent",
-    runId: TEAM_RUN_ID,
+    worktree: TEAM_AUTH_WORKTREE,
     role: "Builder",
     harness: "codex",
+    sessionId: null,
     status: "working",
     parentId: "lead",
     orchestrator: true,
@@ -136,9 +136,11 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "login-tests",
     kind: "agent",
-    runId: TEAM_RUN_ID,
+    worktree: TEAM_AUTH_WORKTREE,
     role: "Tester",
     harness: "claude",
+    // Its session ended: the mock lists it as resumable, so its terminal shows Resume.
+    sessionId: "ended-login-tests",
     status: "idle",
     parentId: "builder",
     orchestrator: false,
@@ -156,9 +158,10 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "reviewer",
     kind: "agent",
-    runId: TEAM_RUN_ID,
+    worktree: TEAM_AUTH_WORKTREE,
     role: "Reviewer",
     harness: "claude",
+    sessionId: null,
     status: "idle",
     // No orchestrator: no task, only conversation with Builder.
     parentId: null,
@@ -177,9 +180,10 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "researcher",
     kind: "agent",
-    runId: TEAM_RUN_ID,
+    worktree: TEAM_AUTH_WORKTREE,
     role: "Researcher",
     harness: "opencode",
+    sessionId: null,
     status: "needsYou",
     parentId: "lead",
     orchestrator: false,
@@ -200,9 +204,10 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "tester",
     kind: "agent",
-    runId: TEAM_RUN_ID,
+    worktree: TEAM_AUTH_WORKTREE,
     role: "Tester",
     harness: "omp",
+    sessionId: null,
     status: "done",
     parentId: "lead",
     orchestrator: false,
@@ -219,14 +224,14 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   },
 ];
 
-/** A second, independent run, so the run selector has something to switch to. */
+/** A second, independent team in another worktree, so the Team view has another one to show. */
 export const TEAM_DOCS_MEMBERS: readonly TeamMember[] = [
   {
     id: "docs-lead",
     kind: "bot",
     // The Lynx bot it is: the one the Bots list has as "Lead" in the full mock.
     botId: "lead",
-    runId: "docs",
+    worktree: TEAM_DOCS_WORKTREE,
     role: "Lead",
     status: "working",
     parentId: null,
@@ -245,9 +250,10 @@ export const TEAM_DOCS_MEMBERS: readonly TeamMember[] = [
   {
     id: "writer",
     kind: "agent",
-    runId: "docs",
+    worktree: TEAM_DOCS_WORKTREE,
     role: "Writer",
     harness: "claude",
+    sessionId: null,
     status: "working",
     parentId: "docs-lead",
     orchestrator: false,

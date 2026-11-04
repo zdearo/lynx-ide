@@ -135,7 +135,7 @@ export function TeamNodeCard({ data, selected }: NodeProps<TeamCardNode>) {
                 className="nodrag size-5 shrink-0"
                 onClick={(event) => {
                   event.stopPropagation();
-                  useTeamStore.getState().toggle(member.id);
+                  void useTeamStore.getState().toggle(member.id);
                 }}
               >
                 <ChevronRightGlyph18
@@ -161,7 +161,8 @@ export function TeamNodeCard({ data, selected }: NodeProps<TeamCardNode>) {
             <span className="min-w-0 flex-1 truncate font-medium">
               {member.role}
             </span>
-            <span className="shrink-0 text-meta text-muted-foreground">
+            {/* Capped at 60% of the row: a long model name is cut, and the role keeps the rest. */}
+            <span className="min-w-0 max-w-[60%] truncate text-meta text-muted-foreground">
               {engineOf(member, bots)}
             </span>
           </div>

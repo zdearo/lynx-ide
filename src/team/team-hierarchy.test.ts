@@ -82,7 +82,7 @@ describe("hasTask", () => {
 });
 
 describe("bots", () => {
-  // The docs run: its Lead is a bot, and its Writer is an agent under it. Atlas is a second bot in that run.
+  // The docs team: its Lead is a bot, and its Writer is an agent under it. Atlas is a second bot in that team.
   const docsLead = TEAM_DOCS_MEMBERS[0];
   const atlas = { ...docsLead, id: "atlas", botId: "atlas", role: "Atlas" };
   const docs = [...TEAM_DOCS_MEMBERS, atlas];

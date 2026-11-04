@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  TEAM_DOCS_MEMBERS,
   TEAM_MEMBERS,
+  TEAM_PAIRS,
   TEAM_ROOT_ID,
   type TeamMember,
 } from "@/team/team-fixtures";
 import {
   TEAM_CARD_HEIGHT,
   TEAM_CARD_WIDTH,
+  TEAM_TREE_GAP,
+  TOP_LEVEL,
   extraRowsAt,
   siblingOrderAt,
   teamLayout,
@@ -29,6 +33,23 @@ const childrenOf = (id: string) =>
   TEAM_MEMBERS.filter((member) => member.parentId === id).map(
     (member) => member.id,
   );
+
+/** The lead's tree without the Reviewer, which has no partner here and so stands apart from it. */
+const TREE = TEAM_MEMBERS.filter((member) => member.id !== "reviewer");
+const TREE_IDS = TREE.map((member) => member.id);
+const DOCS_IDS = TEAM_DOCS_MEMBERS.map((member) => member.id);
+
+/** The left edge and the right edge of the placed cards with these ids; a collapsed one is not placed. */
+function edgesOf(positions: Map<string, TeamPosition>, ids: readonly string[]) {
+  const spots = ids.flatMap((id) => {
+    const spot = positions.get(id);
+    return spot ? [spot] : [];
+  });
+  return {
+    left: Math.min(...spots.map((spot) => spot.x)),
+    right: Math.max(...spots.map((spot) => spot.x + TEAM_CARD_WIDTH)),
+  };
+}
 
 describe("teamLayout", () => {
   it("centres the coordinator over its members, which sit side by side on the row below", () => {
@@ -75,7 +96,7 @@ describe("teamLayout", () => {
     );
   });
 
-  it("does not place a member whose parent is not in the run", () => {
+  it("does not place a member whose parent is not in the team", () => {
     const orphan: TeamMember = {
       ...TEAM_MEMBERS[1],
       id: "orphan",
@@ -107,18 +128,13 @@ describe("teamLayout", () => {
   });
 
   it("closes the gap a member leaves when it moves to another row", () => {
-    const flat = teamLayout(TEAM_MEMBERS, [TEAM_ROOT_ID], NO_EXTRA_ROWS);
-    const moved = teamLayout(TEAM_MEMBERS, [TEAM_ROOT_ID], { researcher: 1 });
+    const flat = teamLayout(TREE, [TEAM_ROOT_ID], NO_EXTRA_ROWS);
+    const moved = teamLayout(TREE, [TEAM_ROOT_ID], { researcher: 1 });
     expect(at(moved, "researcher").y).toBe(2 * ROW);
 
-    // The ones left on the row under the coordinator sit side by side, centred under it. The Reviewer sits on
-    // that row too, beside its partner Builder.
-    const row = [...childrenOf(TEAM_ROOT_ID), "reviewer"];
-    const stayed = row
-      .filter((id) => id !== "researcher")
-      .map((id) => at(moved, id))
-      .sort((a, b) => a.x - b.x);
-    expect(stayed.length).toBe(row.length - 1);
+    // The ones left on the row under the coordinator sit side by side, centred under it.
+    const row = childrenOf(TEAM_ROOT_ID).filter((id) => id !== "researcher");
+    const stayed = row.map((id) => at(moved, id)).sort((a, b) => a.x - b.x);
     for (const [i, card] of stayed.slice(1).entries()) {
       expect(card.x - stayed[i].x).toBe(TEAM_CARD_WIDTH + 32);
     }
@@ -127,10 +143,9 @@ describe("teamLayout", () => {
       centre(at(moved, TEAM_ROOT_ID)),
     );
     // And they take less room than they did with the moved one between them.
-    const ids = childrenOf(TEAM_ROOT_ID).filter((id) => id !== "researcher");
     const spread = (positions: Map<string, TeamPosition>) =>
-      Math.max(...ids.map((id) => at(positions, id).x)) -
-      Math.min(...ids.map((id) => at(positions, id).x));
+      Math.max(...row.map((id) => at(positions, id).x)) -
+      Math.min(...row.map((id) => at(positions, id).x));
     expect(spread(moved)).toBeLessThan(spread(flat));
   });
 
@@ -173,6 +188,146 @@ describe("teamLayout", () => {
     });
     expect(at(lifted, "builder")).toEqual(at(flat, "builder"));
     expect(at(lifted, TEAM_ROOT_ID).y).toBe(0);
+  });
+
+  it("keeps the first tree's root on x = 0, so the map is not shifted", () => {
+    const positions = teamLayout(
+      [...TREE, ...TEAM_DOCS_MEMBERS],
+      [TEAM_ROOT_ID, "docs-lead"],
+      NO_EXTRA_ROWS,
+    );
+    expect(centre(at(positions, TEAM_ROOT_ID))).toBe(0);
+  });
+
+  it("gives a single tree the positions it had before trees were laid out apart", () => {
+    const expanded = [TEAM_ROOT_ID, "builder"];
+    const pairs = TEAM_PAIRS.map(([from, to]) => ({ from, to }));
+    const asPairs = (positions: Map<string, TeamPosition>) =>
+      Object.fromEntries([...positions].map(([id, { x, y }]) => [id, [x, y]]));
+
+    expect(asPairs(teamLayout(TREE, expanded, NO_EXTRA_ROWS))).toEqual({
+      lead: [-112, 0],
+      builder: [-368, 176],
+      researcher: [-112, 176],
+      tester: [144, 176],
+      "login-tests": [-368, 352],
+    });
+    expect(
+      asPairs(teamLayout(TREE, [TEAM_ROOT_ID], { researcher: 1 })),
+    ).toEqual({
+      lead: [-112, 0],
+      builder: [-240, 176],
+      tester: [16, 176],
+      researcher: [-112, 352],
+    });
+    expect(
+      asPairs(
+        teamLayout(
+          TREE,
+          [TEAM_ROOT_ID],
+          {},
+          {
+            [TEAM_ROOT_ID]: ["tester", "builder", "researcher"],
+          },
+        ),
+      ),
+    ).toEqual({
+      lead: [-112, 0],
+      tester: [-368, 176],
+      builder: [-112, 176],
+      researcher: [144, 176],
+    });
+    // The Reviewer is paired with Builder, so it joins the tree and sits beside it.
+    expect(
+      asPairs(teamLayout(TEAM_MEMBERS, expanded, NO_EXTRA_ROWS, {}, pairs)),
+    ).toEqual({
+      lead: [-112, 0],
+      builder: [-560, 176],
+      reviewer: [-304, 176],
+      researcher: [-48, 176],
+      tester: [208, 176],
+      "login-tests": [-560, 352],
+    });
+  });
+
+  it("lays out each tree as its own block, with a gap of TEAM_TREE_GAP between two blocks", () => {
+    const positions = teamLayout(
+      [...TREE, ...TEAM_DOCS_MEMBERS],
+      [TEAM_ROOT_ID, "docs-lead"],
+      NO_EXTRA_ROWS,
+    );
+    const lead = edgesOf(positions, TREE_IDS);
+    const docs = edgesOf(positions, DOCS_IDS);
+    expect(docs.left - lead.right).toBeGreaterThanOrEqual(TEAM_TREE_GAP);
+    // The Writer sits under the bot Lead, so the bot's block is centred on its own root.
+    expect(centre(at(positions, "writer"))).toBe(
+      centre(at(positions, "docs-lead")),
+    );
+  });
+
+  it("keeps two trees apart, however the members are moved", () => {
+    const members = [...TREE, ...TEAM_DOCS_MEMBERS];
+    const expanded = [TEAM_ROOT_ID, "builder", "docs-lead"];
+    for (const extraRows of [
+      NO_EXTRA_ROWS,
+      { researcher: 2 },
+      { builder: 1, writer: 2 },
+    ]) {
+      const positions = teamLayout(members, expanded, extraRows);
+      const lead = edgesOf(positions, TREE_IDS);
+      const docs = edgesOf(positions, DOCS_IDS);
+      expect(
+        docs.left - lead.right,
+        JSON.stringify(extraRows),
+      ).toBeGreaterThanOrEqual(TEAM_TREE_GAP);
+    }
+  });
+
+  it("takes the order of the trees from the saved top level, then from reading order", () => {
+    const positions = teamLayout(
+      [...TREE, ...TEAM_DOCS_MEMBERS],
+      [TEAM_ROOT_ID, "docs-lead"],
+      NO_EXTRA_ROWS,
+      { [TOP_LEVEL]: ["docs-lead", TEAM_ROOT_ID] },
+    );
+    // The docs tree is first now, so it takes the place on x = 0 and the lead's tree sits after it.
+    expect(centre(at(positions, "docs-lead"))).toBe(0);
+    const docs = edgesOf(positions, DOCS_IDS);
+    const lead = edgesOf(positions, TREE_IDS);
+    expect(lead.left - docs.right).toBeGreaterThanOrEqual(TEAM_TREE_GAP);
+  });
+
+  it("puts a member with no orchestrator and no partner in a last block, one row below the top", () => {
+    const positions = teamLayout(TEAM_MEMBERS, [TEAM_ROOT_ID], NO_EXTRA_ROWS);
+    const lead = edgesOf(positions, TREE_IDS);
+    const reviewer = at(positions, "reviewer");
+    expect(reviewer.y).toBe(ROW);
+    expect(reviewer.x - lead.right).toBeGreaterThanOrEqual(TEAM_TREE_GAP);
+  });
+
+  it("puts a loose member that is paired with a member of another tree inside that tree's block", () => {
+    const scout: TeamMember = {
+      ...TEAM_MEMBERS[3],
+      id: "scout",
+      parentId: null,
+      orchestrator: false,
+    };
+    const members = [...TREE, ...TEAM_DOCS_MEMBERS, scout];
+    const positions = teamLayout(
+      members,
+      [TEAM_ROOT_ID, "docs-lead"],
+      NO_EXTRA_ROWS,
+      {},
+      [{ from: "scout", to: "writer" }],
+    );
+    const lead = edgesOf(positions, TREE_IDS);
+    const scoutSpot = at(positions, "scout");
+    // Beside the Writer, and not a whole gap away from the docs tree: it is part of that block.
+    expect(scoutSpot.y).toBe(at(positions, "writer").y);
+    expect(scoutSpot.x).toBeGreaterThanOrEqual(lead.right + TEAM_TREE_GAP);
+    expect(scoutSpot.x - edgesOf(positions, DOCS_IDS).right).toBeLessThan(
+      TEAM_TREE_GAP,
+    );
   });
 });
 

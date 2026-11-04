@@ -22,6 +22,7 @@ import { focusMemberCard } from "@/team/team-focus";
 import { hasTask } from "@/team/team-hierarchy";
 import { partnersOf } from "@/team/team-pairs";
 import { TeamMemberMenu } from "@/team/TeamMemberMenu";
+import { TeamMessageForm } from "@/team/TeamMessageForm";
 import { TeamStatusIcon } from "@/team/TeamStatus";
 import {
   botOf,
@@ -104,7 +105,7 @@ export function TeamNodeSheet({
           />
         )}
         <h3 className="min-w-0 flex-1 truncate font-medium">{member.role}</h3>
-        <span className="shrink-0 text-meta text-muted-foreground">
+        <span className="min-w-0 max-w-[60%] truncate text-meta text-muted-foreground">
           {agent}
         </span>
       </header>
@@ -252,6 +253,8 @@ export function TeamNodeSheet({
           )}
         </p>
       )}
+
+      <TeamMessageForm member={member} members={members} pairs={pairs} />
 
       <div className="flex items-center gap-1.5">
         <Button size="sm" onClick={() => openMember(member.id)}>

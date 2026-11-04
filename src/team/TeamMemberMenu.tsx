@@ -23,14 +23,14 @@ import { linkOptionsOf } from "@/team/team-pairs";
 import {
   engineOf,
   openMember,
-  useRunMembers,
+  useTeamMembers,
   useTeamStore,
 } from "@/team/team-store";
 import { copy } from "@/ui-copy";
 
 /** The actions of one member on a tree row or in the sheet. Give it to a DropdownMenu. */
 export function TeamMemberMenu({ member }: { member: TeamMember }) {
-  const members = useRunMembers();
+  const members = useTeamMembers();
   const pairs = useTeamStore((state) => state.pairs);
   const bots = useBotsStore((state) => state.bots);
   const hasMembers = members.some((other) => other.parentId === member.id);
@@ -128,7 +128,7 @@ export function TeamMemberMenu({ member }: { member: TeamMember }) {
 
 /** The same actions on a map card's right-click menu. Give it to a ContextMenu. */
 export function TeamMemberContextMenu({ member }: { member: TeamMember }) {
-  const members = useRunMembers();
+  const members = useTeamMembers();
   const pairs = useTeamStore((state) => state.pairs);
   const bots = useBotsStore((state) => state.bots);
   const hasMembers = members.some((other) => other.parentId === member.id);

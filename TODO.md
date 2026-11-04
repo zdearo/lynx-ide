@@ -29,16 +29,16 @@ POC só com dados simulados (`?mock=full`, aba Team). Nada disso fala com agente
 - Dispensar um orquestrador solta os filhos: eles ficam sem orquestrador, sem tarefa e fora da árvore.
 - Dispensar um membro comum também remove os pares dele.
 
-### Objetivo da run
+### Equipe por worktree
 
-- O objetivo da run ("Auth refactor") não é tarefa de membro. Fica acima da equipe, e o orquestrador do topo não tem tarefa.
-
-### Runs
-
-- Cada árvore é uma run, com objetivo próprio e equipe própria. Os objetivos são independentes: pares e ligações de orquestração não atravessam runs.
-- A barra do Team tem um seletor de run e "New run…". Uma run nova pede só o objetivo e nasce com um orquestrador (Lead) no topo.
-- O mapa, o resumo e os menus mostram só os membros da run em tela.
-- Mais de uma raiz na mesma run continua possível no modelo (um orquestrador com "No one"), mas o layout mistura as duas árvores. Para objetivos independentes, a regra é uma run por árvore.
+- Não existe run. A equipe é os agentes da worktree selecionada na sidebar: o mesmo conjunto de sessões que a aba de terminal mostra. Terminal e Team são duas visões da mesma coisa.
+- O objetivo da run deixou de existir. O orquestrador do topo não tem tarefa.
+- Uma worktree pode ter várias árvores (várias raízes orquestradoras). Elas ficam lado a lado no mapa, cada uma no seu bloco, sem se misturar.
+- Pares e ligações de orquestração ficam dentro da worktree. Um bot entra uma vez em cada worktree.
+- Um agente aberto pela aba de terminal vira um membro solto da equipe da worktree dele (sem orquestrador, sem tarefa). Um agente adicionado pelo Team abre a CLI na worktree selecionada.
+- O status do cartão vem da sessão: trabalhando, pediu atenção, terminou (ou o processo acabou) ou ocioso.
+- Fechar a sessão pela aba ou pelo Team tira o agente da equipe.
+- Ao reabrir o app, ou se a sessão se perder, o cartão fica. "Resume" reabre o agente com a mesma conversa e liga a sessão nova ao membro; sem conversa para retomar, "Start again" abre uma CLI nova.
 
 ### Bots
 
@@ -46,13 +46,14 @@ POC só com dados simulados (`?mock=full`, aba Team). Nada disso fala com agente
 - Um bot só orquestra: não escreve código, só lança e gerencia agentes. Ele nunca é membro comum (nem filho, nem revisor, nem outro papel sem filhos).
 - Um bot não é orquestrado: não tem orquestrador acima dele. Mas pode receber mensagens de agentes (par). Ele não precisa estar no topo da árvore.
 - Os filhos de um bot são agentes (as CLIs são os workers). Lançar workers num projeto exige a liberação `workers` do bot (ver "Bots" no AGENTS.md).
-- No cartão: avatar e cor do bot no lugar do logo do agente, e provedor e modelo no lugar do nome do agente. Um bot não tem terminal: "Open terminal" vira "Open chat", um modal só com o chat do bot, e o objetivo da run se dá nele.
+- No cartão: avatar e cor do bot no lugar do logo do agente, e provedor e modelo no lugar do nome do agente. Um bot não tem terminal: "Open terminal" vira "Open chat", um modal só com o chat do bot, e o objetivo se dá nele.
 - O diálogo de adicionar membro escolhe entre agente e bot, e a lista de bots vem do painel Bots. Feito no mock; o bot é semeado só em `?mock=full`.
 
-### Adicionar membro (mock)
+### Adicionar membro
 
-- O "+" da barra do Team abre o diálogo: papel, agente, a quem responde (padrão: o primeiro orquestrador; "No one" deixa o membro sem tarefa), tarefa e "done when" (só com orquestrador) e o interruptor de orquestrador.
-- Adicionar seleciona o membro novo e expande o pai.
+- O "+" da barra do Team abre o diálogo: tipo (agente ou bot), papel, agente e o interruptor de orquestrador. Sem tarefa e sem "a quem responde": a tarefa é do orquestrador, e quem liga o agente a um orquestrador usa o menu do cartão ou a linha de baixo do orquestrador.
+- O agente abre a CLI na worktree selecionada, e o membro guarda a sessão.
+- Adicionar seleciona o membro novo.
 
 ### Linhas do mapa
 
@@ -62,30 +63,37 @@ POC só com dados simulados (`?mock=full`, aba Team). Nada disso fala com agente
 
 ### Mock atual
 
-- Run "Auth refactor":
+- Worktree feat/auth:
   - Lead: orquestrador, sem tarefa, no topo.
-  - Builder: orquestrador, com a tarefa "login form". Login-tests sob ele, com a tarefa "login tests".
+  - Builder: orquestrador, com a tarefa "login form". Login-tests sob ele, com a tarefa "login tests" e uma sessão encerrada para o "Resume".
   - Researcher e Tester: filhos do Lead, com tarefa.
   - Reviewer: sem orquestrador, sem tarefa, na linha do Builder, em par com ele.
-- Run "Docs rewrite": Lead (orquestrador) e Writer, com a tarefa "setup chapter".
+  - A sessão do Claude do mock é adotada como membro solto.
+- Worktree docs/readme: um bot orquestrador e o Writer, com a tarefa "setup chapter".
 
 ### Decidido
 
 - O par é mútuo: os dois lados trocam mensagens.
 - Um membro sem orquestrador só responde; não inicia conversa. Ainda não há mensagens reais no POC, então a regra fica registrada e não é aplicada.
-- Apagar um bot remove em cascata o membro do bot, tudo abaixo dele e os pares ligados a eles, em todas as runs. Um bot apagado não volta para uma equipe, nem como líder de run nova.
+- Apagar um bot remove em cascata o membro do bot, tudo abaixo dele e os pares ligados a eles, em todas as worktrees. Um bot apagado não volta para uma equipe.
 - Abrir o chat de um bot é um modal igual ao do terminal, com só o chat: a thread mais recente do bot (ou a primeira, se não houver), sem lista de threads.
 - O contraste dos cartões esmaecidos ficou em `opacity-80`, que passa no axe.
+- Run deixa de existir; a equipe é a worktree, com várias árvores lado a lado.
+- Agente aberto pela aba vira membro solto. Fechar a sessão tira o agente. Ao reabrir, "Resume".
 
 ### Em aberto
 
 - Além de tarefa e critério de pronto, o orquestrador daria o veredito de pronto e poderia trocar o papel e parar o filho. Proposto, ainda não confirmado.
-- A conversa é um canal aberto: não há limite de mensagens nem contexto modelado.
-- Duas raízes na mesma run: layout em blocos lado a lado, se for preciso.
+- Mensagem entre pares: o formulário do sheet escreve no terminal do par, com o prefixo do remetente. A mensagem não fica guardada no time, e não há histórico nem limite de mensagens.
 - Backend do Team em Rust (`src-tauri/src/team/`): regras, SQLite e comandos feitos e testados (`rust:test`), e o frontend lê e grava por eles (`team-backend.ts`). Falta rodar contra o app real (não foi aberto com `tauri dev`).
-- A aba Team aparece no app real. A expansão de cada run fica salva no navegador (`lynx.team.expanded`), mas não no banco.
-- Os cartões de bot não foram vistos de perto na tela; só a captura da run Docs.
+- A aba Team aparece no app real.
+- Checagens do Team passam no e2e completo (580 PASS, 0 FAIL na última rodada).
 - Checagens do Team no e2e passam nas últimas rodadas. Falhas que sobram variam de rodada para rodada e não são do Team (tab bar, rodapé de planos, confirmação ao fechar aba, toolbar do Browser).
 - Não verificado: arrastar um cartão com filhos para mudar de pai, e a seção "Answers to" do painel flutuante.
-- Recusas do backend chegam à tela só como toast genérico; não há mensagem específica por regra.
-- Linhas órfãs de bots apagados antes da cascata ficam na equipe até uma nova ação.
+- Processo do agente que termina sozinho: a aba fica "Ended" e o cartão continua até a aba ser fechada. Confirmar se é isso.
+- App real testado sob Xvfb, com dados isolados: adicionar agente, fechar aba, reinício com agente vivo e "Start again" passaram com um shim de CLI. O Claude real parou no prompt de confiança da pasta de teste; o status com o Claude de verdade ainda não foi visto.
+- "Resume" depende dos hooks do agente (eles dão o id da conversa). Com os hooks desligados, o cartão só oferece "Start again". Ligar os hooks escreve em `~/.claude/settings.json`.
+- O `claude --resume` pode deixar a conversa fora da lista de retomáveis se a sessão nova morrer antes de imprimir o id (mesmo trade-off da sidebar).
+- Arrastar entre blocos de árvores não foi testado.
+- O mapa usa zoom mínimo de 0,2 para caber em janelas estreitas com muitos cartões. Com 0,4, oito cartões em 950 px cortavam o Builder.
+- Build de debug usa uma pasta por branch (`~/.lynx-dev/<branch>` e `dev/<branch>/app.db`). O localStorage do WebView continua compartilhado com o instalado.

@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
 use crate::agents::activity::AgentStatus;
 use crate::agents::harness::HarnessId;
 use crate::browser::BrowserService;
+use crate::orchestration::agent_wake::AgentWakes;
 
 use super::output_channels::OutputChannels;
 use super::terminal_session::TerminalInfo;
@@ -35,6 +36,14 @@ pub struct TerminalCreated {
     pub session: TerminalInfo,
 }
 
+/// A session the backend closed for its own reasons, such as a worker a coordinator released. The screen
+/// drops its tab. A close the person asked for is not announced: the screen already dropped that tab.
+#[derive(Debug, Clone, Serialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalClosed {
+    pub id: String,
+}
+
 /// Where a session reports output, exit and agent status. A trait so tests can observe sessions
 /// without a running Tauri app.
 pub trait TerminalEventSink: Send + Sync + 'static {
@@ -46,6 +55,8 @@ pub trait TerminalEventSink: Send + Sync + 'static {
     fn agent_resume(&self, _id: &str, _harness: HarnessId, _resume_id: &str) {}
     /// A session was started, so the screen can list it whoever asked for it.
     fn created(&self, _session: &TerminalInfo) {}
+    /// The backend closed a session itself, so the screen drops it. Nothing by default.
+    fn closed(&self, _id: &str) {}
 }
 
 pub struct TauriEventSink {
@@ -90,9 +101,20 @@ impl TerminalEventSink for TauriEventSink {
         .emit(&self.app);
     }
 
+    fn closed(&self, id: &str) {
+        if let Some(wakes) = self.app.try_state::<Arc<AgentWakes>>() {
+            wakes.closed(id);
+        }
+        let _ = TerminalClosed { id: id.to_owned() }.emit(&self.app);
+    }
+
     fn agent_state(&self, id: &str, harness: Option<HarnessId>, status: Option<AgentStatus>) {
         if let Some(browser) = &self.browser {
             browser.session_status(id, status == Some(AgentStatus::Working));
+        }
+        // A coordinator that finished its turn may now take the note a worker left for it.
+        if let Some(wakes) = self.app.try_state::<Arc<AgentWakes>>() {
+            wakes.status_changed(id);
         }
         let _ = AgentStatusChanged {
             id: id.to_owned(),

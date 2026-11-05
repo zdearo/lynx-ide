@@ -28,6 +28,7 @@ import type {
   NewTeamMember,
   PlanUsage,
   Repo,
+  TaskState,
   TeamMember as TeamMemberRecord,
   TeamSnapshot,
   TerminalInfo,
@@ -1084,10 +1085,14 @@ export function installMockTauri(scenario: string): void {
     worktree,
     role,
     status: "idle" as const,
+    workerState: null,
     parentId: null as string | null,
     orchestrator: false,
     task: "",
     acceptance: "",
+    taskState: null as TaskState | null,
+    dependsOn: [] as string[],
+    executionWorktree: null as string | null,
     sessionId: null as string | null,
     activity: { text: "", at: 0 },
     branch: null as string | null,
@@ -1109,8 +1114,14 @@ export function installMockTauri(scenario: string): void {
     orchestrator: member.orchestrator,
     task: member.task,
     acceptance: member.acceptance,
+    taskState: null,
+    dependsOn: [],
+    executionWorktree: null,
+    dispatchState: null,
     sessionId: member.kind === "agent" ? member.sessionId : null,
     expanded: mockExpanded.has(member.id),
+    // The mock has no orchestration, so no member is a worker.
+    workerState: null,
   });
   const teamSnapshot = (): TeamSnapshot => ({
     members: mockMembers.map(recordOf),
@@ -1914,6 +1925,9 @@ export function installMockTauri(scenario: string): void {
           mockThreads.delete(id);
           return null;
         }
+        // The mock keeps no team or runs under a bot, so deleting one takes nothing else with it.
+        case "bots_delete_impact":
+          return { members: [], runningWorkers: 0, runs: 0 };
         case "bots_workers":
           return [];
         case "bots_grants":
@@ -2961,6 +2975,9 @@ export function installMockTauri(scenario: string): void {
             lastSeq: seq.get(id) ?? 0,
             running: session.running,
             exitCode: session.exitCode,
+            // The mock draws no screen: the size is the one a new terminal starts at.
+            cols: 80,
+            rows: 24,
           };
         }
         case "write_terminal": {

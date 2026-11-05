@@ -9,8 +9,10 @@ import {
   canStartConversation,
   MESSAGE_MAX_LENGTH,
   messageRecipients,
+  SUBMIT_DELAY_MS,
   sendTeamMessage,
   showsMessageForm,
+  talksToOf,
 } from "@/team/team-message";
 import { copy } from "@/ui-copy";
 
@@ -23,10 +25,14 @@ vi.mock("@/terminal/terminal-store", () => ({
 const base = {
   worktree: "/work/auth",
   status: "idle" as const,
+  workerState: null,
   parentId: null as string | null,
   orchestrator: false,
   task: "",
   acceptance: "",
+  taskState: null,
+  dependsOn: [],
+  executionWorktree: null,
   activity: { text: "", at: 0 },
   branch: null,
   added: 0,
@@ -89,7 +95,7 @@ const stopped = agent("stopped", "Stopped", {
 const docs = bot("docs", "Docs");
 const loner = agent("loner", "Loner", { sessionId: "s-loner" });
 const members = [lead, builder, reviewer, scout, stopped, docs, loner];
-// The builder is paired with everyone it could talk to; only the reviewer has a live session among them.
+// The builder is paired with the reviewer, the scout, the stopped agent and the docs bot.
 const pairs: TeamPair[] = [
   { from: "builder", to: "reviewer" },
   { from: "builder", to: "scout" },
@@ -110,6 +116,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("who can message", () => {
@@ -131,24 +138,58 @@ describe("who can message", () => {
   });
 });
 
+describe("talks to", () => {
+  it("is the pairs, the orchestrator above, and the members under it", () => {
+    expect(talksToOf(builder, members, pairs).map((m) => m.id)).toEqual([
+      "lead",
+      "reviewer",
+      "scout",
+      "stopped",
+      "docs",
+    ]);
+    expect(talksToOf(lead, members, pairs).map((m) => m.id)).toEqual([
+      "builder",
+      "scout",
+      "stopped",
+    ]);
+  });
+
+  it("is empty for a member with no pair, parent or child", () => {
+    expect(talksToOf(loner, members, pairs)).toEqual([]);
+  });
+});
+
 describe("recipients", () => {
-  it("offers only the paired members whose sessions run", () => {
+  it("offers the paired, parent and child members whose sessions run", () => {
     expect(messageRecipients(builder, members, pairs, sessions)).toEqual([
+      { id: "lead", role: "Lead", sessionId: "s-lead" },
       { id: "reviewer", role: "Reviewer", sessionId: "s-reviewer" },
     ]);
   });
 
-  it("offers nobody when no paired member has a live session", () => {
-    expect(messageRecipients(lead, members, pairs, sessions)).toEqual([]);
+  it("offers a parent its children, so it can write to them", () => {
+    expect(messageRecipients(lead, members, pairs, sessions)).toEqual([
+      { id: "builder", role: "Builder", sessionId: "s-builder" },
+    ]);
+  });
+
+  it("never offers a bot, even one that orchestrates the member", () => {
+    const kid = agent("kid", "Kid", { parentId: "docs", sessionId: "s-kid" });
+    expect(messageRecipients(kid, [docs, kid], [], [session("s-kid")])).toEqual(
+      [],
+    );
+  });
+
+  it("offers nobody when no one it talks with has a live session", () => {
+    expect(messageRecipients(loner, members, pairs, sessions)).toEqual([]);
   });
 });
 
 describe("sending", () => {
-  it("writes the text with the sender's role and a newline into the recipient's terminal", async () => {
-    vi.spyOn(commands, "writeTerminal").mockResolvedValue({
-      status: "ok",
-      data: null,
-    });
+  it("writes the text with the sender's role into the recipient's terminal, then Enter", async () => {
+    const write = vi
+      .spyOn(commands, "writeTerminal")
+      .mockResolvedValue({ status: "ok", data: null });
 
     const sent = await sendTeamMessage(
       "Builder",
@@ -157,11 +198,28 @@ describe("sending", () => {
     );
 
     expect(sent).toBe(true);
-    expect(commands.writeTerminal).toHaveBeenCalledWith(
-      "s-reviewer",
-      "[from Builder] check the login\r",
-    );
+    expect(write.mock.calls).toEqual([
+      ["s-reviewer", "[from Builder] check the login"],
+      ["s-reviewer", "\r"],
+    ]);
     expect(terminal.woken).toHaveBeenCalledWith("s-reviewer");
+  });
+
+  it("presses Enter in its own write, only after the pause", async () => {
+    vi.useFakeTimers();
+    const write = vi
+      .spyOn(commands, "writeTerminal")
+      .mockResolvedValue({ status: "ok", data: null });
+
+    const sent = sendTeamMessage("Builder", "s-reviewer", "check the login");
+    await vi.advanceTimersByTimeAsync(SUBMIT_DELAY_MS - 1);
+    expect(write.mock.calls).toEqual([
+      ["s-reviewer", "[from Builder] check the login"],
+    ]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(write.mock.calls[1]).toEqual(["s-reviewer", "\r"]);
+    await expect(sent).resolves.toBe(true);
   });
 
   it("writes nothing for an empty, blank or too-long message", async () => {
@@ -196,7 +254,7 @@ describe("sending", () => {
   });
 
   it("shows a failed write with the backend's message, and reports it so the text is kept", async () => {
-    vi.spyOn(commands, "writeTerminal").mockResolvedValue({
+    const write = vi.spyOn(commands, "writeTerminal").mockResolvedValue({
       status: "error",
       error: {
         kind: "terminalNotRunning",
@@ -208,10 +266,30 @@ describe("sending", () => {
       await sendTeamMessage("Builder", "s-reviewer", "check the login"),
     ).toBe(false);
 
+    expect(write).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledWith(copy.team.message.sendFailed, {
       description: "the terminal is not running",
     });
     expect(terminal.woken).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed Enter, and reports it as not sent", async () => {
+    vi.spyOn(commands, "writeTerminal")
+      .mockResolvedValueOnce({ status: "ok", data: null })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: {
+          kind: "terminalNotRunning",
+          message: "the terminal is not running",
+        },
+      });
+
+    expect(
+      await sendTeamMessage("Builder", "s-reviewer", "check the login"),
+    ).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith(copy.team.message.sendFailed, {
+      description: "the terminal is not running",
+    });
   });
 
   it("shows a write that rejects, and reports it as not sent", async () => {

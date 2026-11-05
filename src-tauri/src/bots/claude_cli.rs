@@ -15,13 +15,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use specta::Type;
 
+use crate::agents::skill_file;
+use crate::agents::tool_catalog::{instructions, list_for};
+
 use super::base_instructions;
-use super::bot_bridge::{BotBridge, SERVER_NAME, session_of};
+use super::bot_bridge::{BOT_SESSION_PREFIX, BotBridge, session_of};
 use super::bot_folder::{BotError, BotFolder};
 use super::bot_mcp;
 use super::bot_memory;
 use super::bot_skills;
-use super::bot_tools;
 use super::bot_topics;
 use super::command_permissions;
 use crate::private_file;
@@ -95,6 +97,10 @@ struct Reach {
     cancel: Arc<AtomicBool>,
     /// What the turn is called in the bot's `.run/` folder, so turns that overlap never share files.
     label: String,
+    /// The app's executable: the bot's shell runs it with `--cli` to reach Lynx's tools.
+    cli: Option<PathBuf>,
+    /// The environment that lets that CLI reach the app as this turn's session.
+    env: Vec<(String, String)>,
 }
 
 impl ClaudeCli {
@@ -138,13 +144,14 @@ impl ClaudeCli {
             ..Reach::default()
         };
         if let Some(bridge) = self.bridge.get() {
-            if let Some(server) = bridge.mcp_server(session) {
-                reach.servers.insert(SERVER_NAME.to_owned(), server);
-            }
             reach.read_dirs = grants
                 .iter()
                 .flat_map(|grant| bridge.repos().folders_of(&grant.id))
                 .collect();
+            reach.cli = Some(bridge.executable().to_path_buf());
+            reach.env = bridge.session_env(session);
+            // The lynx skill is in the bot's folder, so the bot runs its skills.
+            reach.skills = true;
         }
         Ok(reach)
     }
@@ -265,21 +272,20 @@ impl ClaudeCli {
         )?;
         // One step, so a run that starts while another writes the same file never reads half of it.
         private_file::write(&prompt_file, system_prompt.as_bytes())?;
+        if let Some(cli) = &reach.cli {
+            // The lynx skill says how to call the CLI with the tools this bot has.
+            skill_file::write(
+                &dir.join(".claude").join("skills"),
+                &skill_file::render(cli, &list_for(Some(BOT_SESSION_PREFIX)), &instructions()),
+            )?;
+        }
 
-        // A server the bot has is callable by its name, and Lynx's own server by each of its tools.
-        let mut mcp_tools: Vec<String> = reach
+        // A server the bot has is callable by its name. Lynx's own tools come through its shell, not MCP.
+        let mcp_tools: Vec<String> = reach
             .servers
             .keys()
-            .filter(|name| name.as_str() != SERVER_NAME)
             .map(|name| format!("mcp__{name}"))
             .collect();
-        if reach.servers.contains_key(SERVER_NAME) {
-            mcp_tools.extend(
-                bot_tools::names()
-                    .iter()
-                    .map(|tool| format!("mcp__{SERVER_NAME}__{tool}")),
-            );
-        }
         let launch = Launch {
             settings: &cli_settings,
             mcp: &mcp,
@@ -287,10 +293,12 @@ impl ClaudeCli {
             mcp_tools: &mcp_tools,
             skills: reach.skills,
             commands: &reach.commands,
+            cli: reach.cli.as_deref(),
         };
         let mut command = Command::new("claude");
         command
             .current_dir(dir)
+            .envs(reach.env.iter().map(|(key, value)| (key, value)))
             .args(bot_arguments(message, &prompt_file, model, &launch));
         clean_command(&mut command);
         let mut answer = None;
@@ -382,6 +390,8 @@ pub struct Launch<'a> {
     pub skills: bool,
     /// The command patterns the run may execute.
     pub commands: &'a [String],
+    /// The app's executable, which the run may call with `--cli` and nothing else from its shell.
+    pub cli: Option<&'a Path>,
 }
 
 /// The arguments that make the CLI a bot: its system prompt read from `system_prompt` in place of its
@@ -402,7 +412,7 @@ pub fn bot_arguments(
     if launch.skills {
         tools.push(SKILL_TOOL);
     }
-    if !launch.commands.is_empty() {
+    if (launch.cli.is_some() || !launch.commands.is_empty()) && !tools.contains(&BASH_TOOL) {
         tools.push(BASH_TOOL);
     }
     let mut arguments = vec![
@@ -437,7 +447,11 @@ pub fn bot_arguments(
         arguments.push("--disallowedTools".to_owned());
         arguments.extend(SECRET_DENIALS.iter().map(|rule| (*rule).to_owned()));
     }
-    let mut allowed: Vec<String> = launch.mcp_tools.to_vec();
+    let mut allowed: Vec<String> = Vec::new();
+    if let Some(cli) = launch.cli {
+        allowed.push(format!("Bash({} --cli *)", cli.display()));
+    }
+    allowed.extend(launch.mcp_tools.to_vec());
     allowed.extend(command_permissions::rules(launch.commands));
     allowed.extend(
         launch
@@ -550,6 +564,7 @@ mod tests {
             mcp_tools: &[],
             skills: false,
             commands: &[],
+            cli: None,
         }
     }
 
@@ -564,6 +579,7 @@ mod tests {
             mcp_tools: &tools,
             skills: false,
             commands: &[],
+            cli: None,
         };
 
         let arguments = bot_arguments("oi", Path::new("/w/system.txt"), None, &launch);
@@ -941,5 +957,61 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 
         assert!(answer.ok, "{}", answer.text);
         assert!(filed >= 1, "nothing was filed: {}", answer.text);
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    fn value_after<'a>(arguments: &'a [String], flag: &str) -> Option<&'a str> {
+        arguments
+            .iter()
+            .position(|argument| argument == flag)
+            .and_then(|index| arguments.get(index + 1))
+            .map(String::as_str)
+    }
+
+    #[test]
+    fn a_bot_gets_bash_only_for_the_lynx_cli_and_its_skill() {
+        let launch = Launch {
+            settings: Path::new("/w/s.json"),
+            mcp: Path::new("/w/m.json"),
+            read_dirs: &[],
+            mcp_tools: &[],
+            skills: true,
+            commands: &[],
+            cli: Some(Path::new("/opt/lynx/lynx-ide")),
+        };
+
+        let arguments = bot_arguments("oi", Path::new("/w/system.txt"), None, &launch);
+
+        let tools = value_after(&arguments, "--tools").expect("a tools list");
+        assert_eq!(tools, "Skill,Bash");
+        let allowed = arguments
+            .iter()
+            .position(|argument| argument == "--allowedTools")
+            .map(|index| &arguments[index + 1..])
+            .expect("an allow list");
+        assert_eq!(allowed[0], "Bash(/opt/lynx/lynx-ide --cli *)");
+        assert_eq!(allowed.len(), 1, "no other shell command is pre-approved");
+    }
+
+    #[test]
+    fn bash_is_listed_once_when_the_cli_and_command_patterns_are_both_on() {
+        let commands = ["minha-cli *".to_owned()];
+        let launch = Launch {
+            settings: Path::new("/w/s.json"),
+            mcp: Path::new("/w/m.json"),
+            read_dirs: &[],
+            mcp_tools: &[],
+            skills: true,
+            commands: &commands,
+            cli: Some(Path::new("/opt/lynx/lynx-ide")),
+        };
+
+        let arguments = bot_arguments("oi", Path::new("/w/system.txt"), None, &launch);
+
+        assert_eq!(value_after(&arguments, "--tools"), Some("Skill,Bash"));
     }
 }

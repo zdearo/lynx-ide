@@ -1,18 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
-import type {
-  AgentStatus,
-  ResumableSession,
-  TeamSnapshot,
-  TerminalInfo,
-} from "@/bindings";
+import type { ResumableSession, TeamSnapshot, TerminalInfo } from "@/bindings";
 import { IpcRequestError } from "@/lib/ipc-result";
+import type { TeamStatus, WorkerState } from "@/team/team-fixtures";
 import { onTeamChanged, teamBackend } from "@/team/team-backend";
 import {
   agentNameOf,
   membersOfWorktree,
   statusOfSession,
+  statusOfWorker,
   teamDialogSessionId,
   useTeamStore,
   watchTeam,
@@ -46,8 +43,11 @@ const terminal = vi.hoisted(() => ({
   close: vi.fn(),
   sessions: [] as TerminalInfo[],
 }));
+// The sessions the backend closed on its own, which the team keeps the cards of.
+const closedByBackend = vi.hoisted(() => new Set<string>());
 vi.mock("@/terminal/terminal-store", () => ({
   useTerminalStore: { getState: () => terminal, subscribe: vi.fn() },
+  isClosedByBackend: (id: string) => closedByBackend.has(id),
 }));
 vi.mock("@/terminal/terminal-actions", () => ({
   resumeLine: vi.fn(),
@@ -82,7 +82,12 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       orchestrator: true,
       task: "",
       acceptance: "",
+      taskState: null,
+      dependsOn: [],
+      executionWorktree: null,
+      dispatchState: null,
       sessionId: null,
+      workerState: null,
       expanded: false,
     },
     {
@@ -96,7 +101,12 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       orchestrator: true,
       task: "login form",
       acceptance: "The form submits.",
+      taskState: null,
+      dependsOn: [],
+      executionWorktree: null,
+      dispatchState: null,
       sessionId: null,
+      workerState: null,
       expanded: false,
     },
     {
@@ -110,7 +120,12 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       orchestrator: false,
       task: "",
       acceptance: "",
+      taskState: null,
+      dependsOn: [],
+      executionWorktree: null,
+      dispatchState: null,
       sessionId: null,
+      workerState: null,
       expanded: false,
     },
     {
@@ -124,7 +139,12 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       orchestrator: true,
       task: "",
       acceptance: "",
+      taskState: null,
+      dependsOn: [],
+      executionWorktree: null,
+      dispatchState: null,
       sessionId: null,
+      workerState: null,
       expanded: false,
     },
   ],
@@ -177,6 +197,7 @@ const withExpanded = (ids: string[]): TeamSnapshot => {
 beforeEach(() => {
   vi.resetAllMocks();
   terminal.sessions = [];
+  closedByBackend.clear();
   resumable.byWorktree = {};
   resumable.remove.mockResolvedValue(undefined);
   useTeamStore.setState(initialState, true);
@@ -241,15 +262,39 @@ describe("team load", () => {
     });
   });
 
-  it("refuses a member the backend sends with no agent or bot, rather than guessing one", async () => {
+  it("refuses a bot the backend sends with no bot id, rather than guessing one", async () => {
     await loadTeam(
       snapshot({
-        members: [{ ...snapshot().members[0], harness: null }],
+        members: [
+          { ...snapshot().members[0], kind: "bot", harness: null, botId: null },
+        ],
       }),
     );
 
     expect(store().loaded).toBe(false);
     expect(toast.error).toHaveBeenCalled();
+  });
+
+  it("keeps an agent the orchestrator added with no harness yet: it has not started a worker", async () => {
+    await loadTeam(
+      snapshot({
+        members: [
+          {
+            ...snapshot().members[0],
+            harness: null,
+            taskState: "pending",
+            dependsOn: [],
+          },
+        ],
+      }),
+    );
+
+    expect(store().loaded).toBe(true);
+    expect(store().members[0]).toMatchObject({
+      kind: "agent",
+      harness: null,
+      taskState: "pending",
+    });
   });
 
   it("reads the team again when the backend says it changed, until the view closes", async () => {
@@ -477,6 +522,30 @@ describe("team expansion", () => {
     });
     expect(store().expanded).toEqual([]);
   });
+
+  it("clears the pick when collapsing its parent hides it", async () => {
+    await loadTeam(withExpanded(["lead"]));
+    store().select("builder");
+    api.setExpanded.mockResolvedValue(null);
+
+    await store().toggle("lead");
+
+    expect(api.setExpanded).toHaveBeenCalledWith("lead", false);
+    expect(store().selectedId).toBeNull();
+  });
+
+  it("keeps the pick when a collapse hides nothing picked, or the backend refuses it", async () => {
+    await loadTeam(withExpanded(["lead", "builder"]));
+    store().select("reviewer");
+    api.setExpanded.mockResolvedValue(null);
+    await store().toggle("builder");
+    expect(store().selectedId).toBe("reviewer");
+
+    store().select("builder");
+    api.setExpanded.mockRejectedValue(refused("no member with id lead"));
+    await store().toggle("lead");
+    expect(store().selectedId).toBe("builder");
+  });
 });
 
 describe("team sessions", () => {
@@ -679,6 +748,29 @@ describe("team sessions", () => {
     expect(api.dismissMember).toHaveBeenCalledWith("builder");
   });
 
+  it("dismisses the agent whose terminal was closed though the team view never opened", async () => {
+    // The app starts watching the team, so a session closed before the team view opens still leaves it.
+    // A team read without the builder forgets its earlier dismissal, as the app does when a member leaves.
+    await loadTeam(
+      teamWithSessions(
+        {},
+        snapshot().members.filter((m) => m.id !== "builder"),
+      ),
+    );
+    useTeamStore.setState({ members: [] });
+    api.snapshot.mockResolvedValue(teamWithSessions({ builder: "s1" }));
+    api.dismissMember.mockResolvedValue(null);
+    watchTeam();
+    await vi.waitFor(() => expect(store().members.length).toBeGreaterThan(0));
+
+    onTerminalChange(
+      { sessions: [] } as never,
+      { sessions: [{ id: "s1" }] } as never,
+    );
+
+    expect(api.dismissMember).toHaveBeenCalledWith("builder");
+  });
+
   it("does not dismiss again an agent the team already dismissed", async () => {
     await loadTeam(teamWithSessions({ builder: "s1" }));
     api.dismissMember.mockResolvedValue("s1");
@@ -725,19 +817,85 @@ describe("team sessions", () => {
     expect(api.dismissMember).toHaveBeenCalledWith("builder");
   });
 
-  it.each<[string, TerminalInfo | undefined, AgentStatus]>([
+  it.each<[string, TerminalInfo | undefined, TeamStatus]>([
     ["working", session("s", { agentStatus: "working" }), "working"],
     ["needs you", session("s", { agentStatus: "needsYou" }), "needsYou"],
     ["done", session("s", { agentStatus: "done" }), "done"],
     ["idle when the agent reports nothing", session("s"), "idle"],
     [
-      "done once the program has ended",
+      "closed once the program has ended",
       session("s", { running: false, exitCode: 0 }),
-      "done",
+      "closed",
     ],
-    ["idle when the session is gone", undefined, "idle"],
+    ["closed when the session is gone", undefined, "closed"],
   ])("maps a session to a card's status: %s", (_name, input, status) => {
     expect(statusOfSession(input)).toBe(status);
+  });
+
+  it.each<[WorkerState, TeamStatus]>([
+    ["running", "working"],
+    ["done", "done"],
+    ["failed", "failed"],
+    ["stopped", "closed"],
+  ])("maps a worker in state %s to a card's status %s", (state, status) => {
+    expect(statusOfWorker(state)).toBe(status);
+  });
+
+  // A team whose builder is a worker in the given state. It keeps its session, as a worker does.
+  function workerTeam(workerState: string | null): TeamSnapshot {
+    const team = teamWithSessions({ builder: "s1" });
+    return {
+      ...team,
+      members: team.members.map((member) =>
+        member.id === "builder" ? { ...member, workerState } : member,
+      ),
+    };
+  }
+
+  it("shows a worker's card from its worker state, not from its session", async () => {
+    terminal.sessions = [session("s1", { agentStatus: "needsYou" })];
+    await loadTeam(workerTeam("failed"));
+
+    expect(member("builder")?.status).toBe("failed");
+  });
+
+  it("reads the team again when a worker's process ends, so its card follows the backend", async () => {
+    terminal.sessions = [session("s1")];
+    await loadTeam(workerTeam("running"));
+    api.snapshot.mockClear();
+
+    onTerminalChange(
+      { sessions: [session("s1", { running: false })] } as never,
+      { sessions: [session("s1")] } as never,
+    );
+
+    expect(api.snapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read the team again for an agent that is not a worker", async () => {
+    terminal.sessions = [session("s1")];
+    await loadTeam(teamWithSessions({ builder: "s1" }));
+    api.snapshot.mockClear();
+
+    onTerminalChange(
+      { sessions: [session("s1", { running: false })] } as never,
+      { sessions: [session("s1")] } as never,
+    );
+
+    expect(api.snapshot).not.toHaveBeenCalled();
+  });
+
+  it("keeps a worker's card when the backend closed its terminal, so it shows how the worker ended", async () => {
+    await loadTeam(workerTeam("done"));
+    closedByBackend.add("s1");
+
+    onTerminalChange(
+      { sessions: [] } as never,
+      { sessions: [{ id: "s1" }] } as never,
+    );
+
+    expect(api.dismissMember).not.toHaveBeenCalled();
+    expect(member("builder")?.status).toBe("done");
   });
 
   it("draws the dialog's session only for a member of the selected worktree", async () => {
@@ -773,14 +931,23 @@ describe("team sessions", () => {
       { sessions: [session("s1", { running: false })] } as never,
       { sessions: [session("s1", { agentStatus: "needsYou" })] } as never,
     );
-    expect(member("builder")?.status).toBe("done");
+    expect(member("builder")?.status).toBe("closed");
   });
 
-  it("shows idle for an agent whose session is gone", async () => {
+  it("shows closed for an agent whose session is gone", async () => {
     terminal.sessions = [];
     await loadTeam(teamWithSessions({ builder: "s9" }));
 
-    expect(member("builder")?.status).toBe("idle");
+    expect(member("builder")?.status).toBe("closed");
+  });
+
+  it("shows idle for an agent with no session at all", async () => {
+    await loadTeam();
+
+    expect(member("builder")).toMatchObject({
+      sessionId: null,
+      status: "idle",
+    });
   });
 
   it("adds a terminal agent to the team of the worktree it runs in, as a loose member", () => {
@@ -798,6 +965,7 @@ describe("team sessions", () => {
       harness: "claude",
       parentId: null,
       orchestrator: false,
+      dependsOn: [],
       task: "",
       acceptance: "",
       worktree: AUTH,

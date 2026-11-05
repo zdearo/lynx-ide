@@ -61,7 +61,8 @@ export function SettingsDialog() {
           event.preventDefault();
           contentRef.current?.focus();
         }}
-        className="h-[min(44rem,calc(100dvh-4rem))] w-[min(60rem,calc(100vw-4rem))] max-w-none grid-rows-[auto_1fr] gap-0 overflow-hidden p-0 sm:max-w-none"
+        // The column is capped at the dialog's width: a long unwrapped line (a config path) must not widen the dialog.
+        className="h-[min(44rem,calc(100dvh-4rem))] w-[min(60rem,calc(100vw-4rem))] max-w-none grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr] gap-0 overflow-hidden p-0 sm:max-w-none"
       >
         <header className="flex h-9 items-center justify-between border-b border-border pr-1.5 pl-3">
           <DialogTitle className="text-ui font-medium">

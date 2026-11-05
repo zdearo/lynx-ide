@@ -43,6 +43,7 @@ import {
 } from "@/navigation/NavigationSidebar";
 import { useNavigationStore } from "@/navigation/navigation-store";
 import { useQuitGuard } from "@/quit-guard";
+import { watchTeam } from "@/team/team-store";
 
 const REFRESH_ON_FOCUS_MS = 2000;
 
@@ -79,6 +80,8 @@ function App() {
   }, [canDockRight]);
   useAppShortcuts(toggleSidebar, toggleFilesPanel);
   useQuitGuard();
+  // The team is read from the start, not only while its view is open: a session closed meanwhile still leaves it.
+  useEffect(() => watchTeam(), []);
 
   useEffect(() => {
     Promise.all([
@@ -99,6 +102,11 @@ function App() {
     // A session an agent started through the backend appears in the list, not only one the screen made.
     const unlistenCreated = events.terminalCreated.listen(({ payload }) => {
       useTerminalStore.getState().added(payload.session);
+    });
+
+    // The backend closed a session on its own, such as a worker a coordinator released: its tab goes.
+    const unlistenClosed = events.terminalClosed.listen(({ payload }) => {
+      useTerminalStore.getState().dropClosed(payload.id);
     });
 
     const unlistenAgentStatus = events.agentStatusChanged.listen(
@@ -212,6 +220,7 @@ function App() {
       window.removeEventListener("focus", refreshOnFocus);
       void unlistenExit.then((unlisten) => unlisten());
       void unlistenCreated.then((unlisten) => unlisten());
+      void unlistenClosed.then((unlisten) => unlisten());
       void unlistenAgentStatus.then((unlisten) => unlisten());
       void unlistenWorktree.then((unlisten) => unlisten());
       void unlistenWorktreeCreated.then((unlisten) => unlisten());

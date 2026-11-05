@@ -127,6 +127,8 @@ pub fn event_from_payload(payload: &Value) -> Option<HookEvent> {
 pub struct ClaudeHookTarget {
     settings_path: PathBuf,
     command: Option<String>,
+    /// The permission that lets Claude run the app's CLI without asking.
+    cli_rule: Option<String>,
 }
 
 impl ClaudeHookTarget {
@@ -134,6 +136,8 @@ impl ClaudeHookTarget {
         Self {
             settings_path,
             command: executable.map(hook_command),
+            cli_rule: executable
+                .map(|executable| format!("Bash({} --cli *)", executable.display())),
         }
     }
 
@@ -154,6 +158,7 @@ impl ClaudeHookTarget {
             .ok_or(HookInstallError::NoExecutable)?;
         let mut settings = read_settings(&self.settings_path)?;
         apply(&mut settings, command, &events_for(version));
+        set_cli_rule(&mut settings, self.cli_rule.as_deref());
         write_settings(&self.settings_path, &settings)?;
         Ok(self.status(version))
     }
@@ -161,7 +166,10 @@ impl ClaudeHookTarget {
     /// Removes Lynx's entries and leaves the rest of the file as it was.
     pub fn remove(&self, version: Option<Version>) -> Result<HookInstallStatus, HookInstallError> {
         let mut settings = read_settings(&self.settings_path)?;
-        if strip(&mut settings) {
+        let before = settings.clone();
+        strip(&mut settings);
+        set_cli_rule(&mut settings, None);
+        if settings != before {
             write_settings(&self.settings_path, &settings)?;
         }
         Ok(self.status(version))
@@ -227,6 +235,39 @@ fn apply(settings: &mut Value, command: &str, events: &[EventSpec]) {
 
 fn strip(settings: &mut Value) -> bool {
     json_hook_file::strip(settings, &FORMAT, MARKER)
+}
+
+/// The end of the permission Lynx adds for its CLI, which tells it apart from the user's own rules.
+const CLI_RULE_END: &str = " --cli *)";
+
+/// Sets Lynx's CLI permission: the one rule that ends with `CLI_RULE_END` is replaced by `rule`, or removed
+/// when `rule` is None. Other permissions stay. Keys it created and left empty are removed again.
+fn set_cli_rule(settings: &mut Value, rule: Option<&str>) {
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+    let permissions = root.entry("permissions").or_insert_with(|| json!({}));
+    let Some(permissions_map) = permissions.as_object_mut() else {
+        return;
+    };
+    let allow = permissions_map.entry("allow").or_insert_with(|| json!([]));
+    let Some(list) = allow.as_array_mut() else {
+        return;
+    };
+    list.retain(|entry| {
+        !entry
+            .as_str()
+            .is_some_and(|text| text.ends_with(CLI_RULE_END))
+    });
+    if let Some(rule) = rule {
+        list.push(json!(rule));
+    }
+    if list.is_empty() {
+        permissions_map.remove("allow");
+    }
+    if permissions_map.is_empty() {
+        root.remove("permissions");
+    }
 }
 
 #[cfg(test)]
@@ -350,6 +391,7 @@ mod tests {
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
             command: Some(COMMAND.to_owned()),
+            cli_rule: None,
         };
         assert_eq!(
             target.status(Some(RECENT)).state,
@@ -381,6 +423,7 @@ mod tests {
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
             command: Some(COMMAND.to_owned()),
+            cli_rule: None,
         };
         target.install(Some(RECENT)).expect("install");
         assert_eq!(
@@ -407,6 +450,7 @@ mod tests {
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
             command: Some(COMMAND.to_owned()),
+            cli_rule: None,
         };
         assert_eq!(target.status(None).state, HookInstallState::Error);
         assert!(target.install(None).is_err());
@@ -420,6 +464,7 @@ mod tests {
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
             command: None,
+            cli_rule: None,
         };
         assert!(matches!(
             target.install(Some(RECENT)),
@@ -438,6 +483,7 @@ mod tests {
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
             command: Some(COMMAND.to_owned()),
+            cli_rule: None,
         };
 
         let status = target.install(Some([1, 0, 70])).expect("install");
@@ -460,6 +506,7 @@ mod tests {
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
             command: Some(COMMAND.to_owned()),
+            cli_rule: None,
         };
         target.install(Some(RECENT)).expect("install");
         let mut settings: Value =
@@ -506,6 +553,7 @@ mod tests {
         let target = ClaudeHookTarget {
             settings_path: path,
             command: Some(COMMAND.to_owned()),
+            cli_rule: None,
         };
         target.install(None).expect("install");
 
@@ -575,5 +623,43 @@ mod tests {
         );
         assert_eq!(event_from_payload(&event("Notification")), None);
         assert_eq!(event_from_payload(&json!({})), None);
+    }
+}
+
+#[cfg(test)]
+mod cli_permission_tests {
+    use super::*;
+
+    #[test]
+    fn the_cli_rule_is_added_beside_the_users_rules_and_replaced_not_duplicated() {
+        let mut settings = json!({ "permissions": { "allow": ["Bash(npm test)"] } });
+
+        set_cli_rule(&mut settings, Some("Bash(/opt/lynx/lynx-ide --cli *)"));
+        set_cli_rule(&mut settings, Some("Bash(/opt/new/lynx-ide --cli *)"));
+
+        assert_eq!(
+            settings["permissions"]["allow"],
+            json!(["Bash(npm test)", "Bash(/opt/new/lynx-ide --cli *)"])
+        );
+    }
+
+    #[test]
+    fn removing_the_rule_leaves_the_users_rules_and_no_empty_keys() {
+        let mut settings = json!({ "permissions": { "allow": ["Bash(npm test)"] } });
+        set_cli_rule(&mut settings, Some("Bash(/opt/lynx/lynx-ide --cli *)"));
+        set_cli_rule(&mut settings, None);
+        assert_eq!(
+            settings,
+            json!({ "permissions": { "allow": ["Bash(npm test)"] } })
+        );
+
+        let mut bare = json!({ "model": "x" });
+        set_cli_rule(&mut bare, Some("Bash(/opt/lynx/lynx-ide --cli *)"));
+        set_cli_rule(&mut bare, None);
+        assert_eq!(
+            bare,
+            json!({ "model": "x" }),
+            "a file without permissions is left as it was"
+        );
     }
 }

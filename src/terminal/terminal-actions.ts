@@ -7,6 +7,7 @@ import { useDialogStore } from "@/dialog-store";
 import { copy } from "@/ui-copy";
 import { errorMessage } from "@/lib/error-message";
 import { TERMINAL_PRESETS, type TerminalPreset } from "@/agents/agent-presets";
+import { useTeamStore } from "@/team/team-store";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { resumeCommand } from "@/workspace/resume-command";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
@@ -50,6 +51,9 @@ export async function startTerminal(
 ): Promise<boolean> {
   try {
     await useTerminalStore.getState().create(worktreePath, command);
+    // Only the person starts a terminal here, so only this brings it in front of the team. A session the backend or
+    // the team starts never comes through this function.
+    useTeamStore.getState().setMode(worktreePath, "terminal");
     // Starting something in a worktree means looking at it.
     useWorkspaceStore.getState().selectWorktree(worktreePath);
     return true;

@@ -103,8 +103,11 @@ function mountTerminal(
     )
     .then((snapshot) => {
       if (disposed) return;
+      // The output was drawn at the session's size: the screen takes that size before replaying it, or the
+      // lines wrap at the wrong column, even while the container is hidden.
+      terminal.resize(snapshot.cols, snapshot.rows);
       gate.attach(snapshot);
-      // The session was created at a default size, or kept the one of an earlier window.
+      // The screen's own size may differ from the session's; the session takes the screen's size.
       fitIfVisible();
     })
     .catch((error: unknown) => {

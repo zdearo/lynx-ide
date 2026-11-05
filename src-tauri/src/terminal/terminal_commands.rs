@@ -4,6 +4,7 @@ use tauri::State;
 use tauri::ipc::Channel;
 
 use crate::error::{AppError, IpcError};
+use crate::orchestration::agent_wake::AgentWakes;
 use crate::process::blocking_task::run_blocking;
 
 use super::daemon_host::DaemonStatus;
@@ -118,12 +119,20 @@ pub fn terminal_attach(
 #[specta::specta]
 pub async fn write_terminal(
     manager: State<'_, TerminalManager>,
+    wakes: State<'_, Arc<AgentWakes>>,
     id: String,
     data: String,
 ) -> Result<(), IpcError> {
     let manager = manager.inner().clone();
+    let wakes = wakes.inner().clone();
     // Writes can block when the program is not reading, so they stay off the async runtime.
-    run_blocking(move || Ok(manager.write(&id, &data)?)).await
+    run_blocking(move || {
+        manager.write(&id, &data)?;
+        // What the person types is theirs: a draft in the input holds back a note for this agent.
+        wakes.typed(&id, &data);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]

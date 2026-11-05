@@ -41,7 +41,7 @@ mod tests {
             .map(|tool| tool["name"].as_str().unwrap_or_default().to_owned())
             .collect();
         assert!(names.iter().any(|name| name == "browser_snapshot"));
-        assert!(names.iter().any(|name| name == "lynx_run_start"));
+        assert!(names.iter().any(|name| name == "lynx_member_add"));
         assert!(instructions().contains("lynx_worker_read"));
         assert!(instructions().contains("browser_snapshot"));
     }

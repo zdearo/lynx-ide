@@ -104,22 +104,6 @@ export function TerminalWorkspace({
     useBrowserStore.getState().setOpen(false);
     useEditorStore.getState().show(path, null);
   }, [teamMode, path]);
-  // A terminal started from anywhere (the + menu, the shortcut) comes in front of the team. An agent the team
-  // adds starts in the background: the team stays on screen.
-  useEffect(
-    () =>
-      useTerminalStore.subscribe((state, previous) => {
-        const created = state.sessions[state.sessions.length - 1];
-        if (
-          state.sessions.length > previous.sessions.length &&
-          created &&
-          !useTeamStore.getState().addingSession
-        ) {
-          useTeamStore.getState().setMode(created.worktreePath, "terminal");
-        }
-      }),
-    [],
-  );
 
   return (
     <main

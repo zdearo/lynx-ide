@@ -6,7 +6,7 @@ use std::path::{Component, Path};
 use crate::bots::bot_folder::valid_id;
 
 use super::team_error::TeamError;
-use super::team_model::{TeamMember, TeamMemberKind, TeamPair};
+use super::team_model::{TaskState, TeamMember, TeamMemberKind, TeamPair};
 
 pub const MAX_ROLE_CHARS: usize = 40;
 pub const MAX_TEXT_CHARS: usize = 2000;
@@ -187,6 +187,21 @@ pub fn check_bot_join(
     Ok(())
 }
 
+/// A terminal session belongs to one member at most. `member_id` is the member that may already hold it.
+pub fn check_session_free(
+    members: &[TeamMember],
+    session_id: &str,
+    member_id: Option<&str>,
+) -> Result<(), TeamError> {
+    let held = members.iter().any(|member| {
+        member.session_id.as_deref() == Some(session_id) && Some(member.id.as_str()) != member_id
+    });
+    if held {
+        return Err(TeamError::SessionTaken);
+    }
+    Ok(())
+}
+
 /// Only an agent takes a new role; a bot's role is its name.
 pub fn check_role_change(member: &TeamMember) -> Result<(), TeamError> {
     if member.kind == TeamMemberKind::Bot {
@@ -201,6 +216,59 @@ pub fn check_has_orchestrator(member: &TeamMember) -> Result<(), TeamError> {
         return Err(TeamError::NoOrchestrator);
     }
     Ok(())
+}
+
+/// Only a member whose task has not started yet may change what it waits for.
+pub fn check_task_pending(member: &TeamMember) -> Result<(), TeamError> {
+    if member.task_state != Some(TaskState::Pending) {
+        return Err(TeamError::TaskStarted);
+    }
+    Ok(())
+}
+
+/// What `member` may wait for: members of its own worktree, never itself, and never one that waits for it through
+/// any chain. `edges` are the stored lines (member, waits for), without the member's own lines, which are replaced.
+pub fn check_dependencies(
+    members: &[TeamMember],
+    edges: &[(String, String)],
+    member: &TeamMember,
+    depends_on: &[String],
+) -> Result<(), TeamError> {
+    for id in depends_on {
+        let dependency = member_of(members, id)?;
+        if dependency.id == member.id {
+            return Err(TeamError::DependencyCycle);
+        }
+        if dependency.worktree != member.worktree {
+            return Err(TeamError::DependencyOtherWorktree);
+        }
+        if waits_for(edges, &dependency.id, &member.id) {
+            return Err(TeamError::DependencyCycle);
+        }
+    }
+    Ok(())
+}
+
+/// Whether `from` waits for `target`, directly or through others. Each member is visited once, so a loop ends.
+fn waits_for(edges: &[(String, String)], from: &str, target: &str) -> bool {
+    let mut stack = vec![from];
+    let mut seen: Vec<&str> = Vec::new();
+    while let Some(current) = stack.pop() {
+        if current == target {
+            return true;
+        }
+        if seen.contains(&current) {
+            continue;
+        }
+        seen.push(current);
+        stack.extend(
+            edges
+                .iter()
+                .filter(|(member, _)| member == current)
+                .map(|(_, dependency)| dependency.as_str()),
+        );
+    }
+    false
 }
 
 #[cfg(test)]
@@ -223,6 +291,11 @@ mod tests {
             acceptance: String::new(),
             session_id: None,
             expanded: false,
+            worker_state: None,
+            task_state: None,
+            depends_on: Vec::new(),
+            dispatch_state: None,
+            execution_worktree: None,
         }
     }
 

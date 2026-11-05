@@ -48,6 +48,14 @@ pub enum TeamError {
     LinkedToParent,
     #[error("a member with no orchestrator has no task")]
     NoOrchestrator,
+    #[error("that terminal already belongs to a member of a team")]
+    SessionTaken,
+    #[error("a task cannot wait for itself, or for a task that waits for it")]
+    DependencyCycle,
+    #[error("a task can only wait for tasks of its own worktree")]
+    DependencyOtherWorktree,
+    #[error("the task already started, so what it waits for cannot change")]
+    TaskStarted,
     #[error(transparent)]
     Database(#[from] DatabaseError),
 }

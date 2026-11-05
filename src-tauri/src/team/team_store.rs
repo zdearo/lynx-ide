@@ -1,15 +1,19 @@
 //! The team tables of the app database. Reads take the lock; writes run inside `team_transaction`, so a
 //! change with several steps lands whole or not at all.
 
+use std::collections::HashMap;
+
 use rusqlite::types::Type;
-use rusqlite::{Connection, Row, params};
+use rusqlite::{Connection, Row, params, params_from_iter};
 
 use crate::agents::harness::{harness_name, harness_named};
 use crate::persistence::{AppDatabase, DatabaseError};
 
-use super::team_model::{TeamMember, TeamMemberKind, TeamPair};
+use super::team_model::{
+    DispatchState, MessageKind, TaskState, TeamMember, TeamMemberKind, TeamMessage, TeamPair,
+};
 
-const MEMBER_COLUMNS: &str = "id, worktree, kind, role, harness, bot_id, parent_id, orchestrator, task, acceptance, session_id, expanded";
+const MEMBER_COLUMNS: &str = "id, worktree, kind, role, harness, bot_id, parent_id, orchestrator, task, acceptance, session_id, expanded, task_state, dispatch_state, execution_worktree";
 
 /// A stored value the model cannot read. The table's checks keep this from happening.
 fn unreadable(index: usize) -> rusqlite::Error {
@@ -19,6 +23,8 @@ fn unreadable(index: usize) -> rusqlite::Error {
 fn member_from(row: &Row<'_>) -> rusqlite::Result<TeamMember> {
     let kind: String = row.get(2)?;
     let harness: Option<String> = row.get(4)?;
+    let task_state: Option<String> = row.get(12)?;
+    let dispatch_state: Option<String> = row.get(13)?;
     Ok(TeamMember {
         id: row.get(0)?,
         worktree: row.get(1)?,
@@ -32,21 +38,53 @@ fn member_from(row: &Row<'_>) -> rusqlite::Result<TeamMember> {
         orchestrator: row.get(7)?,
         task: row.get(8)?,
         acceptance: row.get(9)?,
+        task_state: task_state
+            .map(|text| TaskState::parse(&text).ok_or_else(|| unreadable(12)))
+            .transpose()?,
+        depends_on: Vec::new(),
+        dispatch_state: dispatch_state
+            .map(|text| DispatchState::parse(&text).ok_or_else(|| unreadable(13)))
+            .transpose()?,
+        execution_worktree: row.get(14)?,
         session_id: row.get(10)?,
         expanded: row.get(11)?,
+        worker_state: None,
+    })
+}
+
+fn message_from(row: &Row<'_>) -> rusqlite::Result<TeamMessage> {
+    let kind: String = row.get(2)?;
+    Ok(TeamMessage {
+        id: row.get(0)?,
+        member_id: row.get(1)?,
+        kind: MessageKind::parse(&kind).ok_or_else(|| unreadable(2))?,
+        body: row.get(3)?,
+        created_at: row.get(4)?,
     })
 }
 
 impl AppDatabase {
-    /// Every member of every worktree's team, in the order they were added.
+    /// Every member of every worktree's team, in the order they were added, with what each waits for.
     pub fn team_members(&self) -> Result<Vec<TeamMember>, DatabaseError> {
         let connection = self.lock();
         let mut statement = connection.prepare(&format!(
             "SELECT {MEMBER_COLUMNS} FROM team_members ORDER BY rowid"
         ))?;
-        let members = statement
+        let mut members = statement
             .query_map([], member_from)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut waits: HashMap<String, Vec<String>> = HashMap::new();
+        let mut statement = connection
+            .prepare("SELECT member_id, depends_on FROM team_dependencies ORDER BY rowid")?;
+        for row in statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get(1)?)))? {
+            let (member_id, depends_on) = row?;
+            waits.entry(member_id).or_default().push(depends_on);
+        }
+        for member in &mut members {
+            if let Some(depends_on) = waits.remove(&member.id) {
+                member.depends_on = depends_on;
+            }
+        }
         Ok(members)
     }
 
@@ -63,6 +101,30 @@ impl AppDatabase {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(pairs)
+    }
+
+    /// The session a member's worker reports its messages to: the one that started it, when it started.
+    pub fn notify_session_of(&self, member_id: &str) -> Result<Option<String>, DatabaseError> {
+        let session = self
+            .lock()
+            .query_row(
+                "SELECT notify_session FROM team_members WHERE id = ?1",
+                [member_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(session)
+    }
+
+    /// The messages a member has had, oldest first. Reading them does not mark them read.
+    pub fn messages_of(&self, member_id: &str) -> Result<Vec<TeamMessage>, DatabaseError> {
+        let connection = self.lock();
+        let mut statement = connection.prepare(
+            "SELECT id, member_id, kind, body, created_at FROM team_messages
+             WHERE member_id = ?1 ORDER BY created_at, rowid",
+        )?;
+        let rows = statement.query_map([member_id], message_from)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Runs `change` inside one transaction: its writes all land, or, when it fails, none does.
@@ -85,7 +147,7 @@ pub(super) fn insert_member(
 ) -> Result<(), DatabaseError> {
     connection.execute(
         &format!(
-            "INSERT INTO team_members ({MEMBER_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+            "INSERT INTO team_members ({MEMBER_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
         ),
         params![
             member.id,
@@ -100,6 +162,9 @@ pub(super) fn insert_member(
             member.acceptance,
             member.session_id,
             member.expanded,
+            member.task_state.map(TaskState::as_str),
+            member.dispatch_state.map(DispatchState::as_str),
+            member.execution_worktree,
         ],
     )?;
     Ok(())
@@ -137,7 +202,7 @@ pub(super) fn update_member(
 ) -> Result<(), DatabaseError> {
     connection.execute(
         "UPDATE team_members
-         SET role = ?2, parent_id = ?3, orchestrator = ?4, task = ?5, acceptance = ?6
+         SET role = ?2, parent_id = ?3, orchestrator = ?4, task = ?5, acceptance = ?6, task_state = ?7
          WHERE id = ?1",
         params![
             member.id,
@@ -146,9 +211,127 @@ pub(super) fn update_member(
             member.orchestrator,
             member.task,
             member.acceptance,
+            member.task_state.map(TaskState::as_str),
         ],
     )?;
     Ok(())
+}
+
+/// Gives the member a worker: its agent, its session, the worktree it works in, and a running task that reports
+/// to `notify_session`. Its team worktree and place in the tree stay.
+pub(super) fn start_worker_row(
+    connection: &Connection,
+    member_id: &str,
+    harness: &str,
+    session_id: &str,
+    execution_worktree: &str,
+    notify_session: &str,
+) -> Result<(), DatabaseError> {
+    connection.execute(
+        "UPDATE team_members
+         SET harness = ?2, session_id = ?3, execution_worktree = ?4, notify_session = ?5,
+             task_state = 'running', dispatch_state = 'running'
+         WHERE id = ?1",
+        params![
+            member_id,
+            harness,
+            session_id,
+            execution_worktree,
+            notify_session
+        ],
+    )?;
+    Ok(())
+}
+
+pub(super) fn set_task_state_row(
+    connection: &Connection,
+    member_id: &str,
+    state: TaskState,
+) -> Result<(), DatabaseError> {
+    connection.execute(
+        "UPDATE team_members SET task_state = ?2 WHERE id = ?1",
+        params![member_id, state.as_str()],
+    )?;
+    Ok(())
+}
+
+pub(super) fn set_dispatch_state_row(
+    connection: &Connection,
+    member_id: &str,
+    state: DispatchState,
+) -> Result<(), DatabaseError> {
+    connection.execute(
+        "UPDATE team_members SET dispatch_state = ?2 WHERE id = ?1",
+        params![member_id, state.as_str()],
+    )?;
+    Ok(())
+}
+
+/// Replaces what a member waits for. The ids are checked by the rules before they get here.
+pub(super) fn replace_dependencies(
+    connection: &Connection,
+    member_id: &str,
+    depends_on: &[String],
+) -> Result<(), DatabaseError> {
+    connection.execute(
+        "DELETE FROM team_dependencies WHERE member_id = ?1",
+        [member_id],
+    )?;
+    for dependency in depends_on {
+        connection.execute(
+            "INSERT INTO team_dependencies (member_id, depends_on) VALUES (?1, ?2)",
+            params![member_id, dependency],
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn insert_message(
+    connection: &Connection,
+    message: &TeamMessage,
+) -> Result<(), DatabaseError> {
+    connection.execute(
+        "INSERT INTO team_messages (id, member_id, kind, body, unread, created_at)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+        params![
+            message.id,
+            message.member_id,
+            message.kind.as_str(),
+            message.body,
+            message.created_at
+        ],
+    )?;
+    Ok(())
+}
+
+/// The messages nobody has read yet from the members under any of `parent_ids`, oldest first. Taking them marks
+/// them read, so each reaches its orchestrator once.
+pub(super) fn take_unread_messages(
+    connection: &Connection,
+    parent_ids: &[String],
+) -> Result<Vec<TeamMessage>, DatabaseError> {
+    if parent_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let holes = vec!["?"; parent_ids.len()].join(", ");
+    let mut statement = connection.prepare(&format!(
+        "SELECT m.id, m.member_id, m.kind, m.body, m.created_at
+         FROM team_messages m JOIN team_members t ON t.id = m.member_id
+         WHERE m.unread = 1 AND t.parent_id IN ({holes})
+         ORDER BY m.created_at, m.rowid"
+    ))?;
+    let messages = statement
+        .query_map(params_from_iter(parent_ids.iter()), message_from)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    connection.execute(
+        &format!(
+            "UPDATE team_messages SET unread = 0
+             WHERE unread = 1 AND member_id IN (SELECT id FROM team_members WHERE parent_id IN ({holes}))"
+        ),
+        params_from_iter(parent_ids.iter()),
+    )?;
+    Ok(messages)
 }
 
 /// Empties the task of every member under `parent_id`. Used before the parent goes, so they keep no task
@@ -158,13 +341,14 @@ pub(super) fn clear_tasks_of(
     parent_id: &str,
 ) -> Result<(), DatabaseError> {
     connection.execute(
-        "UPDATE team_members SET task = '', acceptance = '' WHERE parent_id = ?1",
+        "UPDATE team_members SET task = '', acceptance = '', task_state = NULL WHERE parent_id = ?1",
         [parent_id],
     )?;
     Ok(())
 }
 
-/// Removing a member removes its lines too (cascade), and the members under it answer to no one (set null).
+/// Removing a member removes its lines, what it waits for and its messages (cascade). The members under it
+/// answer to no one (set null).
 pub(super) fn remove_member(connection: &Connection, id: &str) -> Result<(), DatabaseError> {
     connection.execute("DELETE FROM team_members WHERE id = ?1", [id])?;
     Ok(())

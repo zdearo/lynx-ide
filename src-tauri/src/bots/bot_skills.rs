@@ -45,7 +45,7 @@ pub fn list(bot_dir: &Path) -> Vec<BotSkill> {
             let text = fs::read_to_string(entry.path().join(SKILL_FILE)).ok()?;
             let (fields, _) = split(&text);
             let description = field(&fields, "description")?;
-            valid_name(&name).then_some(BotSkill { name, description })
+            (valid_name(&name) && name != RESERVED).then_some(BotSkill { name, description })
         })
         .collect();
     skills.sort_by(|a, b| a.name.cmp(&b.name));
@@ -56,6 +56,9 @@ pub fn list(bot_dir: &Path) -> Vec<BotSkill> {
 /// skills after the copy.
 pub fn add(bot_dir: &Path, source: &Path) -> Result<Vec<BotSkill>, BotError> {
     let skill = read_source(source)?;
+    if skill.name == RESERVED {
+        return Err(BotError::ReservedSkill);
+    }
     let skills = skills_dir(bot_dir);
     fs::create_dir_all(&skills)?;
     let target = skills.join(&skill.name);
@@ -76,7 +79,7 @@ pub fn add(bot_dir: &Path, source: &Path) -> Result<Vec<BotSkill>, BotError> {
 
 /// Takes a skill out of the bot. Returns the bot's skills after the removal.
 pub fn remove(bot_dir: &Path, name: &str) -> Result<Vec<BotSkill>, BotError> {
-    if !valid_name(name) {
+    if !valid_name(name) || name == RESERVED {
         return Err(BotError::UnknownSkill);
     }
     let dir = skills_dir(bot_dir).join(name);
@@ -91,6 +94,9 @@ pub fn remove(bot_dir: &Path, name: &str) -> Result<Vec<BotSkill>, BotError> {
 pub fn any(bot_dir: &Path) -> bool {
     !list(bot_dir).is_empty()
 }
+
+/// The skill Lynx writes into every bot's folder for its tools. The person does not list, add or remove it.
+const RESERVED: &str = crate::agents::skill_file::NAME;
 
 fn skills_dir(bot_dir: &Path) -> PathBuf {
     bot_dir.join(".claude").join("skills")
@@ -390,5 +396,42 @@ mod tests {
         assert_eq!(remove(&bot, "quebrada").expect("removed").len(), 1);
         assert!(remove(&bot, "a").expect("removed").is_empty());
         assert!(!any(&bot));
+    }
+}
+
+#[cfg(test)]
+mod reserved_tests {
+    use super::*;
+
+    fn skill_text(name: &str) -> String {
+        format!("---\nname: {name}\ndescription: a skill\n---\nbody\n")
+    }
+
+    #[test]
+    fn the_lynx_skill_is_written_for_the_bot_but_never_listed_or_changed_by_the_person() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let bot = dir.path().join("bot");
+        let written = skills_dir(&bot).join("lynx");
+        fs::create_dir_all(&written).expect("folder");
+        fs::write(written.join(SKILL_FILE), skill_text("lynx")).expect("skill");
+        fs::create_dir_all(skills_dir(&bot).join("minha")).expect("folder");
+        fs::write(
+            skills_dir(&bot).join("minha").join(SKILL_FILE),
+            skill_text("minha"),
+        )
+        .expect("skill");
+
+        let listed: Vec<String> = list(&bot).into_iter().map(|skill| skill.name).collect();
+        assert_eq!(listed, ["minha"]);
+        assert!(matches!(remove(&bot, "lynx"), Err(BotError::UnknownSkill)));
+        assert!(
+            written.join(SKILL_FILE).exists(),
+            "the file Lynx wrote is still there"
+        );
+
+        let source = dir.path().join("fonte");
+        fs::create_dir_all(&source).expect("folder");
+        fs::write(source.join(SKILL_FILE), skill_text("lynx")).expect("skill");
+        assert!(matches!(add(&bot, &source), Err(BotError::ReservedSkill)));
     }
 }

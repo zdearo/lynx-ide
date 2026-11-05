@@ -72,6 +72,9 @@ pub struct TerminalSnapshot {
     pub last_seq: u32,
     pub running: bool,
     pub exit_code: Option<i32>,
+    /// The size the session runs at: the screen takes it before replaying `data`, which was drawn for it.
+    pub cols: u16,
+    pub rows: u16,
 }
 
 pub struct TerminalSession {
@@ -106,6 +109,8 @@ struct SessionShared {
     exit: Mutex<Option<Option<i32>>>,
     reader_done: Mutex<bool>,
     reader_done_signal: Condvar,
+    /// The columns and rows the process was last given.
+    size: Mutex<(u16, u16)>,
 }
 
 struct OutputState {
@@ -205,6 +210,7 @@ impl TerminalSession {
             exit: Mutex::new(None),
             reader_done: Mutex::new(false),
             reader_done_signal: Condvar::new(),
+            size: Mutex::new((request.cols, request.rows)),
         });
 
         let pty = Arc::new(Mutex::new(PtyHandles { writer, master }));
@@ -281,11 +287,14 @@ impl TerminalSession {
     pub fn snapshot(&self) -> TerminalSnapshot {
         let exit = *SessionShared::lock(&self.shared.exit);
         let output = SessionShared::lock(&self.shared.output);
+        let (cols, rows) = *SessionShared::lock(&self.shared.size);
         TerminalSnapshot {
             data: output.scrollback.contents(),
             last_seq: output.seq,
             running: exit.is_none(),
             exit_code: exit.flatten(),
+            cols,
+            rows,
         }
     }
 
@@ -311,7 +320,9 @@ impl TerminalSession {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|error| TerminalError::Io(std::io::Error::other(error.to_string())))
+            .map_err(|error| TerminalError::Io(std::io::Error::other(error.to_string())))?;
+        *SessionShared::lock(&self.shared.size) = (cols, rows);
+        Ok(())
     }
 
     /// Hangs up the shell and whatever it is running in the foreground, then

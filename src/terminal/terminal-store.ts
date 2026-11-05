@@ -25,6 +25,8 @@ interface TerminalState {
     command: string | null,
   ) => Promise<TerminalInfo>;
   close: (id: string) => Promise<void>;
+  /** The backend closed a session on its own: its tab goes as on a close, without asking the backend again. */
+  dropClosed: (id: string) => void;
   closeAllIn: (worktreePath: string) => Promise<void>;
   setActive: (worktreePath: string, id: string) => void;
   requestFocus: (id: string) => void;
@@ -42,6 +44,37 @@ interface TerminalState {
   hibernate: (id: string) => Promise<void>;
   /** The terminal got input, so the daemon has run it again. */
   woken: (id: string) => void;
+}
+
+/** Sessions the backend closed on its own. The team keeps their members, so a worker's card can show how it ended. */
+const closedByBackend = new Set<string>();
+
+/** Whether the backend closed this session on its own, rather than the person closing it. */
+export function isClosedByBackend(id: string): boolean {
+  return closedByBackend.has(id);
+}
+
+/** The list and the active tabs without one session. When it was the active tab, the tab next to it takes over. */
+function withoutSession(
+  state: Pick<TerminalState, "sessions" | "activeByWorktree">,
+  id: string,
+): Pick<TerminalState, "sessions" | "activeByWorktree"> {
+  const worktreePath = state.sessions.find((s) => s.id === id)?.worktreePath;
+  if (worktreePath === undefined) return state;
+  const siblings = state.sessions.filter(
+    (s) => s.worktreePath === worktreePath,
+  );
+  const index = siblings.findIndex((s) => s.id === id);
+  const neighbor = siblings[index - 1] ?? siblings[index + 1];
+  const activeByWorktree = { ...state.activeByWorktree };
+  if (activeByWorktree[worktreePath] === id) {
+    if (neighbor) activeByWorktree[worktreePath] = neighbor.id;
+    else delete activeByWorktree[worktreePath];
+  }
+  return {
+    sessions: state.sessions.filter((s) => s.id !== id),
+    activeByWorktree,
+  };
 }
 
 /** The list with the session at its end, unless it is already listed: the screen hears of its own
@@ -86,27 +119,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   async close(id) {
-    const session = get().sessions.find((s) => s.id === id);
-    if (!session) return;
+    if (!get().sessions.some((s) => s.id === id)) return;
 
     // Forget it first so the tab disappears at once; the backend call only cleans up.
-    set((state) => {
-      const siblings = state.sessions.filter(
-        (s) => s.worktreePath === session.worktreePath,
-      );
-      const index = siblings.findIndex((s) => s.id === id);
-      const neighbor = siblings[index - 1] ?? siblings[index + 1];
-      const activeByWorktree = { ...state.activeByWorktree };
-      if (activeByWorktree[session.worktreePath] === id) {
-        if (neighbor) activeByWorktree[session.worktreePath] = neighbor.id;
-        else delete activeByWorktree[session.worktreePath];
-      }
-      return {
-        sessions: state.sessions.filter((s) => s.id !== id),
-        activeByWorktree,
-      };
-    });
+    set((state) => withoutSession(state, id));
     await commands.closeTerminal(id);
+  },
+
+  dropClosed(id) {
+    if (!get().sessions.some((s) => s.id === id)) return;
+    closedByBackend.add(id);
+    set((state) => withoutSession(state, id));
   },
 
   async closeAllIn(worktreePath) {

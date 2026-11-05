@@ -14,6 +14,10 @@ vi.mock("@/bindings", () => ({
     agentLaunchLine: vi.fn(),
   },
 }));
+// The team store reads the browser at load, which this file does not run in; the actions only need its view mode.
+vi.mock("@/team/team-store", () => ({
+  useTeamStore: { getState: () => ({ setMode: vi.fn() }) },
+}));
 
 const api = vi.mocked(commands);
 

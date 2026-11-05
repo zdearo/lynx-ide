@@ -23,6 +23,8 @@ pub(super) struct Events {
     pub(super) states: Vec<(String, Option<HarnessId>, Option<AgentStatus>)>,
     /// Sessions started, in order.
     pub(super) created: Vec<String>,
+    /// Sessions the backend closed itself, in order.
+    pub(super) closed: Vec<String>,
 }
 
 #[derive(Default)]
@@ -65,6 +67,11 @@ impl TerminalEventSink for RecordingSink {
             .expect("lock")
             .created
             .push(session.id.clone());
+        self.changed.notify_all();
+    }
+
+    fn closed(&self, id: &str) {
+        self.events.lock().expect("lock").closed.push(id.to_owned());
         self.changed.notify_all();
     }
 }

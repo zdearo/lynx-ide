@@ -6,6 +6,7 @@ export const teamCopy = {
     summary: {
       working: (count: number) => `${count} working`,
       needsYou: (count: number) => `${count} need you`,
+      running: (count: number) => `${count} running`,
       quiet: "Nothing running",
     },
     status: {
@@ -13,6 +14,8 @@ export const teamCopy = {
       needsYou: "Needs you",
       done: "Done",
       idle: "Waiting",
+      closed: "Closed",
+      failed: "Failed",
     },
     needsYouBadge: "needs you",
     rowLabel: (role: string, status: string) => `${role}, ${status}`,
@@ -62,12 +65,26 @@ export const teamCopy = {
     dismiss: "Dismiss",
     pairedWith: (role: string) => `↔ ${role}`,
     waitingOn: (role: string) => `Waiting for ${role}`,
+    noAgentYet: "No agent yet",
     engine: (provider: string, model: string | null) =>
       model ? `${provider} · ${model}` : provider,
     task: "Task",
     noTask: "No task",
     acceptance: "Done when",
     dependsOn: "Depends on",
+    taskStatus: "Status",
+    taskState: {
+      pending: "Waiting to start",
+      running: "Running",
+      done: "Done",
+      failed: "Failed",
+      cancelled: "Cancelled",
+    },
+    runsIn: "Runs in",
+    waitsFor: "Waits for",
+    waitsForHint:
+      "Only a task that has not started can change what it waits for.",
+    noOneToWaitFor: "No other member in this worktree yet.",
     talksTo: "Talks to",
     activityLine: (text: string, age: string) => `${text} · ${age}`,
     notes: "Notes",

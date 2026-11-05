@@ -8,7 +8,7 @@ import { TeamAddDialog } from "@/team/TeamAddDialog";
 import { TeamMap } from "@/team/TeamMap";
 import { TeamNodeSheet } from "@/team/TeamNodeSheet";
 import { TeamTerminalDialog } from "@/team/TeamTerminalDialog";
-import { useTeamMembers, useTeamStore, watchTeam } from "@/team/team-store";
+import { useTeamMembers, useTeamStore } from "@/team/team-store";
 import { copy } from "@/ui-copy";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
@@ -27,9 +27,6 @@ export function TeamView({ area }: { area: HTMLElement | null }) {
   const siblingOrder = useTeamStore((state) => state.siblingOrder);
   const selected = members.find((member) => member.id === selectedId);
   const loadBots = useBotsStore((state) => state.load);
-
-  // The team is read when the view opens, and again each time the backend changes it.
-  useEffect(() => watchTeam(), []);
 
   // The bot members draw their avatar and engine from the Bots list, which the Bots view may not have loaded.
   useEffect(() => {

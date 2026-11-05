@@ -10,20 +10,23 @@ use tauri_specta::Event;
 use crate::agents::activity::AgentStatus;
 use crate::agents::agent_prompt_file;
 use crate::agents::harness::HarnessId;
+use crate::agents::hook_install::HookInstallState;
+use crate::agents::hook_targets::HookTargets;
 use crate::agents::launch_line::launch_line;
 use crate::bots::bot_bridge::{bot_of_session, parse_session};
 use crate::bots::bot_chat::BotChat;
-use crate::browser::{PageOwner, SessionOwners};
 use crate::config::ConfigStore;
 use crate::config::app_config::{LaunchMode, OrchestrationConfig};
+use crate::team::team_events::TeamChanged;
 use crate::terminal::terminal_manager::TerminalManager;
 use crate::workspace::workspace_events::WorktreeCreated;
 use crate::workspace::workspace_service::WorkspaceService;
 
+use super::agent_wake::AgentWakes;
 use super::service::WorkerHost;
 
-/// What a bot is told when something in its runs changed: it looks at its workers and tells the person.
-const WAKE_NOTE: &str = "Algo mudou nas suas tarefas: um worker terminou, precisa de uma resposta ou parou. Chame lynx_check com waitSeconds 0 para ver o que aconteceu e relate à pessoa.";
+/// What a bot is told when one of its workers changed: it looks at its team and tells the person.
+pub(super) const WAKE_NOTE: &str = "Algo mudou nas suas tarefas: um worker terminou, precisa de uma resposta ou parou. Chame lynx_check com waitSeconds 0 para ver o que aconteceu e relate à pessoa.";
 
 /// How often, and how many times, a worker's screen is looked at for its prompt before giving up (30 s).
 const SUBMIT_POLL: Duration = Duration::from_millis(500);
@@ -32,40 +35,16 @@ const SUBMIT_TRIES: u32 = 60;
 /// Workers are terminals of the app, in worktrees of the app's projects.
 pub struct AppWorkers {
     app: AppHandle,
-    owners: SessionOwners,
     config: Arc<ConfigStore>,
 }
 
 impl AppWorkers {
-    pub fn new(app: AppHandle, owners: SessionOwners, config: Arc<ConfigStore>) -> Self {
-        Self {
-            app,
-            owners,
-            config,
-        }
+    pub fn new(app: AppHandle, config: Arc<ConfigStore>) -> Self {
+        Self { app, config }
     }
 
     fn terminals(&self) -> tauri::State<'_, TerminalManager> {
         self.app.state::<TerminalManager>()
-    }
-
-    /// A bot works in the first project it was let read: its main folder is where its runs start.
-    fn bot_project(&self, bot: &str) -> Option<String> {
-        let chat = self.app.state::<Arc<BotChat>>();
-        // A project where it may start agents wins over one it only reads.
-        let reads = chat.grants(bot).ok()?;
-        let starts = chat.worker_grants(bot).unwrap_or_default();
-        let first = reads
-            .iter()
-            .find(|read| starts.iter().any(|start| start.id == read.id))
-            .or_else(|| reads.first())?;
-        self.app
-            .state::<WorkspaceService>()
-            .list_repos()
-            .ok()?
-            .into_iter()
-            .find(|repo| repo.id == first.id)
-            .map(|repo| repo.path)
     }
 }
 
@@ -74,24 +53,28 @@ impl WorkerHost for AppWorkers {
         self.config.config().orchestration
     }
 
-    fn worktree_of(&self, session: &str) -> Option<String> {
-        if let Some(bot) = bot_of_session(session) {
-            return self.bot_project(bot);
-        }
-        match self.owners.get(session)? {
-            PageOwner::Workspace { worktree_path } => Some(worktree_path),
-            PageOwner::Bot { .. } => None,
-        }
-    }
-
-    fn notify(&self, coordinator: &str) {
-        let Some((bot, label)) = parse_session(coordinator) else {
+    fn notify(&self, session: &str) {
+        let Some((bot, label)) = parse_session(session) else {
+            // An agent orchestrator is woken through its terminal, once it is idle.
+            if let Some(wakes) = self.app.try_state::<Arc<AgentWakes>>() {
+                wakes.note(session);
+            }
             return;
         };
         let chat = Arc::clone(&*self.app.state::<Arc<BotChat>>());
         let (bot, label) = (bot.to_owned(), label.to_owned());
         chat.wake(&bot, &label, WAKE_NOTE);
         BotChat::kick(chat, bot, label);
+    }
+
+    fn checked(&self, coordinator: &str) {
+        if let Some(wakes) = self.app.try_state::<Arc<AgentWakes>>() {
+            wakes.cancel(coordinator);
+        }
+    }
+
+    fn changed(&self) {
+        let _ = TeamChanged {}.emit(&self.app);
     }
 
     fn submit_when_shown(&self, session: &str, text: &str) {
@@ -151,6 +134,10 @@ impl WorkerHost for AppWorkers {
         launch_line(harness, mode, &config.agents.launch_arguments)
     }
 
+    fn agent_on(&self, harness: HarnessId) -> bool {
+        self.app.state::<HookTargets>().status(harness).state == HookInstallState::Installed
+    }
+
     fn allow_start(&self, coordinator: &str, worktree: &str) -> Result<(), String> {
         let Some(bot) = bot_of_session(coordinator) else {
             return Ok(());
@@ -174,8 +161,7 @@ impl WorkerHost for AppWorkers {
     }
 
     fn send(&self, session: &str, text: &str) -> Result<(), String> {
-        self.terminals()
-            .write(session, &format!("{text}\r"))
+        super::agent_wake::type_and_submit(&self.terminals(), session, text)
             .map_err(|error| error.to_string())
     }
 
@@ -207,7 +193,8 @@ impl WorkerHost for AppWorkers {
     }
 
     fn stop(&self, session: &str) {
-        let _ = self.terminals().close(session);
+        // Closed, not only ended: the session leaves the list and the screen drops its tab.
+        let _ = self.terminals().close_and_announce(session);
     }
 }
 

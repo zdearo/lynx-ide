@@ -7,6 +7,7 @@ use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
 use crate::error::{AppError, IpcError};
+use crate::orchestration::service::Orchestration;
 use crate::process::blocking_task::run_blocking;
 
 use super::team_error::TeamError;
@@ -25,12 +26,21 @@ where
     Ok(value)
 }
 
-/// Every worktree's team: its members and lines.
+/// Every worktree's team: its members and lines, and the state of each worker among them.
 #[tauri::command]
 #[specta::specta]
-pub async fn team_snapshot(service: State<'_, Arc<TeamService>>) -> Result<TeamSnapshot, IpcError> {
+pub async fn team_snapshot(
+    service: State<'_, Arc<TeamService>>,
+    orchestration: State<'_, Arc<Orchestration>>,
+) -> Result<TeamSnapshot, IpcError> {
     let service = Arc::clone(service.inner());
-    run_blocking(move || service.snapshot().map_err(AppError::from)).await
+    let orchestration = Arc::clone(orchestration.inner());
+    run_blocking(move || {
+        let mut snapshot = service.snapshot()?;
+        orchestration.fill_worker_states(&mut snapshot)?;
+        Ok::<_, AppError>(snapshot)
+    })
+    .await
 }
 
 /// Adds a member to the team of its worktree.
@@ -113,6 +123,22 @@ pub async fn team_dismiss_member(
 ) -> Result<Option<String>, IpcError> {
     let service = Arc::clone(service.inner());
     change(&app, move || service.dismiss_member(&member_id)).await
+}
+
+/// Sets what a member waits for. Only a member whose task has not started may change it.
+#[tauri::command]
+#[specta::specta]
+pub async fn team_set_dependencies(
+    app: AppHandle,
+    service: State<'_, Arc<TeamService>>,
+    member_id: String,
+    depends_on: Vec<String>,
+) -> Result<(), IpcError> {
+    let service = Arc::clone(service.inner());
+    change(&app, move || {
+        service.set_dependencies(&member_id, &depends_on)
+    })
+    .await
 }
 
 /// Attaches the terminal session to an agent, or detaches it when `session_id` is None.

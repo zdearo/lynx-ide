@@ -7,6 +7,7 @@ pub mod bot_access;
 pub mod bot_bridge;
 pub mod bot_chat;
 pub mod bot_conversation;
+pub mod bot_delete_impact;
 pub mod bot_folder;
 pub mod bot_mcp;
 pub mod bot_memory;

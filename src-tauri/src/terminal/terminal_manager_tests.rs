@@ -105,6 +105,20 @@ fn the_shell_starts_in_the_requested_directory() {
 }
 
 #[test]
+fn the_snapshot_carries_the_size_the_session_runs_at_and_a_resize_changes_it() {
+    let (manager, _sink, dir) = setup();
+    let info = manager
+        .create(&path_of(&dir), None, 100, 30)
+        .expect("create");
+    let snapshot = manager.snapshot(&info.id).expect("snapshot");
+    assert_eq!((snapshot.cols, snapshot.rows), (100, 30));
+
+    manager.resize(&info.id, 120, 40).expect("resize");
+    let snapshot = manager.snapshot(&info.id).expect("snapshot");
+    assert_eq!((snapshot.cols, snapshot.rows), (120, 40));
+}
+
+#[test]
 fn input_reaches_the_running_shell() {
     let (manager, sink, dir) = setup();
     let info = manager
@@ -215,6 +229,35 @@ fn a_program_that_ignores_hangup_is_killed_after_the_grace_period() {
     manager.close(&info.id).expect("close");
 
     wait_until_stopped(&pid, Duration::from_secs(10));
+}
+
+#[test]
+fn a_session_the_backend_closes_leaves_the_list_and_the_screen_is_told() {
+    let (manager, sink, dir) = setup();
+    let info = manager
+        .create(&path_of(&dir), Some("sleep 300"), 80, 24)
+        .expect("create");
+
+    manager.close_and_announce(&info.id).expect("close");
+
+    assert!(manager.list().is_empty(), "closed, not just ended");
+    assert_eq!(
+        sink.events.lock().expect("lock").closed,
+        vec![info.id.clone()]
+    );
+}
+
+#[test]
+fn a_shell_the_person_closes_is_not_announced_as_closed_by_the_backend() {
+    let (manager, sink, dir) = setup();
+    let info = manager
+        .create(&path_of(&dir), None, 80, 24)
+        .expect("create");
+
+    manager.close(&info.id).expect("close");
+
+    assert!(manager.list().is_empty());
+    assert!(sink.events.lock().expect("lock").closed.is_empty());
 }
 
 #[test]

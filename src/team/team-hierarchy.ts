@@ -14,6 +14,31 @@ interface Connection {
 export const hasTask = (member: TeamMember): boolean =>
   member.parentId !== null;
 
+/**
+ * Whether a member is drawn on the map: every orchestrator above it is open. A member whose orchestrator is not in the
+ * team is not drawn either, as the layout leaves it out.
+ */
+export function isDrawn(
+  members: readonly Pick<TeamMember, "id" | "parentId">[],
+  expanded: readonly string[],
+  id: string,
+): boolean {
+  const parentOf = new Map(
+    members.map((member) => [member.id, member.parentId]),
+  );
+  if (!parentOf.has(id)) return false;
+  const seen = new Set<string>();
+  let above = parentOf.get(id) ?? null;
+  while (above !== null) {
+    if (!parentOf.has(above) || !expanded.includes(above) || seen.has(above)) {
+      return false;
+    }
+    seen.add(above);
+    above = parentOf.get(above) ?? null;
+  }
+  return true;
+}
+
 /** What a line drawn between two handles means: the top and bottom handles orchestrate, the sides talk. */
 export type TeamLink =
   | { kind: "orchestrates"; parent: string; child: string }

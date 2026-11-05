@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands } from "@/bindings";
 import { failure, ok, session } from "@/test-support";
-import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
+import {
+  activeSessionId,
+  isClosedByBackend,
+  useTerminalStore,
+} from "@/terminal/terminal-store";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -132,6 +136,40 @@ describe("close", () => {
     expect(state.sessions.map((s) => s.id)).toEqual(["x"]);
     expect(state.activeByWorktree[wt]).toBeUndefined();
     expect(api.closeTerminal).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("dropClosed", () => {
+  beforeEach(() => {
+    useTerminalStore.setState({
+      sessions: [session("a", wt), session("b", wt), session("c", wt)],
+      activeByWorktree: { [wt]: "b" },
+    });
+  });
+
+  it("drops the session as a close does, without asking the backend to close it", () => {
+    useTerminalStore.getState().dropClosed("b");
+
+    const state = useTerminalStore.getState();
+    expect(state.sessions.map((s) => s.id)).toEqual(["a", "c"]);
+    expect(state.activeByWorktree[wt]).toBe("a");
+    expect(api.closeTerminal).not.toHaveBeenCalled();
+  });
+
+  it("ignores an unknown id", () => {
+    const before = useTerminalStore.getState().sessions;
+
+    useTerminalStore.getState().dropClosed("nope");
+
+    expect(useTerminalStore.getState().sessions).toBe(before);
+  });
+
+  it("marks the session as closed by the backend, and a person's close as not", async () => {
+    useTerminalStore.getState().dropClosed("b");
+    await useTerminalStore.getState().close("c");
+
+    expect(isClosedByBackend("b")).toBe(true);
+    expect(isClosedByBackend("c")).toBe(false);
   });
 });
 

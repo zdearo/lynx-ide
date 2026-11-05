@@ -109,7 +109,7 @@ function PaneHeader({
 }
 
 function TerminalPane({ member }: { member: TeamAgent }) {
-  const agent = agentNameOf(member.harness);
+  const agent = member.harness ? agentNameOf(member.harness) : member.role;
   const session = useTerminalStore((state) =>
     member.sessionId
       ? state.sessions.find((candidate) => candidate.id === member.sessionId)

@@ -1,4 +1,10 @@
-import type { AgentStatus, HarnessId } from "@/bindings";
+import type { AgentStatus, HarnessId, TaskState } from "@/bindings";
+
+/** A member's card status: the agent's own status while its session runs, "closed" once the session is gone or its program ended. A worker's card shows its worker state instead. */
+export type TeamStatus = AgentStatus | "closed" | "failed";
+
+/** A worker's state as the orchestration gives it. */
+export type WorkerState = "running" | "done" | "failed" | "stopped";
 
 export interface TeamActivity {
   text: string;
@@ -13,7 +19,9 @@ export interface TeamMemberBase {
   worktree: string;
   /** What the member does in its team. "Reassign role" changes it. */
   role: string;
-  status: AgentStatus;
+  status: TeamStatus;
+  /** The state of the worker this member is, when a coordinator started it; null for every other member. */
+  workerState: WorkerState | null;
   /** The orchestrator this member answers to; null when it belongs to none. */
   parentId: string | null;
   /** Whether it is an orchestrator. Only one can have members under it. */
@@ -21,6 +29,12 @@ export interface TeamMemberBase {
   task: string;
   /** When the task counts as done. */
   acceptance: string;
+  /** Where the task stands; null for a member with no task. */
+  taskState: TaskState | null;
+  /** The members whose tasks must be done before this one starts. */
+  dependsOn: string[];
+  /** The worktree the worker runs in, when it is not the team's own. */
+  executionWorktree: string | null;
   /** What the member did last, and when. */
   activity: TeamActivity;
   branch: string | null;
@@ -39,7 +53,8 @@ export interface TeamMemberBase {
 /** A CLI agent in a worktree's team: a session in that worktree, run by its harness. */
 export interface TeamAgent extends TeamMemberBase {
   kind: "agent";
-  harness: HarnessId;
+  /** Null until the first worker starts for a member the orchestrator added. */
+  harness: HarnessId | null;
   /**
    * The terminal session the agent runs in, cleared when it closes. Null for most seeded fixtures; the login tests one
    * names a session that ended, which the mock lists as resumable.
@@ -85,6 +100,7 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "lead",
     kind: "agent",
+    workerState: null,
     worktree: TEAM_AUTH_WORKTREE,
     role: "Lead",
     harness: "claude",
@@ -95,6 +111,9 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
     // Only a member with an orchestrator above it has a task.
     task: "",
     acceptance: "",
+    taskState: null,
+    dependsOn: [],
+    executionWorktree: null,
     activity: { text: "splitting the work", at: NOW_SECONDS - 240 },
     branch: null,
     added: 0,
@@ -110,6 +129,7 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "builder",
     kind: "agent",
+    workerState: null,
     worktree: TEAM_AUTH_WORKTREE,
     role: "Builder",
     harness: "codex",
@@ -120,6 +140,9 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
     task: "login form",
     acceptance:
       "The login form submits through the new adapter and its tests pass.",
+    taskState: null,
+    dependsOn: [],
+    executionWorktree: null,
     activity: { text: "editing LoginForm.tsx", at: NOW_SECONDS - 120 },
     branch: "feat/login",
     added: 120,
@@ -136,6 +159,7 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "login-tests",
     kind: "agent",
+    workerState: null,
     worktree: TEAM_AUTH_WORKTREE,
     role: "Tester",
     harness: "claude",
@@ -146,6 +170,9 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
     orchestrator: false,
     task: "login tests",
     acceptance: "The login tests pass against the new form.",
+    taskState: null,
+    dependsOn: [],
+    executionWorktree: null,
     activity: { text: "waiting for the form", at: NOW_SECONDS - 300 },
     branch: null,
     added: 0,
@@ -158,6 +185,7 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "reviewer",
     kind: "agent",
+    workerState: null,
     worktree: TEAM_AUTH_WORKTREE,
     role: "Reviewer",
     harness: "claude",
@@ -168,6 +196,9 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
     orchestrator: false,
     task: "",
     acceptance: "",
+    taskState: null,
+    dependsOn: [],
+    executionWorktree: null,
     activity: { text: "read spec.md", at: NOW_SECONDS - 600 },
     branch: null,
     added: 0,
@@ -180,6 +211,7 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "researcher",
     kind: "agent",
+    workerState: null,
     worktree: TEAM_AUTH_WORKTREE,
     role: "Researcher",
     harness: "opencode",
@@ -189,6 +221,9 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
     orchestrator: false,
     task: "OAuth options",
     acceptance: "One OAuth library is chosen, with the reason written down.",
+    taskState: null,
+    dependsOn: [],
+    executionWorktree: null,
     activity: { text: "compared three libraries", at: NOW_SECONDS - 900 },
     branch: null,
     added: 0,
@@ -204,6 +239,7 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
   {
     id: "tester",
     kind: "agent",
+    workerState: null,
     worktree: TEAM_AUTH_WORKTREE,
     role: "Tester",
     harness: "omp",
@@ -213,6 +249,9 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
     orchestrator: false,
     task: "auth suite",
     acceptance: "The auth suite runs green.",
+    taskState: null,
+    dependsOn: [],
+    executionWorktree: null,
     activity: { text: "42 tests passed", at: NOW_SECONDS - 1800 },
     branch: null,
     added: 0,
@@ -229,6 +268,7 @@ export const TEAM_DOCS_MEMBERS: readonly TeamMember[] = [
   {
     id: "docs-lead",
     kind: "bot",
+    workerState: null,
     // The Lynx bot it is: the one the Bots list has as "Lead" in the full mock.
     botId: "lead",
     worktree: TEAM_DOCS_WORKTREE,
@@ -238,6 +278,9 @@ export const TEAM_DOCS_MEMBERS: readonly TeamMember[] = [
     orchestrator: true,
     task: "",
     acceptance: "",
+    taskState: null,
+    dependsOn: [],
+    executionWorktree: null,
     activity: { text: "outlining the guide", at: NOW_SECONDS - 200 },
     branch: null,
     added: 0,
@@ -250,6 +293,7 @@ export const TEAM_DOCS_MEMBERS: readonly TeamMember[] = [
   {
     id: "writer",
     kind: "agent",
+    workerState: null,
     worktree: TEAM_DOCS_WORKTREE,
     role: "Writer",
     harness: "claude",
@@ -259,6 +303,9 @@ export const TEAM_DOCS_MEMBERS: readonly TeamMember[] = [
     orchestrator: false,
     task: "setup chapter",
     acceptance: "The setup chapter is written and reviewed.",
+    taskState: null,
+    dependsOn: [],
+    executionWorktree: null,
     activity: { text: "drafting setup.md", at: NOW_SECONDS - 90 },
     branch: "docs/setup",
     added: 64,

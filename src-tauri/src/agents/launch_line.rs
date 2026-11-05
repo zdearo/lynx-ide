@@ -38,6 +38,15 @@ pub fn launch_line(
     parts.join(" ")
 }
 
+/// The settings an unattended agent starts with, as JSON. Nobody answers its first-run prompts, so the ones that
+/// would stop it are turned off: the bypass warning and the renderer choice. Only Claude Code takes these keys.
+pub fn unattended_settings(harness: HarnessId) -> Option<&'static str> {
+    match harness {
+        HarnessId::Claude => Some(r#"{"skipDangerousModePermissionPrompt":true,"tui":"default"}"#),
+        HarnessId::Codex | HarnessId::Opencode | HarnessId::Omp => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +78,14 @@ mod tests {
             launch_line(HarnessId::Claude, LaunchMode::Manual, &BTreeMap::new()),
             "claude"
         );
+    }
+
+    #[test]
+    fn an_unattended_claude_gets_settings_that_skip_its_first_run_prompts() {
+        let settings = unattended_settings(HarnessId::Claude).expect("claude has settings");
+        assert!(settings.contains("\"skipDangerousModePermissionPrompt\":true"));
+        assert!(settings.contains("\"tui\":\"default\""));
+        assert_eq!(unattended_settings(HarnessId::Codex), None);
     }
 
     #[test]

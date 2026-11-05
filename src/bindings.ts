@@ -28,6 +28,8 @@ export const commands = {
 	botsUpdateInstructions: (id: string, instructions: string) => typedError<BotDetail, IpcError>(__TAURI_INVOKE("bots_update_instructions", { id, instructions })),
 	/**  Removes a bot with its conversation. Refused while the bot is answering. */
 	botsDelete: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("bots_delete", { id })),
+	/**  What deleting a bot takes with it, for the confirmation. Changes nothing. */
+	botsDeleteImpact: (id: string) => typedError<DeleteImpact, IpcError>(__TAURI_INVOKE("bots_delete_impact", { id })),
 	/**  The repositories a bot may read, as the person granted them. */
 	botsGrants: (id: string) => typedError<Grant[], IpcError>(__TAURI_INVOKE("bots_grants", { id })),
 	/**
@@ -362,7 +364,7 @@ export const commands = {
 	 *  daemon's keep running, and the new version rejoins them.
 	 */
 	restartToUpdate: () => __TAURI_INVOKE<void>("restart_to_update"),
-	/**  Every worktree's team: its members and lines. */
+	/**  Every worktree's team: its members and lines, and the state of each worker among them. */
 	teamSnapshot: () => typedError<TeamSnapshot, IpcError>(__TAURI_INVOKE("team_snapshot")),
 	/**  Adds a member to the team of its worktree. */
 	teamAddMember: (member: NewTeamMember) => typedError<TeamMember, IpcError>(__TAURI_INVOKE("team_add_member", { member })),
@@ -375,6 +377,8 @@ export const commands = {
 	/**  Attaches the terminal session to an agent, or detaches it when `session_id` is None. */
 	teamSetSession: (memberId: string, sessionId: string | null) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_session", { memberId, sessionId })),
 	teamSetLinked: (a: string, b: string, linked: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_linked", { a, b, linked })),
+	/**  Sets what a member waits for. Only a member whose task has not started may change it. */
+	teamSetDependencies: (memberId: string, dependsOn: string[]) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_dependencies", { memberId, dependsOn })),
 	/**  Opens or closes a member's branch in the team tree. */
 	teamSetExpanded: (memberId: string, expanded: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("team_set_expanded", { memberId, expanded })),
 };
@@ -394,6 +398,7 @@ export const events = {
 	chatMessageAdded: makeEvent<ChatMessageAdded_Deserialize>("chat-message-added"),
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	teamChanged: makeEvent<TeamChanged>("team-changed"),
+	terminalClosed: makeEvent<TerminalClosed>("terminal-closed"),
 	terminalCreated: makeEvent<TerminalCreated>("terminal-created"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
 	updateStatusChanged: makeEvent<UpdateStatusChanged>("update-status-changed"),
@@ -869,6 +874,14 @@ export type DeciderBotsConfig = {
 	enabled: boolean,
 };
 
+/**  What deleting a bot takes with it. */
+export type DeleteImpact = {
+	/**  The bot's members in every team, then the members under them, as the removal takes them. */
+	members: ImpactMember[],
+	/**  The workers the bot started that still run; deleting the bot stops them. */
+	runningWorkers: number,
+};
+
 /**  What a file's diff compares. Every source gives the two texts the interface shows side by side. */
 export type DiffSource = 
 /**  HEAD against the working tree: everything the file changed since the last commit. */
@@ -902,6 +915,9 @@ export type DiscussionComment = {
 	createdAt: string,
 	url: string,
 };
+
+/**  Whether a started worker is still in charge of its task. A stopped worker keeps its session for the record. */
+export type DispatchState = "running" | "stopped";
 
 /**  A message the user can edit before committing. */
 export type DraftedMessage = {
@@ -1020,6 +1036,12 @@ export type HookInstallStatus = {
 	detail: string | null,
 };
 
+export type ImpactMember = {
+	role: string,
+	/**  How many members sit directly under this one. */
+	under: number,
+};
+
 /**  Error as the frontend sees it: a stable `kind` to branch on and a message to show. */
 export type IpcError = {
 	kind: IpcErrorKind,
@@ -1126,7 +1148,11 @@ export type NewChannel = {
  *  A member to add, in the worktree it joins. An agent may start under an orchestrator of that worktree;
  *  a bot is always an orchestrator and never under one.
  */
-export type NewTeamMember = { kind: "agent"; role: string; harness: HarnessId; parentId: string | null; orchestrator: boolean; task: string; acceptance: string; 
+export type NewTeamMember = { kind: "agent"; role: string; 
+/**  None for a member that will be given a task and started later. */
+harness: HarnessId | null; parentId: string | null; orchestrator: boolean; task: string; acceptance: string; 
+/**  The members this one waits for, in the same worktree. */
+dependsOn: string[]; 
 /**  The absolute path of the worktree the agent works in. */
 worktree: string; 
 /**  The terminal session the screen opened for the agent in `worktree`. */
@@ -1335,6 +1361,9 @@ export type RunningCommand = {
 	output: string,
 };
 
+/**  Where a member's task stands. A member with an orchestrator above it has one, and it starts pending. */
+export type TaskState = "pending" | "running" | "done" | "failed" | "cancelled";
+
 /**  The team changed: a member or a line between members. The screen reads the snapshot again. */
 export type TeamChanged = Record<string, never>;
 
@@ -1347,7 +1376,7 @@ export type TeamMember = {
 	worktree: string,
 	kind: TeamMemberKind,
 	role: string,
-	/**  The agent's harness. Only agents have one. */
+	/**  The agent's harness. Only agents have one, and a member has none until its first worker starts. */
 	harness: HarnessId | null,
 	/**  The Lynx bot. Only bots have one. */
 	botId: string | null,
@@ -1358,13 +1387,29 @@ export type TeamMember = {
 	/**  Only a member with an orchestrator has a task and a "done when" line; otherwise both are empty. */
 	task: string,
 	acceptance: string,
-	/**  The terminal session the agent runs in. Only agents have one, and it is cleared when it closes. */
+	/**  Where the task stands. Only a member with a task has one. */
+	taskState: TaskState | null,
+	/**  The members whose tasks must be done before this one starts. All are in this member's worktree. */
+	dependsOn: string[],
+	/**  Whether a worker of this member is running, or was stopped. None before its first worker starts. */
+	dispatchState: DispatchState | null,
+	/**  The worktree the worker works in, when it is not the team's own: a worker started in a new worktree. */
+	executionWorktree: string | null,
+	/**
+	 *  The terminal session the agent runs in. Only agents have one. It is kept after the session ends,
+	 *  because Resume finds the conversation through it.
+	 */
 	sessionId: string | null,
 	/**
 	 *  Whether the member's branch is open in the team tree. A new root starts open; every other new member
 	 *  starts closed.
 	 */
 	expanded: boolean,
+	/**
+	 *  The state of the worker this member is, when a worker of it has started. Not stored; the
+	 *  orchestration fills it from the member's reports and its process.
+	 */
+	workerState: string | null,
 };
 
 /**  A CLI agent in a worktree, or a Lynx bot. A bot only orchestrates. */
@@ -1380,6 +1425,14 @@ export type TeamPair = {
 export type TeamSnapshot = {
 	members: TeamMember[],
 	pairs: TeamPair[],
+};
+
+/**
+ *  A session the backend closed for its own reasons, such as a worker a coordinator released. The screen
+ *  drops its tab. A close the person asked for is not announced: the screen already dropped that tab.
+ */
+export type TerminalClosed = {
+	id: string,
 };
 
 export type TerminalConfig = {
@@ -1440,6 +1493,9 @@ export type TerminalSnapshot = {
 	lastSeq: number,
 	running: boolean,
 	exitCode: number | null,
+	/**  The size the session runs at: the screen takes it before replaying `data`, which was drawn for it. */
+	cols: number,
+	rows: number,
 };
 
 /**  A thread as the screen lists it. Times are Unix seconds; `title` is empty until it has one. */
@@ -1509,14 +1565,16 @@ export type WindowKind = "session" | "weekly" | "monthly" |
 /**  A window of a length Lynx does not name; the minutes still say how long it is. */
 "other";
 
-/**  One worker a coordinator started, as a bot's agents tab shows it. */
+/**  One worker of a bot's team, as the bot's agents tab shows it. */
 export type WorkerRow = {
-	runTitle: string,
-	taskSpec: string,
-	harness: HarnessId,
+	memberId: string,
+	role: string,
+	task: string,
+	taskState: TaskState,
+	harness: HarnessId | null,
 	worktreePath: string,
-	sessionId: string,
-	state: string,
+	sessionId: string | null,
+	dispatchState: DispatchState,
 	running: boolean,
 	agentStatus: string | null,
 };

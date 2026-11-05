@@ -280,6 +280,16 @@ export const botsCopy = {
         "Its folder, instructions and conversation are removed. This cannot be undone.",
       deleteConfirm: "Delete",
       deleteFailed: "Could not delete the bot",
+      impact: {
+        members: "Team members that go with it",
+        under: (count: number) => `+${count} under it`,
+        // The impact carries only the run's id, not its title, so the line names no run.
+        runningWorkers: (count: number) =>
+          count === 1
+            ? "1 running worker will be stopped"
+            : `${count} running workers will be stopped`,
+        failed: "Could not check what else this removes.",
+      },
     },
     browser: {
       tab: "Bot browser",

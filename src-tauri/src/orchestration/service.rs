@@ -1,6 +1,6 @@
-//! The orchestration rules: which run a session may use, when a task may start, and what a
-//! coordinator hears back. Terminals and worktrees come through `WorkerHost`, so the rules are
-//! tested without them.
+//! The coordination rules: who may add, start, read, answer or stop a worker, when a task may start, and what an
+//! orchestrator hears back. The workers are members of the team, so the team holds what they do. Terminals and
+//! worktrees come through `WorkerHost`, so the rules are tested without them.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -11,57 +11,46 @@ use specta::Type;
 use thiserror::Error;
 
 use crate::agents::activity::AgentStatus;
-use crate::agents::harness::HarnessId;
-use crate::bots::bot_bridge::BOT_SESSION_PREFIX;
+use crate::agents::harness::{HarnessId, harness_name};
+use crate::agents::launch_line::unattended_settings;
+use crate::bots::bot_bridge::bot_of_session;
 use crate::config::app_config::OrchestrationConfig;
-use crate::persistence::{AppDatabase, DatabaseError};
-
-use super::model::{
-    Dispatch, DispatchState, Message, MessageKind, Outcome, Run, Task, TaskState, WorkerWorktree,
-    reports_through_tools, task_is_ready,
+use crate::persistence::DatabaseError;
+use crate::team::team_error::TeamError;
+use crate::team::team_model::{
+    DispatchState, MessageKind, NewTeamMember, Outcome, TaskState, TeamMember, TeamMemberKind,
+    TeamMessage, TeamSnapshot, worker_card_state,
 };
+use crate::team::team_service::{TeamService, new_id};
 
-const MAX_TITLE_CHARS: usize = 200;
-const MAX_SPEC_CHARS: usize = 20_000;
 const MAX_REPORT_CHARS: usize = 4_000;
 const MAX_MODEL_CHARS: usize = 100;
+/// The longest answer a coordinator may type into a worker's terminal, in characters.
+const MAX_REPLY: usize = 2000;
 /// How often a check looks again while it waits for something to arrive.
 const CHECK_POLL: Duration = Duration::from_millis(500);
 
-/// The name the agents tab shows for a worker's agent status.
-fn agent_status_name(status: AgentStatus) -> String {
-    match status {
-        AgentStatus::Working => "working",
-        AgentStatus::NeedsYou => "needs_you",
-        AgentStatus::Done => "done",
-        AgentStatus::Idle => "idle",
+/// Where a worker works: in a worktree of its own, or in the team's worktree, where the orchestrator works.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerWorktree {
+    New,
+    Current,
+}
+
+impl WorkerWorktree {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "new" => Some(Self::New),
+            "current" => Some(Self::Current),
+            _ => None,
+        }
     }
-    .to_owned()
 }
-
-/// One worker a coordinator started, as a bot's agents tab shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkerRow {
-    pub run_title: String,
-    pub task_spec: String,
-    pub harness: HarnessId,
-    pub worktree_path: String,
-    pub session_id: String,
-    pub state: String,
-    pub running: bool,
-    pub agent_status: Option<String>,
-}
-
-/// The longest answer a coordinator may type into a worker's terminal, in characters.
-const MAX_REPLY: usize = 2000;
 
 /// What the rules need from the rest of the app.
 pub trait WorkerHost: Send + Sync + 'static {
     /// The orchestration settings as the user has them now.
     fn settings(&self) -> OrchestrationConfig;
-    /// The worktree a terminal session works in, when the session belongs to a project.
-    fn worktree_of(&self, session: &str) -> Option<String>;
     /// A new worktree called `name` in the repository `from` belongs to.
     fn new_worktree(&self, from: &str, name: &str) -> Result<String, String>;
     /// Writes `text` where an agent can read it, and returns the path.
@@ -73,6 +62,10 @@ pub trait WorkerHost: Send + Sync + 'static {
     /// A refusal says what to do, for the agent that reads it.
     fn allow_start(&self, _coordinator: &str, _worktree: &str) -> Result<(), String> {
         Ok(())
+    }
+    /// Whether the agent is on in Lynx's settings: its hooks and tools are in, so a worker can report back.
+    fn agent_on(&self, _harness: HarnessId) -> bool {
+        true
     }
     /// Types `text` into the session and presses Enter, to answer an agent that waits.
     fn send(&self, _session: &str, _text: &str) -> Result<(), String> {
@@ -86,11 +79,15 @@ pub trait WorkerHost: Send + Sync + 'static {
     fn status(&self, session: &str) -> Option<AgentStatus>;
     /// What the session printed lately, as text.
     fn output(&self, session: &str) -> Result<String, String>;
-    /// Ends the session.
+    /// Closes the session, so it leaves the terminal list the way a tab the person closed does.
     fn stop(&self, session: &str);
-    /// A message was added for this coordinator, so it should look at its workers again. Only a bot
-    /// is woken; an agent coordinator checks when it chooses.
-    fn notify(&self, _coordinator: &str) {}
+    /// A message was added for the orchestrator that started the worker in `session`, so it should look at its
+    /// workers again. Only a bot is woken; an agent orchestrator checks when it chooses.
+    fn notify(&self, _session: &str) {}
+    /// The orchestrator read its workers now, so a note waiting for it is no longer needed. Nothing by default.
+    fn checked(&self, _coordinator: &str) {}
+    /// The team changed, so the screens that show it must be read again. Nothing by default.
+    fn changed(&self) {}
     /// Sends Enter to a worker once `text` shows on its screen. Nothing by default.
     fn submit_when_shown(&self, _session: &str, _text: &str) {}
 }
@@ -100,36 +97,50 @@ pub trait WorkerHost: Send + Sync + 'static {
 pub enum OrchestrationError {
     #[error("orchestration is turned off in Lynx's settings, so this tool does nothing")]
     Disabled,
-    #[error("this agent is not in a project worktree, so it cannot start a run")]
-    NotInProject,
     #[error(
-        "a worker cannot start runs, tasks or workers, or check on them; only the coordinator can"
+        "this agent is not in a team, so it has no members to orchestrate: the person adds it in the Team tab"
+    )]
+    NotInTeam,
+    #[error(
+        "this agent is a member but not an orchestrator: the person makes it one in the Team tab"
+    )]
+    NotAnOrchestrator,
+    #[error(
+        "a worker cannot add members, start workers or check on them; only an orchestrator can"
     )]
     WorkerCannotCoordinate,
-    #[error("only a worker reports to its coordinator")]
+    #[error("only a worker reports to its orchestrator")]
     NotAWorker,
-    #[error("start a run with lynx_run_start first")]
-    NoRun,
+    #[error("no member {0} under you")]
+    UnknownMember(String),
+    #[error("you orchestrate in several worktrees, so name the orchestrator with parentId: {0}")]
+    ParentChoice(String),
     #[error("this agent takes no model when Lynx starts it, so start it without one")]
     ModelNotSupported,
     #[error("{0}")]
     InvalidText(String),
-    #[error("no task {0} in this run")]
-    UnknownTask(String),
-    #[error("no worker {0} in this run")]
-    UnknownWorker(String),
+    #[error("the member has no task yet: give it one with lynx_member_add or in the Team tab")]
+    NoTask,
     #[error("the task is {0}, so it cannot start")]
     TaskNotPending(String),
-    #[error("the task waits for tasks that are not done yet: {0}")]
+    #[error("the task waits for members that are not done yet: {0}")]
     WaitingFor(String),
     #[error("the task already has its report: it is {0}")]
     AlreadyReported(String),
-    #[error("no worker of this run has a worktree yet, so start it in a new one")]
-    NoWorktreeToReuse,
+    #[error(
+        "{0} is off in Lynx's settings, so its workers could not report back: turn it on under Agents, then start the worker again"
+    )]
+    AgentOff(String),
     #[error("this worker has been stopped, so it cannot report")]
     WorkerStopped,
+    #[error("the worker of {0} is still running: stop it before it leaves the team")]
+    WorkerRunning(String),
+    #[error("this member has not started a worker yet")]
+    NoWorker,
     #[error("{0}")]
     Host(String),
+    #[error("{0}")]
+    Team(String),
     #[error("the orchestration could not use the database: {0}")]
     Database(String),
 }
@@ -140,20 +151,44 @@ impl From<DatabaseError> for OrchestrationError {
     }
 }
 
-/// What a coordinator reads about one worker: what it printed, and whether it still runs.
+impl From<TeamError> for OrchestrationError {
+    fn from(error: TeamError) -> Self {
+        Self::Team(error.to_string())
+    }
+}
+
+/// One worker of a bot's team, as the bot's agents tab shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerRow {
+    pub member_id: String,
+    pub role: String,
+    pub task: String,
+    pub task_state: TaskState,
+    pub harness: Option<HarnessId>,
+    pub worktree_path: String,
+    pub session_id: Option<String>,
+    pub dispatch_state: DispatchState,
+    pub running: bool,
+    pub agent_status: Option<String>,
+}
+
+/// What a coordinator reads about one worker: its reports, what its terminal shows, and whether it still runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reading {
+    /// The worker's own answers, oldest first. The screen is only what its terminal shows.
+    pub reports: Vec<String>,
     pub output: String,
     pub running: bool,
     pub status: Option<AgentStatus>,
 }
 
-/// The state of each worker of a run, as a coordinator reads it.
+/// The state of one worker of an orchestrator's team, as the orchestrator reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerState {
-    pub dispatch_id: String,
-    pub task_id: String,
-    pub harness: HarnessId,
+    pub member_id: String,
+    pub role: String,
+    pub harness: Option<HarnessId>,
     pub task_state: TaskState,
     pub running: bool,
 }
@@ -161,178 +196,204 @@ pub struct WorkerState {
 /// What a check returns: what happened since the last one, and where each worker stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
-    pub messages: Vec<Message>,
+    pub messages: Vec<TeamMessage>,
     pub workers: Vec<WorkerState>,
 }
 
+/// A worker that was just started: the member it runs for, its agent, its terminal and its worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerStart {
+    pub member_id: String,
+    pub harness: HarnessId,
+    pub session_id: String,
+    pub worktree_path: String,
+}
+
 pub struct Orchestration {
-    pub(super) database: Arc<AppDatabase>,
+    team: Arc<TeamService>,
     host: Arc<dyn WorkerHost>,
     /// Which workers were waiting for an answer at the last look, so each wait is said once.
     waiting: Mutex<HashMap<String, bool>>,
 }
 
 impl Orchestration {
-    pub fn new(database: Arc<AppDatabase>, host: Arc<dyn WorkerHost>) -> Self {
+    pub fn new(team: Arc<TeamService>, host: Arc<dyn WorkerHost>) -> Self {
         Self {
-            database,
+            team,
             host,
             waiting: Mutex::new(HashMap::new()),
         }
     }
 
-    /// A coordinator starts a run in its project.
-    pub fn start_run(&self, coordinator: &str, title: &str) -> Result<Run, OrchestrationError> {
-        self.ensure_enabled()?;
-        self.refuse_worker(coordinator)?;
-        let worktree_path = self
-            .host
-            .worktree_of(coordinator)
-            .ok_or(OrchestrationError::NotInProject)?;
-        let title = title.trim();
-        if title.is_empty() || title.chars().count() > MAX_TITLE_CHARS {
-            return Err(OrchestrationError::InvalidText(format!(
-                "the run needs a title of 1 to {MAX_TITLE_CHARS} characters"
-            )));
-        }
-        let run = Run {
-            id: new_id(),
-            coordinator_session: coordinator.to_owned(),
-            worktree_path,
-            title: title.to_owned(),
-            created_at: now(),
-        };
-        self.database.insert_run(&run)?;
-        Ok(run)
-    }
-
-    pub fn create_task(
+    /// Adds a member under one of the caller's orchestrators: a task and a "done when" line, and what it waits for.
+    /// The member has no agent until a worker starts for it.
+    pub fn add_member(
         &self,
-        coordinator: &str,
-        spec: &str,
+        caller: &str,
+        parent: Option<&str>,
+        role: &str,
+        task: &str,
+        acceptance: &str,
         depends_on: Vec<String>,
-    ) -> Result<Task, OrchestrationError> {
-        self.ensure_enabled()?;
-        let run = self.coordinator_run(coordinator)?;
-        let spec = spec.trim();
-        if spec.is_empty() || spec.chars().count() > MAX_SPEC_CHARS {
-            return Err(OrchestrationError::InvalidText(format!(
-                "a task needs a spec of 1 to {MAX_SPEC_CHARS} characters"
-            )));
-        }
-        let known = self.database.tasks_of_run(&run.id)?;
-        for dependency in &depends_on {
-            if !known.iter().any(|task| &task.id == dependency) {
-                return Err(OrchestrationError::UnknownTask(dependency.clone()));
+    ) -> Result<TeamMember, OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let parent = match (parent, parents.as_slice()) {
+            (Some(id), _) => parents
+                .iter()
+                .find(|parent| parent.id == id)
+                .ok_or_else(|| OrchestrationError::UnknownMember(id.to_owned()))?,
+            (None, [only]) => only,
+            (None, _) => {
+                let choices: Vec<String> = parents
+                    .iter()
+                    .map(|parent| format!("{} ({})", parent.id, parent.worktree))
+                    .collect();
+                return Err(OrchestrationError::ParentChoice(choices.join(", ")));
             }
-        }
-        let task = Task {
-            id: new_id(),
-            run_id: run.id,
-            spec: spec.to_owned(),
-            depends_on,
-            state: TaskState::Pending,
-            created_at: now(),
         };
-        self.database.insert_task(&task)?;
-        Ok(task)
+        if task.trim().is_empty() {
+            return Err(OrchestrationError::InvalidText(
+                "a member needs a task: say what it must do".to_owned(),
+            ));
+        }
+        let member = self.team.add_member(NewTeamMember::Agent {
+            role: role.to_owned(),
+            harness: None,
+            parent_id: Some(parent.id.clone()),
+            orchestrator: false,
+            task: task.to_owned(),
+            acceptance: acceptance.to_owned(),
+            depends_on,
+            worktree: parent.worktree.clone(),
+            session_id: None,
+        })?;
+        self.host.changed();
+        Ok(member)
     }
 
-    /// Starts an agent for a pending task, in a worktree of its own or in the coordinator's, as the
-    /// coordinator chose. `model` is the one the user named, when there is one.
+    /// Removes one of the caller's members. A worker that still runs stops the dismissal, since nothing would
+    /// hear its report any more.
+    pub fn dismiss_member(&self, caller: &str, member_id: &str) -> Result<(), OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let member = self.child_of(&parents, member_id)?;
+        let members = self.team.members()?;
+        if let Some(running) = subtree(&members, &member.id)
+            .into_iter()
+            .find(|candidate| self.is_running(candidate))
+        {
+            return Err(OrchestrationError::WorkerRunning(running.role.clone()));
+        }
+        if let Some(session) = self.team.dismiss_member(&member.id)?
+            && self.host.running(&session)
+        {
+            self.host.stop(&session);
+        }
+        self.host.changed();
+        Ok(())
+    }
+
+    /// Starts an agent for one of the caller's members whose task is pending and whose waits are done. The
+    /// worker works in a worktree of its own or in the team's, as the caller chose.
     pub fn start_worker(
         &self,
-        coordinator: &str,
-        task_id: &str,
+        caller: &str,
+        member_id: &str,
         harness: HarnessId,
         worktree: WorkerWorktree,
         model: Option<&str>,
-    ) -> Result<Dispatch, OrchestrationError> {
-        self.ensure_enabled()?;
-        let run = self.coordinator_run(coordinator)?;
+    ) -> Result<WorkerStart, OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let member = self.child_of(&parents, member_id)?;
+        match member.task_state {
+            Some(TaskState::Pending) => {}
+            Some(state) => {
+                return Err(OrchestrationError::TaskNotPending(
+                    state.as_str().to_owned(),
+                ));
+            }
+            None => return Err(OrchestrationError::NoTask),
+        }
+        if member.task.trim().is_empty() {
+            return Err(OrchestrationError::NoTask);
+        }
+        let members = self.team.members()?;
+        let waiting: Vec<String> = member
+            .depends_on
+            .iter()
+            .filter_map(|id| members.iter().find(|other| &other.id == id))
+            .filter(|other| other.task_state != Some(TaskState::Done))
+            .map(|other| other.role.clone())
+            .collect();
+        if !waiting.is_empty() {
+            return Err(OrchestrationError::WaitingFor(waiting.join(", ")));
+        }
+        let project = member.worktree.clone();
         self.host
-            .allow_start(coordinator, &run.worktree_path)
+            .allow_start(caller, &project)
             .map_err(OrchestrationError::Host)?;
+        // A worker reports through Lynx's tools, which come with the agent's hooks: without them it cannot finish.
+        if !self.host.agent_on(harness) {
+            return Err(OrchestrationError::AgentOff(
+                harness_name(harness).to_owned(),
+            ));
+        }
         if let Some(model) = model {
             check_model(harness, model)?;
         }
-        let tasks = self.database.tasks_of_run(&run.id)?;
-        let task = tasks
-            .iter()
-            .find(|task| task.id == task_id)
-            .ok_or_else(|| OrchestrationError::UnknownTask(task_id.to_owned()))?
-            .clone();
-        if task.state != TaskState::Pending {
-            return Err(OrchestrationError::TaskNotPending(
-                task.state.as_str().to_owned(),
-            ));
-        }
-        if !task_is_ready(&task, &tasks) {
-            let waiting: Vec<&str> = task
-                .depends_on
-                .iter()
-                .filter(|dependency| {
-                    !tasks
-                        .iter()
-                        .any(|other| &other.id == *dependency && other.state == TaskState::Done)
-                })
-                .map(String::as_str)
-                .collect();
-            return Err(OrchestrationError::WaitingFor(waiting.join(", ")));
-        }
-
-        let worktree = match worktree {
-            WorkerWorktree::Current if coordinator.starts_with(BOT_SESSION_PREFIX) => {
-                // A bot has no worktree of its own: "current" continues in the one its last worker used.
-                self.database
-                    .dispatches_of_run(&run.id)?
-                    .last()
-                    .map(|dispatch| dispatch.worktree_path.clone())
-                    .ok_or(OrchestrationError::NoWorktreeToReuse)?
-            }
-            WorkerWorktree::Current => run.worktree_path.clone(),
+        let execution = match worktree {
+            WorkerWorktree::Current => project.clone(),
             WorkerWorktree::New => {
-                let name = format!("lynx-task-{}", task.id.chars().take(8).collect::<String>());
+                let name = format!(
+                    "lynx-task-{}",
+                    member.id.chars().take(8).collect::<String>()
+                );
                 self.host
-                    .new_worktree(&run.worktree_path, &name)
+                    .new_worktree(&project, &name)
                     .map_err(OrchestrationError::Host)?
             }
         };
         let prompt = self
             .host
-            .prompt_file(&worker_prompt(harness, &task.spec))
+            .prompt_file(&worker_prompt(harness, &member.task))
             .map_err(OrchestrationError::Host)?;
         // A bot does not watch its workers' terminals, so they never stop to ask for permissions.
-        let line = self
-            .host
-            .launch_line(harness, coordinator.starts_with(BOT_SESSION_PREFIX));
+        let unattended = bot_of_session(caller).is_some();
+        let line = self.host.launch_line(harness, unattended);
+        // Nobody answers an unattended worker's first-run prompts, so its settings turn them off.
+        let line = match unattended_settings(harness) {
+            Some(settings) if unattended => format!(
+                "{line} --settings {}",
+                quote_for_shell(settings, cfg!(windows))
+            ),
+            _ => line,
+        };
         let instruction = read_instruction(&prompt);
         let command = agent_command(harness, &line, &instruction, model);
         let session = self
             .host
-            .start(&worktree, &command)
+            .start(&execution, &command)
             .map_err(OrchestrationError::Host)?;
+        if let Err(error) = self
+            .team
+            .start_worker(&member.id, harness, &session, &execution, caller)
+        {
+            self.host.stop(&session);
+            return Err(error.into());
+        }
         if harness == HarnessId::Opencode {
             // OpenCode's --prompt only fills its input; the instruction is sent when Enter follows it.
             self.host.submit_when_shown(&session, &instruction);
         }
-
-        let dispatch = Dispatch {
-            id: new_id(),
-            run_id: run.id,
-            task_id: task.id.clone(),
-            session_id: session,
-            worktree_path: worktree,
+        self.host.changed();
+        Ok(WorkerStart {
+            member_id: member.id,
             harness,
-            state: DispatchState::Running,
-            started_at: now(),
-        };
-        self.database.insert_dispatch(&dispatch)?;
-        self.database.set_task_state(&task.id, TaskState::Running)?;
-        Ok(dispatch)
+            session_id: session,
+            worktree_path: execution,
+        })
     }
 
-    /// A worker reports how its task ended, with a summary for its coordinator.
+    /// A worker reports how its task ended, with a summary for its orchestrator.
     pub fn report(
         &self,
         worker_session: &str,
@@ -340,11 +401,16 @@ impl Orchestration {
         summary: &str,
     ) -> Result<(), OrchestrationError> {
         self.ensure_enabled()?;
-        let dispatch = self
-            .database
-            .dispatch_of_session(worker_session)?
+        let worker = self
+            .team
+            .members()?
+            .into_iter()
+            .find(|member| {
+                member.session_id.as_deref() == Some(worker_session)
+                    && member.dispatch_state.is_some()
+            })
             .ok_or(OrchestrationError::NotAWorker)?;
-        if dispatch.state != DispatchState::Running {
+        if worker.dispatch_state != Some(DispatchState::Running) {
             return Err(OrchestrationError::WorkerStopped);
         }
         let summary = summary.trim();
@@ -353,125 +419,305 @@ impl Orchestration {
                 "a report needs a summary of 1 to {MAX_REPORT_CHARS} characters"
             )));
         }
-        let task = self
-            .database
-            .tasks_of_run(&dispatch.run_id)?
-            .into_iter()
-            .find(|task| task.id == dispatch.task_id)
-            .ok_or_else(|| OrchestrationError::UnknownTask(dispatch.task_id.clone()))?;
-        if task.state != TaskState::Running {
+        if worker.task_state != Some(TaskState::Running) {
             return Err(OrchestrationError::AlreadyReported(
-                task.state.as_str().to_owned(),
+                worker
+                    .task_state
+                    .map_or("missing", TaskState::as_str)
+                    .to_owned(),
             ));
         }
-        self.database
-            .set_task_state(&task.id, outcome.task_state())?;
-        self.database.insert_message(&Message {
+        let message = TeamMessage {
             id: new_id(),
-            run_id: dispatch.run_id.clone(),
-            dispatch_id: Some(dispatch.id),
-            task_id: Some(task.id),
+            member_id: worker.id.clone(),
             kind: outcome.message_kind(),
             body: summary.to_owned(),
             created_at: now(),
-        })?;
-        self.tell(&dispatch.run_id)
+        };
+        self.team
+            .record_report(&worker.id, outcome.task_state(), &message)?;
+        // The worker's card shows Done from this report, even while its process still runs.
+        self.host.changed();
+        self.tell(&worker)?;
+        Ok(())
     }
 
-    /// Tells the run's coordinator that a message was added, once the message is saved.
-    fn tell(&self, run_id: &str) -> Result<(), OrchestrationError> {
-        if let Some(run) = self.database.run(run_id)? {
-            self.host.notify(&run.coordinator_session);
+    /// The members the caller is, as a bot or as an agent, and the orchestrators among them. A worker cannot
+    /// orchestrate, and an agent that is not an orchestrator cannot either.
+    fn orchestrators(&self, caller: &str) -> Result<Vec<TeamMember>, OrchestrationError> {
+        self.ensure_enabled()?;
+        let mine = self.caller_members(caller)?;
+        if mine.iter().any(|member| member.dispatch_state.is_some()) {
+            return Err(OrchestrationError::WorkerCannotCoordinate);
+        }
+        if mine.is_empty() {
+            return Err(OrchestrationError::NotInTeam);
+        }
+        let orchestrators: Vec<TeamMember> = mine
+            .into_iter()
+            .filter(|member| member.orchestrator)
+            .collect();
+        if orchestrators.is_empty() {
+            return Err(OrchestrationError::NotAnOrchestrator);
+        }
+        Ok(orchestrators)
+    }
+
+    /// Every member the caller stands for: a bot's member in each team it is in, or the agent's own member.
+    fn caller_members(&self, caller: &str) -> Result<Vec<TeamMember>, OrchestrationError> {
+        let bot = bot_of_session(caller);
+        Ok(self
+            .team
+            .members()?
+            .into_iter()
+            .filter(|member| match bot {
+                Some(bot) => {
+                    member.kind == TeamMemberKind::Bot && member.bot_id.as_deref() == Some(bot)
+                }
+                None => {
+                    member.kind == TeamMemberKind::Agent
+                        && member.session_id.as_deref() == Some(caller)
+                }
+            })
+            .collect())
+    }
+
+    /// The member `member_id`, when it answers to one of the orchestrators. Nothing else is the caller's to manage.
+    fn child_of(
+        &self,
+        parents: &[TeamMember],
+        member_id: &str,
+    ) -> Result<TeamMember, OrchestrationError> {
+        self.team
+            .members()?
+            .into_iter()
+            .find(|member| {
+                member.id == member_id
+                    && member
+                        .parent_id
+                        .as_ref()
+                        .is_some_and(|parent| parents.iter().any(|mine| &mine.id == parent))
+            })
+            .ok_or_else(|| OrchestrationError::UnknownMember(member_id.to_owned()))
+    }
+
+    /// Whether a member's worker is running now: its dispatch runs and its process is alive.
+    fn is_running(&self, member: &TeamMember) -> bool {
+        member.dispatch_state == Some(DispatchState::Running)
+            && member
+                .session_id
+                .as_deref()
+                .is_some_and(|session| self.host.running(session))
+    }
+
+    /// Tells the orchestrator that started a worker that a message was added. Only a bot is woken, through its
+    /// chat; an agent is woken through its terminal.
+    fn tell(&self, member: &TeamMember) -> Result<(), OrchestrationError> {
+        if let Some(session) = self.team.notify_session_of(&member.id)? {
+            self.host.notify(&session);
         }
         Ok(())
     }
 
-    /// The workers of every run of a bot, whichever thread started it.
-    pub fn workers_of_bot(&self, bot: &str) -> Result<Vec<WorkerRow>, OrchestrationError> {
-        let prefix = format!("{BOT_SESSION_PREFIX}{bot}:");
-        self.workers_in(self.database.runs_of_coordinators_starting(&prefix)?)
+    /// Adds a message for an orchestrator about one of its workers, and tells it.
+    fn note(
+        &self,
+        worker: &TeamMember,
+        kind: MessageKind,
+        body: &str,
+    ) -> Result<(), OrchestrationError> {
+        self.team.add_message(&TeamMessage {
+            id: new_id(),
+            member_id: worker.id.clone(),
+            kind,
+            body: body.to_owned(),
+            created_at: now(),
+        })?;
+        self.host.changed();
+        self.tell(worker)
     }
 
-    fn workers_in(&self, runs: Vec<Run>) -> Result<Vec<WorkerRow>, OrchestrationError> {
+    /// Forgets nothing when a bot is deleted: its members go with it in the team. Stops every worker of the bot
+    /// that still runs, first, so nothing keeps working for a bot that is gone.
+    pub fn stop_workers_of_bot(&self, bot: &str) -> Result<usize, OrchestrationError> {
+        let members = self.team.members()?;
+        let owners = bot_member_ids(&members, bot);
+        let running: Vec<String> = members
+            .iter()
+            .filter(|member| {
+                member.dispatch_state == Some(DispatchState::Running)
+                    && member
+                        .parent_id
+                        .as_deref()
+                        .is_some_and(|parent| owners.contains(&parent))
+            })
+            .filter_map(|member| member.session_id.clone())
+            .collect();
+        for session in &running {
+            self.host.stop(session);
+        }
+        Ok(running.len())
+    }
+
+    /// The workers of every member a bot has, in every worktree: the members that have started a worker.
+    pub fn workers_of_bot(&self, bot: &str) -> Result<Vec<WorkerRow>, OrchestrationError> {
+        let members = self.team.members()?;
+        let owners = bot_member_ids(&members, bot);
         let mut rows = Vec::new();
-        for run in runs {
-            let tasks = self.database.tasks_of_run(&run.id)?;
-            for dispatch in self.database.dispatches_of_run(&run.id)?.iter().rev() {
-                let task_spec = tasks
-                    .iter()
-                    .find(|task| task.id == dispatch.task_id)
-                    .map(|task| task.spec.clone())
-                    .unwrap_or_default();
-                rows.push(WorkerRow {
-                    run_title: run.title.clone(),
-                    task_spec,
-                    harness: dispatch.harness,
-                    worktree_path: dispatch.worktree_path.clone(),
-                    session_id: dispatch.session_id.clone(),
-                    state: dispatch.state.as_str().to_owned(),
-                    running: self.host.running(&dispatch.session_id),
-                    agent_status: self
-                        .host
-                        .status(&dispatch.session_id)
-                        .map(agent_status_name),
-                });
+        for member in members.iter().rev() {
+            let Some(dispatch_state) = member.dispatch_state else {
+                continue;
+            };
+            if !member
+                .parent_id
+                .as_deref()
+                .is_some_and(|parent| owners.contains(&parent))
+            {
+                continue;
             }
+            rows.push(WorkerRow {
+                member_id: member.id.clone(),
+                role: member.role.clone(),
+                task: member.task.clone(),
+                task_state: member.task_state.unwrap_or(TaskState::Pending),
+                harness: member.harness,
+                worktree_path: member
+                    .execution_worktree
+                    .clone()
+                    .unwrap_or_else(|| member.worktree.clone()),
+                session_id: member.session_id.clone(),
+                dispatch_state,
+                running: self.is_running(member),
+                agent_status: member
+                    .session_id
+                    .as_deref()
+                    .and_then(|session| self.host.status(session))
+                    .map(agent_status_name),
+            });
         }
         Ok(rows)
     }
 
-    /// What a coordinator hears since its last check. Waits up to `wait` for a message. In the
-    /// meantime it notices workers that ended without a report.
-    pub fn check(&self, coordinator: &str, wait: Duration) -> Result<Check, OrchestrationError> {
+    /// Fills each worker member's state on a team snapshot. Members that never started a worker have none.
+    pub fn fill_worker_states(
+        &self,
+        snapshot: &mut TeamSnapshot,
+    ) -> Result<(), OrchestrationError> {
+        self.fill_states(&mut snapshot.members)
+    }
+
+    fn fill_states(&self, members: &mut [TeamMember]) -> Result<(), OrchestrationError> {
+        for member in members {
+            let Some(dispatch_state) = member.dispatch_state else {
+                member.worker_state = None;
+                continue;
+            };
+            let report = self
+                .team
+                .messages_of(&member.id)?
+                .iter()
+                .rev()
+                .find_map(|message| match message.kind {
+                    MessageKind::Done => Some(Outcome::Done),
+                    MessageKind::Failed => Some(Outcome::Failed),
+                    MessageKind::NoReport | MessageKind::NeedsYou => None,
+                });
+            let process_running = member
+                .session_id
+                .as_deref()
+                .is_some_and(|session| self.host.running(session));
+            member.worker_state =
+                Some(worker_card_state(report, dispatch_state, process_running).to_owned());
+        }
+        Ok(())
+    }
+
+    /// The team the caller is in, in every worktree the caller is in: the whole tree, with each worker's state.
+    pub fn team_view(&self, caller: &str) -> Result<Vec<TeamMember>, OrchestrationError> {
         self.ensure_enabled()?;
-        let run = self.coordinator_run(coordinator)?;
+        let mine = self.caller_members(caller)?;
+        if mine.is_empty() {
+            return Err(OrchestrationError::NotInTeam);
+        }
+        let mut members: Vec<TeamMember> = self
+            .team
+            .members()?
+            .into_iter()
+            .filter(|member| mine.iter().any(|own| own.worktree == member.worktree))
+            .collect();
+        self.fill_states(&mut members)?;
+        Ok(members)
+    }
+
+    /// What an orchestrator hears since its last check. Waits up to `wait` for a message. In the meantime it notices
+    /// workers that ended without a report.
+    pub fn check(&self, caller: &str, wait: Duration) -> Result<Check, OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let parent_ids: Vec<String> = parents.iter().map(|parent| parent.id.clone()).collect();
+        self.host.checked(caller);
         let deadline = Instant::now() + wait;
         loop {
-            self.notice_workers(&run)?;
-            let messages = self.database.take_unread_messages(&run.id)?;
+            self.notice_workers(&parent_ids)?;
+            let messages = self.team.take_unread_messages(&parent_ids)?;
             if !messages.is_empty() || Instant::now() >= deadline {
                 self.release_reported(&messages)?;
                 return Ok(Check {
                     messages,
-                    workers: self.worker_states(&run)?,
+                    workers: self.worker_states(&parent_ids)?,
                 });
             }
             std::thread::sleep(CHECK_POLL);
         }
     }
 
-    /// What a worker of the coordinator's run printed lately, and its state.
+    /// What a worker of the caller's team reported and printed lately, and its state.
     pub fn read_worker(
         &self,
-        coordinator: &str,
-        dispatch_id: &str,
-    ) -> Result<(Dispatch, Reading), OrchestrationError> {
-        self.ensure_enabled()?;
-        let dispatch = self.worker_of_run(coordinator, dispatch_id)?;
-        let output = match self.host.output(&dispatch.session_id) {
+        caller: &str,
+        member_id: &str,
+    ) -> Result<(TeamMember, Reading), OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let member = self.child_of(&parents, member_id)?;
+        let session = member
+            .session_id
+            .clone()
+            .ok_or(OrchestrationError::NoWorker)?;
+        let output = match self.host.output(&session) {
             Ok(text) => text,
-            // A worker the app already closed has no screen left to read.
-            Err(_) if dispatch.state == DispatchState::Stopped => String::new(),
+            // A closed terminal has no screen left, whether or not the app has noticed yet.
+            Err(_) if !self.host.running(&session) => String::new(),
             Err(error) => return Err(OrchestrationError::Host(error)),
         };
+        let reports = self
+            .team
+            .messages_of(&member.id)?
+            .into_iter()
+            .filter(|message| matches!(message.kind, MessageKind::Done | MessageKind::Failed))
+            .map(|message| message.body)
+            .collect();
         let reading = Reading {
+            reports,
             output,
-            running: self.host.running(&dispatch.session_id),
-            status: self.host.status(&dispatch.session_id),
+            running: self.host.running(&session),
+            status: self.host.status(&session),
         };
-        Ok((dispatch, reading))
+        Ok((member, reading))
     }
 
     /// Answers a worker that waits: `text` is typed into its terminal and sent. One line, no control
     /// characters, so an answer cannot be anything but an answer.
     pub fn reply_worker(
         &self,
-        coordinator: &str,
-        dispatch_id: &str,
+        caller: &str,
+        member_id: &str,
         text: &str,
     ) -> Result<(), OrchestrationError> {
-        self.ensure_enabled()?;
-        let dispatch = self.worker_of_run(coordinator, dispatch_id)?;
+        let parents = self.orchestrators(caller)?;
+        let member = self.child_of(&parents, member_id)?;
+        let session = member
+            .session_id
+            .clone()
+            .ok_or(OrchestrationError::NoWorker)?;
         let text = text.trim();
         if text.is_empty() || text.chars().count() > MAX_REPLY || text.chars().any(char::is_control)
         {
@@ -479,177 +725,137 @@ impl Orchestration {
                 "an answer is one line of 1 to {MAX_REPLY} characters, with no control characters"
             )));
         }
-        if !self.host.running(&dispatch.session_id) {
+        if !self.host.running(&session) {
             return Err(OrchestrationError::Host(
                 "the worker has ended, so there is no one to answer".to_owned(),
             ));
         }
         self.host
-            .send(&dispatch.session_id, text)
+            .send(&session, text)
             .map_err(OrchestrationError::Host)
     }
 
     /// Ends a worker. Its task is cancelled if it was still running.
-    pub fn stop_worker(
-        &self,
-        coordinator: &str,
-        dispatch_id: &str,
-    ) -> Result<(), OrchestrationError> {
-        self.ensure_enabled()?;
-        let dispatch = self.worker_of_run(coordinator, dispatch_id)?;
-        self.host.stop(&dispatch.session_id);
-        self.database
-            .set_dispatch_state(&dispatch.id, DispatchState::Stopped)?;
-        let task = self
-            .database
-            .tasks_of_run(&dispatch.run_id)?
-            .into_iter()
-            .find(|task| task.id == dispatch.task_id);
-        if let Some(task) = task.filter(|task| task.state == TaskState::Running) {
-            self.database
-                .set_task_state(&task.id, TaskState::Cancelled)?;
+    pub fn stop_worker(&self, caller: &str, member_id: &str) -> Result<(), OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let member = self.child_of(&parents, member_id)?;
+        if member.dispatch_state == Some(DispatchState::Running) {
+            if let Some(session) = &member.session_id {
+                self.host.stop(session);
+            }
+            self.team
+                .set_dispatch_state(&member.id, DispatchState::Stopped)?;
         }
+        if member.task_state == Some(TaskState::Running) {
+            self.team.set_task_state(&member.id, TaskState::Cancelled)?;
+        }
+        self.host.changed();
         Ok(())
     }
 
-    /// Notices the workers that ended without a report, and for an agent that cannot report, the
-    /// end of its turn. Each notice is written once.
-    fn notice_workers(&self, run: &Run) -> Result<(), OrchestrationError> {
-        let tasks = self.database.tasks_of_run(&run.id)?;
-        for dispatch in self.database.dispatches_of_run(&run.id)? {
-            if !is_active(&dispatch, &tasks) {
+    /// Notices the workers of these orchestrators that ended without a report, and for an agent that cannot report,
+    /// the end of its turn. Each notice is written once.
+    fn notice_workers(&self, parent_ids: &[String]) -> Result<(), OrchestrationError> {
+        let members = self.team.members()?;
+        for worker in members.iter().filter(|member| {
+            member
+                .parent_id
+                .as_ref()
+                .is_some_and(|parent| parent_ids.contains(parent))
+                && is_active(member)
+        }) {
+            let Some(session) = worker.session_id.as_deref() else {
                 continue;
-            }
-            let waiting = self.host.running(&dispatch.session_id)
-                && self.host.status(&dispatch.session_id) == Some(AgentStatus::NeedsYou);
+            };
+            let waiting = self.host.running(session)
+                && self.host.status(session) == Some(AgentStatus::NeedsYou);
             let was_waiting = self
                 .waiting
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .insert(dispatch.id.clone(), waiting)
+                .insert(worker.id.clone(), waiting)
                 .unwrap_or(false);
             if waiting && !was_waiting {
-                self.database.insert_message(&Message {
-                    id: new_id(),
-                    run_id: dispatch.run_id.clone(),
-                    dispatch_id: Some(dispatch.id.clone()),
-                    task_id: Some(dispatch.task_id.clone()),
-                    kind: MessageKind::NeedsYou,
-                    body: "The worker is waiting for an answer. Read its output to see the question; the user gives the answer in the worker's terminal.".to_owned(),
-                    created_at: now(),
-                })?;
-                self.tell(&dispatch.run_id)?;
+                self.note(
+                    worker,
+                    MessageKind::NeedsYou,
+                    "The worker is waiting for an answer. Read its output to see the question; the user gives the answer in the worker's terminal.",
+                )?;
             }
-            if !self.host.running(&dispatch.session_id) {
-                self.database
-                    .set_dispatch_state(&dispatch.id, DispatchState::Stopped)?;
-                self.database
-                    .set_task_state(&dispatch.task_id, TaskState::Failed)?;
-                self.database.insert_message(&Message {
-                    id: new_id(),
-                    run_id: dispatch.run_id.clone(),
-                    dispatch_id: Some(dispatch.id.clone()),
-                    task_id: Some(dispatch.task_id.clone()),
-                    kind: MessageKind::NoReport,
-                    body:
-                        "The worker ended without a report. Read its output to see how far it got."
-                            .to_owned(),
-                    created_at: now(),
-                })?;
-                self.tell(&dispatch.run_id)?;
-            } else if !reports_through_tools(dispatch.harness)
-                && self.host.status(&dispatch.session_id) == Some(AgentStatus::Done)
+            if !self.host.running(session) {
+                self.team
+                    .set_dispatch_state(&worker.id, DispatchState::Stopped)?;
+                self.team.set_task_state(&worker.id, TaskState::Failed)?;
+                self.note(
+                    worker,
+                    MessageKind::NoReport,
+                    "The worker ended without a report. Read its output to see how far it got.",
+                )?;
+            } else if self.host.status(session) == Some(AgentStatus::Done)
                 && !self
-                    .database
-                    .has_message(&dispatch.id, MessageKind::NoReport)?
+                    .team
+                    .messages_of(&worker.id)?
+                    .iter()
+                    .any(|message| message.kind == MessageKind::NoReport)
             {
-                // This agent cannot report, so the end of its turn is the most the app can see.
-                self.database.insert_message(&Message {
-                    id: new_id(),
-                    run_id: dispatch.run_id.clone(),
-                    dispatch_id: Some(dispatch.id.clone()),
-                    task_id: Some(dispatch.task_id.clone()),
-                    kind: MessageKind::NoReport,
-                    body: "The worker finished its turn without a report. Read its output to see what it did.".to_owned(),
-                    created_at: now(),
-                })?;
-                self.tell(&dispatch.run_id)?;
+                // The turn ended while the task still runs and no report came: the orchestrator hears it once. The
+                // worker keeps running, and it may be waiting for an answer.
+                self.note(
+                    worker,
+                    MessageKind::NoReport,
+                    "The worker finished its turn without a report. Read its output to see what it did, or whether it waits for an answer.",
+                )?;
             }
         }
         Ok(())
     }
 
-    /// Closes the workers whose reports the coordinator has just heard, when Settings say so. The
-    /// report stays with the coordinator; what the worker printed goes with its terminal.
-    fn release_reported(&self, messages: &[Message]) -> Result<(), OrchestrationError> {
+    /// Closes the workers whose reports the orchestrator has just heard, when Settings say so. The report stays with
+    /// the orchestrator; what the worker printed goes with its terminal.
+    fn release_reported(&self, messages: &[TeamMessage]) -> Result<(), OrchestrationError> {
         if !self.host.settings().release_finished_workers {
             return Ok(());
         }
+        let members = self.team.members()?;
         for message in messages {
             if !matches!(message.kind, MessageKind::Done | MessageKind::Failed) {
                 continue;
             }
-            let Some(dispatch_id) = message.dispatch_id.as_deref() else {
+            let Some(worker) = members.iter().find(|member| member.id == message.member_id) else {
                 continue;
             };
-            let Some(dispatch) = self.database.dispatch(dispatch_id)? else {
-                continue;
-            };
-            if dispatch.state == DispatchState::Running {
-                self.host.stop(&dispatch.session_id);
-                self.database
-                    .set_dispatch_state(&dispatch.id, DispatchState::Stopped)?;
+            if worker.dispatch_state == Some(DispatchState::Running) {
+                if let Some(session) = &worker.session_id {
+                    self.host.stop(session);
+                }
+                self.team
+                    .set_dispatch_state(&worker.id, DispatchState::Stopped)?;
+                self.host.changed();
             }
         }
         Ok(())
     }
 
-    fn worker_states(&self, run: &Run) -> Result<Vec<WorkerState>, OrchestrationError> {
-        let tasks = self.database.tasks_of_run(&run.id)?;
-        let states = self
-            .database
-            .dispatches_of_run(&run.id)?
-            .into_iter()
-            .filter_map(|dispatch| {
-                let task_state = tasks.iter().find(|task| task.id == dispatch.task_id)?.state;
-                Some(WorkerState {
-                    running: dispatch.state == DispatchState::Running
-                        && self.host.running(&dispatch.session_id),
-                    dispatch_id: dispatch.id,
-                    task_id: dispatch.task_id,
-                    harness: dispatch.harness,
-                    task_state,
-                })
+    fn worker_states(&self, parent_ids: &[String]) -> Result<Vec<WorkerState>, OrchestrationError> {
+        Ok(self
+            .team
+            .members()?
+            .iter()
+            .filter(|member| {
+                member.dispatch_state.is_some()
+                    && member
+                        .parent_id
+                        .as_ref()
+                        .is_some_and(|parent| parent_ids.contains(parent))
             })
-            .collect();
-        Ok(states)
-    }
-
-    /// The coordinator's run is the newest one its session started.
-    fn coordinator_run(&self, coordinator: &str) -> Result<Run, OrchestrationError> {
-        self.refuse_worker(coordinator)?;
-        self.database
-            .latest_run_of(coordinator)?
-            .ok_or(OrchestrationError::NoRun)
-    }
-
-    fn worker_of_run(
-        &self,
-        coordinator: &str,
-        dispatch_id: &str,
-    ) -> Result<Dispatch, OrchestrationError> {
-        let run = self.coordinator_run(coordinator)?;
-        self.database
-            .dispatch(dispatch_id)?
-            .filter(|dispatch| dispatch.run_id == run.id)
-            .ok_or_else(|| OrchestrationError::UnknownWorker(dispatch_id.to_owned()))
-    }
-
-    fn refuse_worker(&self, session: &str) -> Result<(), OrchestrationError> {
-        match self.database.dispatch_of_session(session)? {
-            Some(_) => Err(OrchestrationError::WorkerCannotCoordinate),
-            None => Ok(()),
-        }
+            .map(|member| WorkerState {
+                member_id: member.id.clone(),
+                role: member.role.clone(),
+                harness: member.harness,
+                task_state: member.task_state.unwrap_or(TaskState::Pending),
+                running: self.is_running(member),
+            })
+            .collect())
     }
 
     /// Every orchestration call is refused while the user has it turned off in Settings.
@@ -662,23 +868,65 @@ impl Orchestration {
     }
 }
 
-/// A worker is active while it is not stopped and its task has no report yet. Its process may have
-/// ended: that is what the checks notice.
-fn is_active(dispatch: &Dispatch, tasks: &[Task]) -> bool {
-    dispatch.state == DispatchState::Running
-        && tasks
-            .iter()
-            .any(|task| task.id == dispatch.task_id && task.state == TaskState::Running)
+/// A bot's member ids, one per worktree it is in: the parents its workers answer to.
+fn bot_member_ids<'a>(members: &'a [TeamMember], bot: &str) -> Vec<&'a str> {
+    members
+        .iter()
+        .filter(|member| {
+            member.kind == TeamMemberKind::Bot && member.bot_id.as_deref() == Some(bot)
+        })
+        .map(|member| member.id.as_str())
+        .collect()
+}
+
+/// A member and every member under it at any depth.
+fn subtree<'a>(members: &'a [TeamMember], root: &str) -> Vec<&'a TeamMember> {
+    let mut found: Vec<&TeamMember> = members.iter().filter(|member| member.id == root).collect();
+    let mut next = 0;
+    while let Some(parent) = found.get(next).map(|member| member.id.clone()) {
+        next += 1;
+        for member in members {
+            if member.parent_id.as_deref() == Some(parent.as_str())
+                && !found.iter().any(|known| known.id == member.id)
+            {
+                found.push(member);
+            }
+        }
+    }
+    found
+}
+
+/// A worker is active while it runs and its task has no report yet. Its process may have ended: that is what the
+/// checks notice.
+fn is_active(member: &TeamMember) -> bool {
+    member.dispatch_state == Some(DispatchState::Running)
+        && member.task_state == Some(TaskState::Running)
+}
+
+/// Whether an agent reports through the lynx tools. Oh My Pi cannot, so its end of turn is what the app sees.
+fn reports_through_tools(harness: HarnessId) -> bool {
+    harness != HarnessId::Omp
+}
+
+/// The name the agents tab shows for a worker's agent status.
+fn agent_status_name(status: AgentStatus) -> String {
+    match status {
+        AgentStatus::Working => "working",
+        AgentStatus::NeedsYou => "needs_you",
+        AgentStatus::Done => "done",
+        AgentStatus::Idle => "idle",
+    }
+    .to_owned()
 }
 
 /// What a worker reads: its task, and for an agent that reports through the tools, how to report.
-fn worker_prompt(harness: HarnessId, spec: &str) -> String {
+fn worker_prompt(harness: HarnessId, task: &str) -> String {
     if reports_through_tools(harness) {
         format!(
-            "{spec}\n\nWhen you finish, or if you cannot, call the lynx_report tool with outcome \"done\" or \"failed\" and a short summary."
+            "{task}\n\nWhen you finish, or if you cannot, report to your orchestrator with lynx_report (outcome \"done\" or \"failed\" and a short summary). lynx_report is a Lynx tool: call it from your shell through the lynx skill, as the skill describes."
         )
     } else {
-        spec.to_owned()
+        task.to_owned()
     }
 }
 
@@ -733,10 +981,6 @@ pub fn quote_for_shell(text: &str, windows: bool) -> String {
     } else {
         format!("'{}'", text.replace('\'', "'\\''"))
     }
-}
-
-fn new_id() -> String {
-    uuid::Uuid::new_v4().to_string()
 }
 
 fn now() -> i64 {

@@ -4,6 +4,7 @@ import { TEAM_DOCS_MEMBERS, TEAM_MEMBERS } from "@/team/team-fixtures";
 import {
   canOrchestrate,
   hasTask,
+  isDrawn,
   linkOf,
   orchestratorOptionsOf,
 } from "@/team/team-hierarchy";
@@ -127,5 +128,29 @@ describe("bots", () => {
     expect(
       all.filter((member) => member.kind === "bot").map((m) => m.id),
     ).toEqual(["docs-lead"]);
+  });
+});
+
+describe("isDrawn", () => {
+  // lead > builder > tester, and a loose reviewer with no orchestrator.
+  const members = [
+    { id: "lead", parentId: null },
+    { id: "builder", parentId: "lead" },
+    { id: "tester", parentId: "builder" },
+    { id: "reviewer", parentId: null },
+    { id: "stray", parentId: "gone" },
+  ];
+
+  it("draws a member only when every orchestrator above it is open", () => {
+    expect(isDrawn(members, ["lead"], "builder")).toBe(true);
+    expect(isDrawn(members, ["lead"], "tester")).toBe(false);
+    expect(isDrawn(members, ["lead", "builder"], "tester")).toBe(true);
+    expect(isDrawn(members, [], "lead")).toBe(true);
+    expect(isDrawn(members, [], "reviewer")).toBe(true);
+  });
+
+  it("does not draw a member whose orchestrator is missing, or an unknown id", () => {
+    expect(isDrawn(members, ["gone"], "stray")).toBe(false);
+    expect(isDrawn(members, ["lead"], "nobody")).toBe(false);
   });
 });

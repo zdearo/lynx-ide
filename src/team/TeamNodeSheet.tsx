@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { DOCK_RIGHT_QUERY } from "@/hooks/layout-queries";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useRightPanelStore } from "@/right-panel/right-panel-store";
@@ -20,7 +21,8 @@ import { formatAge } from "@/terminal/relative-time";
 import type { TeamMember } from "@/team/team-fixtures";
 import { focusMemberCard } from "@/team/team-focus";
 import { hasTask } from "@/team/team-hierarchy";
-import { partnersOf } from "@/team/team-pairs";
+import { isLinked } from "@/team/team-pairs";
+import { talksToOf } from "@/team/team-message";
 import { TeamMemberMenu } from "@/team/TeamMemberMenu";
 import { TeamMessageForm } from "@/team/TeamMessageForm";
 import { TeamStatusIcon } from "@/team/TeamStatus";
@@ -50,11 +52,7 @@ export function TeamNodeSheet({
   const bots = useBotsStore((state) => state.bots);
   const agent = engineOf(member, bots);
   const bot = botOf(member, bots);
-  const dependsOn = roleOf(members, member.waitingOn);
-  const talksTo = partnersOf(pairs, member.id).flatMap((id) => {
-    const role = roleOf(members, id);
-    return role ? [{ id, role }] : [];
-  });
+  const talksTo = talksToOf(member, members, pairs);
   const changed = member.added > 0 || member.removed > 0;
   // Ages are read when the panel opens; it is remounted for each member picked.
   const [openedAt] = useState(() => Date.now());
@@ -173,22 +171,44 @@ export function TeamNodeSheet({
         <p className="text-nested text-muted-foreground">{copy.team.noTask}</p>
       )}
 
+      {hasTask(member) && member.taskState === "pending" && (
+        <WaitsForEditor member={member} members={members} />
+      )}
+
       {member.question && (
         <p className="truncate text-nested text-attention">{member.question}</p>
       )}
 
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2">
-        {dependsOn && (
+        {member.taskState !== null && (
+          <>
+            <dt className="text-muted-foreground">{copy.team.taskStatus}</dt>
+            <dd className="min-w-0">{copy.team.taskState[member.taskState]}</dd>
+          </>
+        )}
+        {member.executionWorktree !== null &&
+          member.executionWorktree !== member.worktree && (
+            <>
+              <dt className="text-muted-foreground">{copy.team.runsIn}</dt>
+              <dd className="min-w-0 truncate" title={member.executionWorktree}>
+                {member.executionWorktree.split(/[\\/]/).pop()}
+              </dd>
+            </>
+          )}
+        {member.dependsOn.length > 0 && (
           <>
             <dt className="text-muted-foreground">{copy.team.dependsOn}</dt>
-            <dd className="min-w-0">
-              <button
-                type="button"
-                className="max-w-full truncate text-left underline-offset-3 hover:underline"
-                onClick={() => useTeamStore.getState().select(member.waitingOn)}
-              >
-                {dependsOn}
-              </button>
+            <dd className="flex min-w-0 flex-col gap-1">
+              {member.dependsOn.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="min-w-0 truncate text-left underline-offset-3 hover:underline"
+                  onClick={() => useTeamStore.getState().select(id)}
+                >
+                  {roleOf(members, id) ?? id}
+                </button>
+              ))}
             </dd>
           </>
         )}
@@ -196,24 +216,32 @@ export function TeamNodeSheet({
           <>
             <dt className="text-muted-foreground">{copy.team.talksTo}</dt>
             <dd className="flex min-w-0 flex-col gap-1">
-              {talksTo.map(({ id, role }) => (
-                <span key={id} className="flex min-w-0 items-center gap-1">
+              {talksTo.map((other) => (
+                <span
+                  key={other.id}
+                  className="flex min-w-0 items-center gap-1"
+                >
                   <button
                     type="button"
                     className="min-w-0 flex-1 truncate text-left underline-offset-3 hover:underline"
-                    onClick={() => useTeamStore.getState().select(id)}
+                    onClick={() => useTeamStore.getState().select(other.id)}
                   >
-                    {role}
+                    {other.role}
                   </button>
-                  <TooltipIconButton
-                    label={copy.team.disconnect(role)}
-                    className="shrink-0"
-                    onClick={() =>
-                      useTeamStore.getState().setLinked(member.id, id, false)
-                    }
-                  >
-                    <XmarkGlyph18 />
-                  </TooltipIconButton>
+                  {/* Only a pair can be taken apart: the orchestrator and the members under it are the tree. */}
+                  {isLinked(pairs, member.id, other.id) && (
+                    <TooltipIconButton
+                      label={copy.team.disconnect(other.role)}
+                      className="shrink-0"
+                      onClick={() =>
+                        useTeamStore
+                          .getState()
+                          .setLinked(member.id, other.id, false)
+                      }
+                    >
+                      <XmarkGlyph18 />
+                    </TooltipIconButton>
+                  )}
                 </span>
               ))}
             </dd>
@@ -297,5 +325,51 @@ export function TeamNodeSheet({
         </DropdownMenu>
       </div>
     </div>
+  );
+}
+
+/** Which members of the worktree this one waits for. Only a task that has not started can change it. */
+function WaitsForEditor({
+  member,
+  members,
+}: {
+  member: TeamMember;
+  members: readonly TeamMember[];
+}) {
+  const others = members.filter(
+    (other) => other.id !== member.id && other.worktree === member.worktree,
+  );
+  function toggle(id: string, on: boolean) {
+    const next = on
+      ? [...member.dependsOn, id]
+      : member.dependsOn.filter((waitedFor) => waitedFor !== id);
+    void useTeamStore.getState().setDependencies(member.id, next);
+  }
+  return (
+    <fieldset className="grid gap-2">
+      <legend className="text-muted-foreground">{copy.team.waitsFor}</legend>
+      <p className="text-nested text-muted-foreground">
+        {copy.team.waitsForHint}
+      </p>
+      {others.length === 0 && (
+        <p className="text-nested text-muted-foreground">
+          {copy.team.noOneToWaitFor}
+        </p>
+      )}
+      {others.map((other) => (
+        <label
+          key={other.id}
+          className="flex min-w-0 items-center justify-between gap-3"
+        >
+          <span className="min-w-0 truncate text-nested">{other.role}</span>
+          <Switch
+            size="sm"
+            checked={member.dependsOn.includes(other.id)}
+            onCheckedChange={(on) => toggle(other.id, on)}
+            aria-label={other.role}
+          />
+        </label>
+      ))}
+    </fieldset>
   );
 }

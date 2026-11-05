@@ -85,7 +85,7 @@ pub fn run() {
     // The harness runs this same binary for each hook event; it answers and exits without a window.
     let arguments: Vec<String> = std::env::args().collect();
     if let Some(code) = agents::hook_relay::run_if_requested(&arguments)
-        .or_else(|| agents::mcp_server::run_if_requested(&arguments))
+        .or_else(|| agents::tool_cli::run_if_requested(&arguments))
         .or_else(|| terminal::daemon_host::run_if_requested(&arguments))
         .or_else(|| {
             let folder = daemon_dir(&lynx_home(std::env::home_dir()?));
@@ -139,13 +139,19 @@ pub fn run() {
                 lynx_home(user_home.clone()).display()
             );
             let executable = app_image_environment::launch_executable(std::env::current_exe().ok());
-            let hook_targets = HookTargets::from_environment(&user_home, executable.as_deref());
+            // A debug build keeps its agents' settings in its own folder, so it never rewrites the installed
+            // app's hooks or MCP entry in the person's home.
+            #[cfg(debug_assertions)]
+            let agents_home = lynx_home(user_home.clone());
+            #[cfg(not(debug_assertions))]
+            let agents_home = user_home.clone();
+            let hook_targets = HookTargets::from_environment(&agents_home, executable.as_deref());
             // Agents turned on before the browser tools existed get them too; this waits on the
             // agents' CLIs, so it stays off the startup path.
             let pending_tools = hook_targets.clone();
             let _ = std::thread::Builder::new()
                 .name("browser-tools-install".to_owned())
-                .spawn(move || pending_tools.add_missing_browser_tools());
+                .spawn(move || pending_tools.refresh_agent_tools());
             app.manage(hook_targets);
 
             let config = Arc::new(ConfigStore::open(
@@ -255,19 +261,8 @@ pub fn run() {
                     ),
                 );
             }
-            // Orchestration shares the terminals' database. It reads terminals, worktrees and
-            // settings from the managed services when a call needs them.
             let terminal_database = Arc::new(AppDatabase::open(&database_file)?);
-            let orchestration = Arc::new(orchestration::service::Orchestration::new(
-                Arc::clone(&terminal_database),
-                Arc::new(orchestration::host::AppWorkers::new(
-                    app.handle().clone(),
-                    owners.clone(),
-                    Arc::clone(&config),
-                )),
-            ));
-            app.manage(Arc::clone(&orchestration));
-            // The team has its own connection to the same file, as orchestration does.
+            // The team has its own connection to the same file.
             // A bot joins a team only while its folder is under the bots folder. One check is built here:
             // the service keeps a copy and the startup reconcile below reads the same bots folder.
             let team_database = Arc::new(AppDatabase::open(&database_file)?);
@@ -279,11 +274,22 @@ pub fn run() {
                 Box::new(bot_exists.clone()),
             ));
             app.manage(Arc::clone(&team));
+            // Orchestration works on the team's members. It reads terminals, worktrees and settings from the
+            // managed services when a call needs them.
+            let orchestration = Arc::new(orchestration::service::Orchestration::new(
+                Arc::clone(&team),
+                Arc::new(orchestration::host::AppWorkers::new(
+                    app.handle().clone(),
+                    Arc::clone(&config),
+                )),
+            ));
+            app.manage(Arc::clone(&orchestration));
             // A bot deleted before its team lines went with it may have left members behind. Only a folder that is
             // really gone counts: an unreadable bot.json must not clear a bot's team. Best effort: a failure is
             // logged and the app still starts.
-            let bot_folder_gone = |bot_id: &str| !bots_dir.join(bot_id).is_dir();
-            match team.remove_missing_bots(bot_folder_gone) {
+            // The check answers "does the bot still exist": the team keeps every bot whose folder is there.
+            let bot_folder_exists = |bot_id: &str| bots_dir.join(bot_id).is_dir();
+            match team.remove_missing_bots(bot_folder_exists) {
                 Ok(0) => {}
                 Ok(removed) => {
                     log::info!("removed {removed} team members of bots that no longer exist")
@@ -354,6 +360,9 @@ pub fn run() {
                 Some(terminal_database),
             );
             terminals.restore();
+            app.manage(Arc::new(orchestration::agent_wake::AgentWakes::new(
+                terminals.clone(),
+            )));
             app.manage(terminals);
             Ok(())
         })

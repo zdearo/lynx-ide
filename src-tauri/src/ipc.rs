@@ -23,7 +23,9 @@ use crate::pull_request::pull_request_commands as pull_request;
 use crate::team::team_commands as team;
 use crate::team::team_events::TeamChanged;
 use crate::terminal::terminal_commands as terminal;
-use crate::terminal::terminal_events::{AgentStatusChanged, TerminalCreated, TerminalExit};
+use crate::terminal::terminal_events::{
+    AgentStatusChanged, TerminalClosed, TerminalCreated, TerminalExit,
+};
 use crate::updates::update_commands as updates;
 use crate::updates::update_events::UpdateStatusChanged;
 use crate::usage::usage_commands as usage;
@@ -46,6 +48,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             bots::bots_chat,
             bots::bots_update_instructions,
             bots::bots_delete,
+            bots::bots_delete_impact,
             bots::bots_grants,
             bots::bots_approve_access,
             bots::bots_deny_access,
@@ -197,10 +200,12 @@ pub fn builder() -> Builder<tauri::Wry> {
             team::team_dismiss_member,
             team::team_set_session,
             team::team_set_linked,
+            team::team_set_dependencies,
             team::team_set_expanded,
         ])
         .events(collect_events![
             TerminalCreated,
+            TerminalClosed,
             TerminalExit,
             AgentStatusChanged,
             ConfigChanged,

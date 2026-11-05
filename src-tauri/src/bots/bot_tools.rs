@@ -362,7 +362,8 @@ pub fn definitions() -> Vec<Value> {
     all
 }
 
-/// The name of every tool a bot may call, for the permissions of its Claude.
+/// The name of every tool a bot may call. Only the tests list them now: a bot's shell reaches them by the CLI.
+#[cfg(test)]
 pub fn names() -> Vec<String> {
     definitions()
         .iter()
@@ -386,16 +387,16 @@ fn coordinator_definitions() -> Vec<Value> {
 fn worker_start() -> Value {
     json!({
         "name": "lynx_worker_start",
-        "description": "Starts an agent for a pending task, with the agent and model the user chose. Choose the worktree yourself: \"new\" for work that stands apart from what is already running, which is the usual case; \"current\" only to continue in the worktree of the worker that ran last.",
+        "description": "Starts an agent for one of your members whose task is pending and whose waits are done, with the agent and model the user chose. Choose the worktree yourself: \"new\" for work that stands apart from what is already running, which is the usual case; \"current\" to work in the team's own worktree, next to the files of the other members.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "taskId": { "type": "string" },
+                "memberId": { "type": "string" },
                 "agent": { "type": "string", "enum": crate::orchestration::tools::AGENTS },
                 "worktree": { "type": "string", "enum": ["new", "current"] },
                 "model": { "type": "string", "description": "A model name the agent accepts, if the user named one. Not for OpenCode." },
             },
-            "required": ["taskId", "agent", "worktree"],
+            "required": ["memberId", "agent", "worktree"],
         },
         "annotations": { "readOnlyHint": false, "openWorldHint": false },
     })
@@ -872,7 +873,7 @@ mod tests {
     fn a_bot_coordinates_with_the_orchestration_tools_but_does_not_report() {
         let names = names();
 
-        assert!(names.contains(&"lynx_run_start".to_owned()));
+        assert!(names.contains(&"lynx_member_add".to_owned()));
         assert!(names.contains(&"lynx_worker_start".to_owned()));
         assert!(names.contains(&"lynx_check".to_owned()));
         assert!(!names.contains(&"lynx_report".to_owned()));

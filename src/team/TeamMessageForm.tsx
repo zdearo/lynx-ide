@@ -24,8 +24,9 @@ import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
 
 /**
- * A member's message form in its sheet. It writes into a paired member's terminal. A member with no orchestrator
- * above it, and no orchestrator of its own, only gets the line that says it answers.
+ * A member's message form in its sheet. It writes into the terminal of a member it talks with: its pairs, its
+ * orchestrator and the members under it. A member with no orchestrator above it, and no orchestrator of its own, only
+ * gets the line that says it answers.
  */
 export function TeamMessageForm({
   member,

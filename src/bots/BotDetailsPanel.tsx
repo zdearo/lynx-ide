@@ -9,6 +9,7 @@ import { BotMcpSection } from "@/bots/BotMcpSection";
 import { BotSkillsSection } from "@/bots/BotSkillsSection";
 import type { BotProvider } from "@/bots/bot-colors";
 import { botAnswering, useBotChatStore } from "@/bots/bot-chat-store";
+import { BotDeleteImpact } from "@/bots/BotDeleteImpact";
 import { ChannelDetails } from "@/bots/ChannelDetails";
 import { DetailRow, DetailSection } from "@/bots/DetailSection";
 import { EnginePicker } from "@/bots/EnginePicker";
@@ -461,6 +462,7 @@ function BotDetails({
           <AlertDialogHeader>
             <AlertDialogTitle>{text.deleteTitle(detail.name)}</AlertDialogTitle>
             <AlertDialogDescription>{text.deleteBody}</AlertDialogDescription>
+            <BotDeleteImpact botId={detail.id} />
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{text.cancel}</AlertDialogCancel>

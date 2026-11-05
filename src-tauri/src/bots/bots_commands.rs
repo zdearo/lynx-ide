@@ -16,6 +16,7 @@ use crate::team::team_service::TeamService;
 use super::bot_access::{AccessState, Grant, RegisteredRepos, RequestKind};
 use super::bot_chat::{BotChat, BotReply};
 use super::bot_conversation::{Author, ChatMessage};
+use super::bot_delete_impact::{DeleteImpact, delete_impact};
 use super::bot_folder::{self, BotDetail, BotError, BotSetup, BotSummary, BotsRoot, NewBot};
 use super::bot_mcp::{self, BotMcpServer};
 use super::bot_memory::{self, MemoryView};
@@ -346,17 +347,34 @@ pub async fn bots_delete(
     chat: State<'_, Arc<BotChat>>,
     processes: State<'_, Arc<BotProcesses>>,
     team: State<'_, Arc<TeamService>>,
+    orchestration: State<'_, Arc<Orchestration>>,
     id: String,
 ) -> Result<(), IpcError> {
     let chat = Arc::clone(chat.inner());
     let processes = Arc::clone(processes.inner());
     let team = Arc::clone(team.inner());
-    let team_changed =
-        run_blocking(move || Ok::<_, AppError>(delete_bot(&chat, &processes, &team, &id)?)).await?;
+    let orchestration = Arc::clone(orchestration.inner());
+    let team_changed = run_blocking(move || {
+        Ok::<_, AppError>(delete_bot(&chat, &processes, &team, &orchestration, &id)?)
+    })
+    .await?;
     if team_changed {
         let _ = TeamChanged {}.emit(&app);
     }
     Ok(())
+}
+
+/// What deleting a bot takes with it, for the confirmation. Changes nothing.
+#[tauri::command]
+#[specta::specta]
+pub async fn bots_delete_impact(
+    team: State<'_, Arc<TeamService>>,
+    orchestration: State<'_, Arc<Orchestration>>,
+    id: String,
+) -> Result<DeleteImpact, IpcError> {
+    let team = Arc::clone(team.inner());
+    let orchestration = Arc::clone(orchestration.inner());
+    run_blocking(move || delete_impact(&team, &orchestration, &id)).await
 }
 
 /// The folder goes first, so a bot that is answering is refused before the team is touched. Once the folder is
@@ -366,11 +384,17 @@ fn delete_bot(
     chat: &BotChat,
     processes: &BotProcesses,
     team: &TeamService,
+    orchestration: &Orchestration,
     id: &str,
 ) -> Result<bool, BotError> {
     chat.delete(id)?;
     // What the bot left running goes with it.
     processes.stop_all(id);
+    // The workers it started stop with it; their members leave the team with the bot. Best effort, as the
+    // team is: the bot is deleted already.
+    if let Err(error) = orchestration.stop_workers_of_bot(id) {
+        log::error!("could not stop the workers of bot {id}: {error}");
+    }
     match team.remove_bot(id) {
         Ok(removed) => Ok(removed > 0),
         Err(error) => {
@@ -800,11 +824,14 @@ pub async fn bots_chatgpt_sign_out(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::harness::HarnessId;
     use crate::bots::bot_processes::CommandHost;
     use crate::bots::claude_cli::ClaudeCli;
+    use crate::orchestration::service_tests::FakeHost;
     use crate::persistence::AppDatabase;
     use crate::team::team_error::TeamError;
     use crate::team::team_model::NewTeamMember;
+    use crate::team::team_model::{MessageKind, TeamMessage};
     use tempfile::TempDir;
 
     /// Bots here run no commands, so no terminal is ever asked for one.
@@ -824,12 +851,12 @@ mod tests {
     }
 
     /// The team as the app builds it: a bot joins only while its folder is under `bots`.
-    fn team_over(database: &Arc<AppDatabase>, bots: &Path) -> TeamService {
+    fn team_over(database: &Arc<AppDatabase>, bots: &Path) -> Arc<TeamService> {
         let bots = bots.to_path_buf();
-        TeamService::new(
+        Arc::new(TeamService::new(
             Arc::clone(database),
             Box::new(move |bot_id: &str| bot_folder::folder_of(&bots, bot_id).is_ok()),
-        )
+        ))
     }
 
     /// The docs bot joining the team of `/repo`.
@@ -839,6 +866,11 @@ mod tests {
             role: "Docs".to_owned(),
             worktree: "/repo".to_owned(),
         }
+    }
+
+    /// The orchestration over `team`. Deleting a bot never starts a worker, so the host is never asked.
+    fn orchestration_over(team: &Arc<TeamService>) -> Orchestration {
+        Orchestration::new(Arc::clone(team), Arc::new(FakeHost::new()))
     }
 
     /// The bot's parts over one database file in `dir`, where the bot folder `docs` exists.
@@ -859,7 +891,10 @@ mod tests {
         let team = team_over(&database, &dir.path().join("bots"));
         team.add_member(docs_joins()).expect("join");
 
-        assert!(delete_bot(&chat, &processes, &team, "docs").expect("delete"));
+        assert!(
+            delete_bot(&chat, &processes, &team, &orchestration_over(&team), "docs")
+                .expect("delete")
+        );
 
         assert!(!dir.path().join("bots").join("docs").exists());
         assert!(team.snapshot().expect("snapshot").members.is_empty());
@@ -871,7 +906,7 @@ mod tests {
         let (chat, processes, database) = parts(&dir);
         let team = team_over(&database, &dir.path().join("bots"));
         team.add_member(docs_joins()).expect("join");
-        delete_bot(&chat, &processes, &team, "docs").expect("delete");
+        delete_bot(&chat, &processes, &team, &orchestration_over(&team), "docs").expect("delete");
 
         let joined = team.add_member(docs_joins());
 
@@ -891,8 +926,48 @@ mod tests {
             .execute_batch("DROP TABLE team_members")
             .expect("drop");
 
-        assert!(!delete_bot(&chat, &processes, &team, "docs").expect("delete"));
+        assert!(
+            !delete_bot(&chat, &processes, &team, &orchestration_over(&team), "docs")
+                .expect("delete")
+        );
 
         assert!(!dir.path().join("bots").join("docs").exists());
+    }
+
+    #[test]
+    fn deleting_a_bot_takes_its_workers_and_their_messages_with_it() {
+        let dir = TempDir::new().expect("a temporary folder");
+        let (chat, processes, database) = parts(&dir);
+        let team = team_over(&database, &dir.path().join("bots"));
+        let bot = team.add_member(docs_joins()).expect("join");
+        let worker = team
+            .add_member(NewTeamMember::Agent {
+                role: "Writer".to_owned(),
+                harness: Some(HarnessId::Claude),
+                parent_id: Some(bot.id.clone()),
+                orchestrator: false,
+                task: "Audite".to_owned(),
+                acceptance: String::new(),
+                depends_on: Vec::new(),
+                worktree: "/repo".to_owned(),
+                session_id: None,
+            })
+            .expect("a member under the bot");
+        team.add_message(&TeamMessage {
+            id: "message-docs".to_owned(),
+            member_id: worker.id.clone(),
+            kind: MessageKind::Done,
+            body: "Feito".to_owned(),
+            created_at: 1,
+        })
+        .expect("message");
+
+        delete_bot(&chat, &processes, &team, &orchestration_over(&team), "docs").expect("delete");
+
+        assert!(team.snapshot().expect("snapshot").members.is_empty());
+        assert!(
+            database.messages_of(&worker.id).expect("read").is_empty(),
+            "the messages of the bot's workers go with them"
+        );
     }
 }

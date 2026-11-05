@@ -49,4 +49,8 @@ impl TerminalEventSink for SessionRecordSink {
     fn created(&self, session: &TerminalInfo) {
         self.inner.created(session);
     }
+
+    fn closed(&self, id: &str) {
+        self.inner.closed(id);
+    }
 }

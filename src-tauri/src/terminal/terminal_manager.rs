@@ -504,6 +504,14 @@ impl TerminalManager {
         Ok(())
     }
 
+    /// Closes a session the backend ends for its own reasons, such as a worker a coordinator released, and
+    /// tells the screen it is gone so its tab goes too. A person's close stays `close`.
+    pub fn close_and_announce(&self, id: &str) -> Result<(), TerminalError> {
+        self.close(id)?;
+        self.inner.sink.closed(id);
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn close_all(&self) {
         let sessions = std::mem::take(&mut *self.sessions());

@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import { create } from "zustand";
 
 import type {
-  AgentStatus,
   BotSummary,
   HarnessId,
   NewTeamMember,
@@ -21,12 +20,15 @@ import {
   TEAM_NEEDS_YOU_ID,
   type TeamMember,
   type TeamMemberBase,
+  type TeamStatus,
+  type WorkerState,
 } from "@/team/team-fixtures";
 import { teamBackend, onTeamChanged } from "@/team/team-backend";
+import { isDrawn } from "@/team/team-hierarchy";
 import type { SiblingOrder } from "@/team/team-layout";
 import type { TeamPair } from "@/team/team-pairs";
 import { requestCloseTerminal, resumeLine } from "@/terminal/terminal-actions";
-import { useTerminalStore } from "@/terminal/terminal-store";
+import { isClosedByBackend, useTerminalStore } from "@/terminal/terminal-store";
 import { useResumableStore } from "@/workspace/resumable-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import { copy } from "@/ui-copy";
@@ -43,7 +45,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
 // A task is never set when a member is added: the orchestrator gives it later, and a member without one only talks.
 export type MemberDraft = DistributiveOmit<
   NewTeamMember,
-  "worktree" | "sessionId" | "task" | "acceptance"
+  "worktree" | "sessionId" | "task" | "acceptance" | "dependsOn"
 >;
 
 /** The simulated live fields of a member. The backend does not keep them yet. */
@@ -136,6 +138,8 @@ interface TeamState {
   setAddOpen: (open: boolean) => void;
   /** Changes a member's task and done-when. False when the backend refused it, and the sheet keeps what was typed. */
   setTask: (id: string, task: string, acceptance: string) => Promise<boolean>;
+  /** Sets what a member waits for. False when the team refused it, for example when the task has started. */
+  setDependencies: (id: string, dependsOn: string[]) => Promise<boolean>;
   /** Adds a member to the worktree on the sidebar and picks it. False when it was refused, and the dialog keeps what was typed. */
   addMember: (input: MemberDraft) => Promise<boolean>;
   /**
@@ -155,12 +159,17 @@ function memberOf(record: TeamMemberRecord): TeamMember {
     orchestrator: record.orchestrator,
     task: record.task,
     acceptance: record.acceptance,
+    taskState: record.taskState,
+    dependsOn: record.dependsOn,
+    executionWorktree: record.executionWorktree,
+    workerState: workerStateOf(record.workerState),
     ...(LIVE[record.id] ?? IDLE),
   };
   if (record.kind === "bot" && record.botId) {
     return { ...base, kind: "bot", botId: record.botId };
   }
-  if (record.kind === "agent" && record.harness) {
+  // An agent the orchestrator added has no harness until its first worker starts.
+  if (record.kind === "agent") {
     return {
       ...base,
       kind: "agent",
@@ -168,30 +177,60 @@ function memberOf(record: TeamMemberRecord): TeamMember {
       sessionId: record.sessionId,
     };
   }
-  throw new Error(`team member ${record.id} is missing its ${record.kind}`);
+  throw new Error(`team member ${record.id} is missing its bot`);
 }
 
-/** The status an agent's card shows, from its session: what the agent reports while it runs, "done" once the program ended, "idle" when the session is gone. */
-export function statusOfSession(
-  session: TerminalInfo | undefined,
-): AgentStatus {
-  if (!session) return "idle";
-  if (!session.running) return "done";
+/** The status an agent's card shows, from its session: what the agent reports while it runs, "closed" once the session is gone or its program ended. */
+export function statusOfSession(session: TerminalInfo | undefined): TeamStatus {
+  if (!session?.running) return "closed";
   return session.agentStatus ?? "idle";
 }
 
-/** The members with each agent's status taken from its session. Returns the same array when nothing changed, so the screen does not redraw. */
+/** The worker state the backend sent, or null for a member that is no worker or a state Lynx does not know. */
+function workerStateOf(value: string | null): WorkerState | null {
+  return value === "running" ||
+    value === "done" ||
+    value === "failed" ||
+    value === "stopped"
+    ? value
+    : null;
+}
+
+/** The status a worker's card shows: its worker state, where a stopped worker reads as closed. */
+export function statusOfWorker(workerState: WorkerState): TeamStatus {
+  switch (workerState) {
+    case "running":
+      return "working";
+    case "done":
+      return "done";
+    case "failed":
+      return "failed";
+    case "stopped":
+      return "closed";
+  }
+}
+
+/** A member's card status from its worker state or its session, or null when it keeps the status it has (a bot, or an agent with no session). */
+function statusOfMember(
+  member: TeamMember,
+  sessions: readonly TerminalInfo[],
+): TeamStatus | null {
+  if (member.workerState !== null) return statusOfWorker(member.workerState);
+  if (member.kind !== "agent" || member.sessionId === null) return null;
+  return statusOfSession(
+    sessions.find((session) => session.id === member.sessionId),
+  );
+}
+
+/** The members with each card's status taken from its worker or session. Returns the same array when nothing changed, so the screen does not redraw. */
 function withSessionStatus(
   members: TeamMember[],
   sessions: readonly TerminalInfo[],
 ): TeamMember[] {
   let changed = false;
   const next = members.map((member) => {
-    if (member.kind !== "agent" || member.sessionId === null) return member;
-    const status = statusOfSession(
-      sessions.find((session) => session.id === member.sessionId),
-    );
-    if (status === member.status) return member;
+    const status = statusOfMember(member, sessions);
+    if (status === null || status === member.status) return member;
     changed = true;
     return { ...member, status };
   });
@@ -333,6 +372,7 @@ async function adoptSession(
       harness,
       parentId: null,
       orchestrator: false,
+      dependsOn: [],
       task: "",
       acceptance: "",
       worktree: session.worktreePath,
@@ -376,7 +416,9 @@ export function engineOf(
   member: TeamMember,
   bots: readonly BotSummary[] | null,
 ): string {
-  if (member.kind === "agent") return agentNameOf(member.harness);
+  if (member.kind === "agent") {
+    return member.harness ? agentNameOf(member.harness) : copy.team.noAgentYet;
+  }
   const bot = botOf(member, bots);
   if (!bot) return "";
   const provider =
@@ -507,7 +549,21 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   select: (selectedId) => set({ selectedId }),
   toggle: async (id) => {
     const open = get().expanded.includes(id);
-    await change(() => teamBackend.setExpanded(id, !open));
+    const done = await change(() => teamBackend.setExpanded(id, !open));
+    // A collapse that hides the picked member clears the pick, as a dismiss does. The next team read shows the rest.
+    if (done && open) {
+      const { selectedId, members, expanded } = get();
+      if (
+        selectedId !== null &&
+        !isDrawn(
+          members,
+          expanded.filter((other) => other !== id),
+          selectedId,
+        )
+      ) {
+        set({ selectedId: null });
+      }
+    }
   },
   setRole: async (id, role) => {
     await change(() => teamBackend.setRole(id, role));
@@ -554,6 +610,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   setAddOpen: (addOpen) => set({ addOpen }),
   setTask: async (id, task, acceptance) =>
     (await change(() => teamBackend.setTask(id, task, acceptance))) !== null,
+  setDependencies: async (id, dependsOn) =>
+    (await change(() => teamBackend.setDependencies(id, dependsOn))) !== null,
   addMember: async (draft) => {
     const worktree = useWorkspaceStore.getState().selectedWorktreePath;
     if (!worktree) {
@@ -579,12 +637,16 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     }
 
     // The agent starts right away in this worktree, and the member keeps that session.
-    const session = await startMemberSession(worktree, draft.harness);
+    const harness = draft.harness;
+    if (!harness) return false;
+    const session = await startMemberSession(worktree, harness);
     if (!session) return false;
 
     const done = await change(() =>
       teamBackend.addMember({
         ...draft,
+        harness,
+        dependsOn: [],
         task: "",
         acceptance: "",
         worktree,
@@ -600,7 +662,10 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   },
   reviveMember: async (id) => {
     const member = get().members.find((candidate) => candidate.id === id);
-    if (member?.kind !== "agent" || revivingIds.has(id)) return false;
+    if (member?.kind !== "agent" || !member.harness || revivingIds.has(id)) {
+      return false;
+    }
+    if (revivingIds.has(id)) return false;
     // A session still open is not started again: the member would have two terminals.
     if (
       useTerminalStore
@@ -685,6 +750,20 @@ useTerminalStore.subscribe((state, previous) => {
   if (state.sessions === previous.sessions) return;
   syncSessionStatus(state.sessions);
   adoptLooseAgents(state.sessions);
+  // A worker's card keeps the state the backend gave it, so when a worker's process starts or ends, read the team again.
+  const running = (sessions: readonly TerminalInfo[], id: string) =>
+    sessions.find((session) => session.id === id)?.running ?? false;
+  const workerChanged = useTeamStore
+    .getState()
+    .members.some(
+      (member) =>
+        member.kind === "agent" &&
+        member.workerState !== null &&
+        member.sessionId !== null &&
+        running(state.sessions, member.sessionId) !==
+          running(previous.sessions, member.sessionId),
+    );
+  if (workerChanged) void useTeamStore.getState().load();
   const kept = new Set(state.sessions.map((session) => session.id));
   const closed = new Set(
     previous.sessions
@@ -697,6 +776,8 @@ useTerminalStore.subscribe((state, previous) => {
     if (!closed.has(member.sessionId) || dismissedMemberIds.has(member.id)) {
       continue;
     }
+    // A worker the backend closed keeps its card, which shows how it ended.
+    if (isClosedByBackend(member.sessionId)) continue;
     dismissedMemberIds.add(member.id);
     void dismissClosedAgent(member.id);
   }

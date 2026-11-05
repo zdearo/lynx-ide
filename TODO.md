@@ -2,7 +2,7 @@
 
 ## Equipe (orquestração)
 
-POC só com dados simulados (`?mock=full`, aba Team). Nada disso fala com agentes reais ainda. Referência de comportamento: o Maestri (skill `maestri-manager` e a [página do modo Maestro](https://themaestri.app/pt-br/docs/maestro)).
+A Equipe é ligada ao backend (`src-tauri/src/team/`) e é a própria orquestração: não há mais run. A interface também roda com dados simulados (`?mock=full`, aba Team). Referência de comportamento: o Maestri (skill `maestri-manager` e a [página do modo Maestro](https://themaestri.app/pt-br/docs/maestro)).
 
 ### Papéis
 
@@ -73,6 +73,8 @@ POC só com dados simulados (`?mock=full`, aba Team). Nada disso fala com agente
 
 ### Decidido
 
+- Run deixa de existir: a orquestração é a Equipe. Um membro com tarefa é o worker que a faz; estado da tarefa, dependências e relatórios ficam no membro (`team_messages`). As tabelas `orchestration_*` saíram.
+- Dispensar um membro que outro espera tira a espera dele.
 - O par é mútuo: os dois lados trocam mensagens.
 - Um membro sem orquestrador só responde; não inicia conversa. Ainda não há mensagens reais no POC, então a regra fica registrada e não é aplicada.
 - Apagar um bot remove em cascata o membro do bot, tudo abaixo dele e os pares ligados a eles, em todas as worktrees. Um bot apagado não volta para uma equipe.
@@ -83,6 +85,12 @@ POC só com dados simulados (`?mock=full`, aba Team). Nada disso fala com agente
 
 ### Em aberto
 
+- A orquestração nova (Equipe como worker) só foi testada com regras em memória (`service_tests.rs`, `team_service_tests.rs`) e com a interface simulada. Falta rodar um coordenador real no app, com Claude e com os demais agentes.
+- As dependências são editadas só na ficha do membro (um interruptor por membro). Não há arrastar para criar uma espera.
+- Teste ao vivo com Claude coordenador (sandbox, Lead) e com o bot Ana: adicionar, dependência, worktree nova, pergunta e resposta, dispensa recusada, parar, orquestração desligada, reinício com Resume, bot criando membro e worker e acordando depois do aviso. Não testado: pedido de permissão do worker (`needsYou`, pelo hook) e dispensar pela interface um membro com worker rodando (a interface não recusa; a ferramenta do coordenador recusa).
+- O mapa não desenha as esperas entre membros; elas aparecem só na ficha ("Depende de").
+- O Resume de um agente cuja conversa não existe mostra o erro do Claude e um shell, sem oferecer "Start again".
+- "Talks to" na ficha do coordenador lista também os membros da árvore, não só os pares.
 - Além de tarefa e critério de pronto, o orquestrador daria o veredito de pronto e poderia trocar o papel e parar o filho. Proposto, ainda não confirmado.
 - Mensagem entre pares: o formulário do sheet escreve no terminal do par, com o prefixo do remetente. A mensagem não fica guardada no time, e não há histórico nem limite de mensagens.
 - Backend do Team em Rust (`src-tauri/src/team/`): regras, SQLite e comandos feitos e testados (`rust:test`), e o frontend lê e grava por eles (`team-backend.ts`). Falta rodar contra o app real (não foi aberto com `tauri dev`).
@@ -96,4 +104,5 @@ POC só com dados simulados (`?mock=full`, aba Team). Nada disso fala com agente
 - O `claude --resume` pode deixar a conversa fora da lista de retomáveis se a sessão nova morrer antes de imprimir o id (mesmo trade-off da sidebar).
 - Arrastar entre blocos de árvores não foi testado.
 - O mapa usa zoom mínimo de 0,2 para caber em janelas estreitas com muitos cartões. Com 0,4, oito cartões em 950 px cortavam o Builder.
-- Build de debug usa uma pasta por branch (`~/.lynx-dev/<branch>` e `dev/<branch>/app.db`). O localStorage do WebView continua compartilhado com o instalado.
+- Build de debug usa uma pasta por branch (`~/.lynx-dev/<branch>` e `dev/<branch>/app.db`), e hooks e MCP dos agentes também vão para lá. O localStorage do WebView continua compartilhado com o instalado.
+- Hooks e MCP de produção foram reescritos por um teste de debug (9 hooks e a entrada MCP). Restaurados por string, a partir do backup de antes do teste; o instalador de debug agora não escreve mais na pasta pessoal.

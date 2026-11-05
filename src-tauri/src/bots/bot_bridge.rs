@@ -2,10 +2,8 @@
 //! one turn, and the folders of the repositories the bot was granted. A bot is never a terminal, so
 //! its session exists only while it answers.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
-
-use serde_json::{Value, json};
 
 use crate::agents::agent_monitor::AgentInput;
 use crate::agents::hook_hub::HookHub;
@@ -48,23 +46,14 @@ impl BotBridge {
         }
     }
 
-    /// Lynx's own MCP server entry for the bot's Claude: the app in MCP mode, with the environment the
-    /// hub gives the session. None when the hub has no address yet, so the bot gets no MCP tools.
-    pub fn mcp_server(&self, session: &str) -> Option<Value> {
-        let env = self.hub.session_env(session);
-        if env.is_empty() {
-            return None;
-        }
-        let env: serde_json::Map<String, Value> = env
-            .into_iter()
-            .map(|(key, value)| (key, Value::String(value)))
-            .collect();
-        Some(json!({
-            "type": "stdio",
-            "command": self.executable.display().to_string(),
-            "args": ["--mcp", "claude"],
-            "env": env,
-        }))
+    /// The app's executable, which a bot's shell runs with `--cli` to reach Lynx's tools.
+    pub fn executable(&self) -> &Path {
+        &self.executable
+    }
+
+    /// The environment the hub gives a turn's session: what the CLI reads to reach the app as that session.
+    pub fn session_env(&self, session: &str) -> Vec<(String, String)> {
+        self.hub.session_env(session)
     }
 }
 
@@ -120,20 +109,20 @@ mod tests {
     }
 
     #[test]
-    fn the_bot_server_is_the_app_in_mcp_mode_for_the_bots_session() {
+    fn a_turns_environment_names_its_session_so_the_cli_acts_as_it() {
         let bridge = BotBridge::new(
             HookHub::start(),
             PathBuf::from("/opt/lynx/lynx"),
             Arc::new(Nothing),
         );
 
-        let server = bridge
-            .mcp_server(&session_of("ada", "t1"))
-            .expect("the hub has a port");
+        let env: std::collections::HashMap<String, String> = bridge
+            .session_env(&session_of("ada", "t1"))
+            .into_iter()
+            .collect();
 
-        assert_eq!(server["command"], "/opt/lynx/lynx");
-        assert_eq!(server["args"], json!(["--mcp", "claude"]));
-        assert_eq!(server["env"][SESSION_ENV], "bot:ada:t1");
+        assert_eq!(env.get(SESSION_ENV).map(String::as_str), Some("bot:ada:t1"));
+        assert_eq!(bridge.executable(), Path::new("/opt/lynx/lynx"));
     }
 
     #[test]

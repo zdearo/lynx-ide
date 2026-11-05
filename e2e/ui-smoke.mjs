@@ -2022,6 +2022,13 @@ await session("?mock=full", 1300, 760, async (p) => {
       ),
   );
 
+  // The card click made this worktree's terminal active, and that terminal takes focus on a frame: let it land first.
+  await p.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
   await p.getByRole("button", { name: /^feat\/auth/ }).focus();
   await p.keyboard.press("ArrowDown");
   await settle(p, 120);
@@ -4562,7 +4569,9 @@ await session("?mock=full", 1400, 800, async (p) => {
             kind: "session",
             minutes: 300,
             usedPercent: 82,
-            resetsAt: now + 2 * 3600 + 900,
+            // Five seconds of slack: the Claude segment reads the clock when it mounts, a moment after `now`, and
+            // a second boundary in between would make the countdown read 2h 14m.
+            resetsAt: now + 2 * 3600 + 905,
           },
           {
             kind: "weekly",
@@ -5838,6 +5847,15 @@ await session("?mock=full", 1400, 860, async (p) => {
 
   await p.keyboard.press("Escape");
   await settle(p, 300);
+  // The dialog closes after its exit animation, and only then hands the focus back to the card.
+  await modal.waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
+  await p
+    .waitForFunction(
+      () => document.activeElement?.getAttribute("data-team-id") === "builder",
+      null,
+      { timeout: 3000 },
+    )
+    .catch(() => {});
   check(
     "Escape closes the terminal dialog, and the focus goes back to the card",
     (await modal.count()) === 0 &&
@@ -6070,6 +6088,11 @@ await session("?mock=full", 1400, 860, async (p) => {
     .getByRole("button", { name: "Changes", exact: true })
     .click();
   await settle(p, 300);
+  // The right panel is code-split, so its tabs appear when its first open has loaded them: wait for them.
+  await p
+    .getByRole("tab", { name: "Changes", exact: true, selected: true })
+    .waitFor({ timeout: 3000 })
+    .catch(() => {});
   check(
     "the panel's Changes button opens the Changes tab of the right panel",
     (await p

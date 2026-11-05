@@ -62,6 +62,7 @@ mod tests {
     use crate::config::app_config::OrchestrationConfig;
     use crate::orchestration::service::{Orchestration, WorkerHost};
     use crate::persistence::AppDatabase;
+    use crate::team::team_service::TeamService;
 
     use super::ToolRouter;
 
@@ -74,9 +75,6 @@ mod tests {
                 enabled: true,
                 ..OrchestrationConfig::default()
             }
-        }
-        fn worktree_of(&self, _session: &str) -> Option<String> {
-            None
         }
         fn new_worktree(&self, _from: &str, _name: &str) -> Result<String, String> {
             Err("no worktrees".to_owned())
@@ -115,20 +113,21 @@ mod tests {
     fn lynx_tools_go_to_the_orchestration_and_the_rest_to_the_browser() {
         let dir = tempfile::tempdir().expect("temp dir");
         let database = Arc::new(AppDatabase::open(&dir.path().join("app.db")).expect("database"));
-        let orchestration = Arc::new(Orchestration::new(database, Arc::new(Nothing)));
+        let team = Arc::new(TeamService::new(Arc::clone(&database), Box::new(|_| true)));
+        let orchestration = Arc::new(Orchestration::new(team, Arc::new(Nothing)));
         let router = ToolRouter::new(Arc::new(Browser), orchestration);
 
         let browser = router.call("s", "claude", "browser_snapshot", json!({}));
         assert_eq!(browser["handledBy"], "browser");
 
-        // The session is not in a project, so the orchestration answers, and says why.
-        let lynx = router.call("s", "claude", "lynx_run_start", json!({ "title": "x" }));
+        // The session is in no team, so the orchestration answers, and says why.
+        let lynx = router.call("s", "claude", "lynx_team_read", json!({}));
         assert_eq!(lynx["isError"], true);
         assert!(
             lynx["content"][0]["text"]
                 .as_str()
                 .expect("text")
-                .contains("project")
+                .contains("team")
         );
     }
 }

@@ -151,6 +151,8 @@ pub enum BotError {
     SkillExists,
     #[error("the bot has no skill with that name")]
     UnknownSkill,
+    #[error("the name lynx is kept for the skill Lynx writes for the bot's tools")]
+    ReservedSkill,
     #[error("the MCP servers are not valid: {0}")]
     InvalidMcp(String),
     #[error("the bot has no MCP server with that name")]

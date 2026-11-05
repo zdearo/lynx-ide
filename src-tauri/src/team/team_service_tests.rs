@@ -14,7 +14,6 @@ fn service() -> (TeamService, tempfile::TempDir) {
     service_with_bots(|_| true)
 }
 
-/// A service where the bot ids `bot_exists` accepts are the bots that exist.
 fn service_with_bots(bot_exists: fn(&str) -> bool) -> (TeamService, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("temp dir");
     let database = AppDatabase::open(&dir.path().join("app.db")).expect("open");
@@ -29,40 +28,38 @@ const OTHER_WORKTREE: &str = "/home/dev/repo-worktrees/docs";
 const SESSION: &str = "3f2a9c1e-7b4d-4e8a-9c0f-1a2b3c4d5e6f";
 const RESTORED: &str = "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a";
 
-/// An agent in `worktree` with a task and a "done when" line. Under no parent they are dropped.
 fn agent_in(worktree: &str, role: &str, parent: Option<&str>, orchestrator: bool) -> NewTeamMember {
     NewTeamMember::Agent {
         role: role.to_owned(),
-        harness: HarnessId::Codex,
+        harness: Some(HarnessId::Codex),
         parent_id: parent.map(str::to_owned),
         orchestrator,
         task: "write the form".to_owned(),
         acceptance: "the form submits".to_owned(),
+        depends_on: Vec::new(),
         worktree: worktree.to_owned(),
         session_id: None,
     }
 }
 
-/// An agent in the team of WORKTREE.
 fn agent(role: &str, parent: Option<&str>, orchestrator: bool) -> NewTeamMember {
     agent_in(WORKTREE, role, parent, orchestrator)
 }
 
-/// An agent under no one, in `worktree`, with `session_id`. The session may be None.
 fn placed_agent(role: &str, worktree: &str, session_id: Option<&str>) -> NewTeamMember {
     NewTeamMember::Agent {
         role: role.to_owned(),
-        harness: HarnessId::Claude,
+        harness: Some(HarnessId::Claude),
         parent_id: None,
         orchestrator: false,
         task: String::new(),
         acceptance: String::new(),
+        depends_on: Vec::new(),
         worktree: worktree.to_owned(),
         session_id: session_id.map(str::to_owned),
     }
 }
 
-/// A bot joining the team of `worktree`.
 fn bot_in(worktree: &str, bot_id: &str, role: &str) -> NewTeamMember {
     NewTeamMember::Bot {
         bot_id: bot_id.to_owned(),
@@ -71,12 +68,10 @@ fn bot_in(worktree: &str, bot_id: &str, role: &str) -> NewTeamMember {
     }
 }
 
-/// A bot joining the team of WORKTREE.
 fn bot(bot_id: &str, role: &str) -> NewTeamMember {
     bot_in(WORKTREE, bot_id, role)
 }
 
-/// The members of one worktree's team, in the order they were added.
 fn members_of(service: &TeamService, worktree: &str) -> Vec<TeamMember> {
     service
         .snapshot()

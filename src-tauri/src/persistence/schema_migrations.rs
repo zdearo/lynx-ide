@@ -169,6 +169,78 @@ const MIGRATIONS: &[&str] = &[
      );",
     // Whether a member's branch is open in the team tree, kept with the team so it is the same on every screen.
     "ALTER TABLE team_members ADD COLUMN expanded INTEGER NOT NULL DEFAULT 0 CHECK (expanded IN (0, 1));",
+    // The team does the work: a member given a task is the worker that does it, so the run tables go. A member
+    // may have no agent yet (it is not started), and it keeps its task, its state and what it waits for. SQLite
+    // cannot change a CHECK in place, so the members and their lines are copied into new tables and renamed.
+    "CREATE TABLE team_members_next (
+         id                 TEXT PRIMARY KEY,
+         worktree           TEXT NOT NULL CHECK (worktree <> ''),
+         kind               TEXT NOT NULL CHECK (kind IN ('agent', 'bot')),
+         role               TEXT NOT NULL,
+         harness            TEXT,
+         bot_id             TEXT,
+         parent_id          TEXT REFERENCES team_members_next (id) ON DELETE SET NULL,
+         orchestrator       INTEGER NOT NULL DEFAULT 0,
+         task               TEXT NOT NULL DEFAULT '',
+         acceptance         TEXT NOT NULL DEFAULT '',
+         session_id         TEXT CHECK (session_id IS NULL OR (kind = 'agent' AND session_id <> '')),
+         expanded           INTEGER NOT NULL DEFAULT 0 CHECK (expanded IN (0, 1)),
+         task_state         TEXT CHECK (
+             task_state IS NULL
+             OR (kind = 'agent' AND task_state IN ('pending', 'running', 'done', 'failed', 'cancelled'))
+         ),
+         dispatch_state     TEXT CHECK (
+             dispatch_state IS NULL
+             OR (kind = 'agent' AND session_id IS NOT NULL AND dispatch_state IN ('running', 'stopped'))
+         ),
+         execution_worktree TEXT CHECK (
+             execution_worktree IS NULL OR (kind = 'agent' AND execution_worktree <> '')
+         ),
+         notify_session     TEXT CHECK (notify_session IS NULL OR notify_session <> ''),
+         CHECK (
+             (kind = 'agent' AND bot_id IS NULL)
+             OR (kind = 'bot' AND harness IS NULL AND bot_id IS NOT NULL)
+         ),
+         CHECK (parent_id IS NULL OR parent_id <> id)
+     );
+     INSERT INTO team_members_next (
+         id, worktree, kind, role, harness, bot_id, parent_id, orchestrator, task, acceptance,
+         session_id, expanded, task_state
+     )
+     SELECT id, worktree, kind, role, harness, bot_id, parent_id, orchestrator, task, acceptance,
+            session_id, expanded,
+            CASE WHEN kind = 'agent' AND parent_id IS NOT NULL THEN 'pending' END
+     FROM team_members ORDER BY rowid;
+     CREATE TABLE team_pairs_next (
+         a TEXT NOT NULL REFERENCES team_members_next (id) ON DELETE CASCADE,
+         b TEXT NOT NULL REFERENCES team_members_next (id) ON DELETE CASCADE,
+         PRIMARY KEY (a, b),
+         CHECK (a < b)
+     );
+     INSERT INTO team_pairs_next (a, b) SELECT a, b FROM team_pairs;
+     DROP TABLE team_pairs;
+     DROP TABLE team_members;
+     ALTER TABLE team_members_next RENAME TO team_members;
+     ALTER TABLE team_pairs_next RENAME TO team_pairs;
+     CREATE TABLE team_dependencies (
+         member_id  TEXT NOT NULL REFERENCES team_members (id) ON DELETE CASCADE,
+         depends_on TEXT NOT NULL REFERENCES team_members (id) ON DELETE CASCADE,
+         PRIMARY KEY (member_id, depends_on),
+         CHECK (member_id <> depends_on)
+     );
+     CREATE TABLE team_messages (
+         id         TEXT PRIMARY KEY,
+         member_id  TEXT NOT NULL REFERENCES team_members (id) ON DELETE CASCADE,
+         kind       TEXT NOT NULL CHECK (kind IN ('done', 'failed', 'noReport', 'needsYou')),
+         body       TEXT NOT NULL,
+         unread     INTEGER NOT NULL DEFAULT 1 CHECK (unread IN (0, 1)),
+         created_at INTEGER NOT NULL
+     );
+     CREATE INDEX team_messages_member ON team_messages (member_id, unread);
+     DROP TABLE orchestration_messages;
+     DROP TABLE orchestration_dispatches;
+     DROP TABLE orchestration_tasks;
+     DROP TABLE orchestration_runs;",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -282,45 +354,47 @@ mod tests {
     }
 
     #[test]
-    fn a_run_stored_with_an_approval_keeps_its_row_without_the_columns_it_lost() {
-        // Before the migration that drops them, each run kept an approval state and a budget.
-        let drop_columns = MIGRATIONS
-            .iter()
-            .position(|sql| sql.contains("DROP COLUMN state"))
-            .expect("a migration drops the columns");
+    fn the_team_keeps_its_members_and_lines_when_the_runs_go() {
+        // Before the last migration the team is the one the earlier migrations left, with its runs beside it.
+        let last = MIGRATIONS.len() - 1;
         let mut connection = Connection::open_in_memory().expect("open");
-        for (index, sql) in MIGRATIONS.iter().enumerate().take(drop_columns) {
+        for (index, sql) in MIGRATIONS.iter().enumerate().take(last) {
             apply(&mut connection, index as u32 + 1, sql).expect("apply");
         }
         connection
-            .execute(
-                "INSERT INTO orchestration_runs (id, coordinator_session, worktree_path, title, state, budget, created_at)
-                 VALUES ('run', 'session', '/repo', 'Audit', 'approved', '{}', 0)",
-                [],
+            .execute_batch(
+                "INSERT INTO team_members (id, worktree, kind, role, harness, parent_id, orchestrator, task, acceptance, session_id)
+                 VALUES ('lead', '/repo', 'agent', 'Lead', 'claude', NULL, 1, '', '', 'lead-session'),
+                        ('writer', '/repo', 'agent', 'Writer', 'codex', 'lead', 0, 'Escreva', 'Pronto', NULL);
+                 INSERT INTO team_pairs (a, b) VALUES ('lead', 'writer');",
             )
-            .expect("insert");
+            .expect("members and a line");
 
         migrate(&mut connection).expect("migrate");
 
-        let title: String = connection
-            .query_row(
-                "SELECT title FROM orchestration_runs WHERE id = 'run'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("the run is kept");
-        assert_eq!(title, "Audit");
-        let columns = connection
-            .prepare("SELECT name FROM pragma_table_info('orchestration_runs')")
-            .expect("prepare")
-            .query_map([], |row| row.get::<_, String>(0))
-            .expect("query")
-            .collect::<Result<Vec<String>, _>>()
-            .expect("columns");
-        assert!(
-            !columns
-                .iter()
-                .any(|name| name == "state" || name == "budget")
+        let count = |sql: &str| -> i64 {
+            connection
+                .query_row(sql, [], |row| row.get(0))
+                .expect("count")
+        };
+        assert_eq!(count("SELECT COUNT(*) FROM team_members"), 2);
+        assert_eq!(count("SELECT COUNT(*) FROM team_pairs"), 1);
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM team_members WHERE id = 'writer' AND task_state = 'pending'"
+            ),
+            1,
+            "a member under an orchestrator starts pending"
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM team_members WHERE id = 'lead' AND task_state IS NULL"),
+            1,
+            "an orchestrator has no task"
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'orchestration_%'"),
+            0,
+            "the run tables are gone"
         );
     }
 

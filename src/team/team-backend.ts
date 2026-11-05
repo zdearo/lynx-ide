@@ -14,6 +14,9 @@ export const teamBackend = {
     unwrap(commands.teamSetRole(memberId, role)),
   setTask: (memberId: string, task: string, acceptance: string) =>
     unwrap(commands.teamSetTask(memberId, task, acceptance)),
+  /** Sets what a member waits for. Only a member whose task has not started may change it. */
+  setDependencies: (memberId: string, dependsOn: string[]) =>
+    unwrap(commands.teamSetDependencies(memberId, dependsOn)),
   setSession: (memberId: string, sessionId: string | null) =>
     unwrap(commands.teamSetSession(memberId, sessionId)),
   /** Removes the member. Returns the terminal session it ran in, so the caller can close it. */

@@ -59,6 +59,8 @@ export function BotAgentsPanel() {
   );
 
   function open(row: WorkerRow) {
+    // A worker's terminal is listed only while it has one; a stopped worker has none to open.
+    if (row.sessionId === null) return;
     useNavigationStore.getState().selectView("projects", wide);
     useWorkspaceStore.getState().selectWorktree(row.worktreePath);
     useTerminalStore.getState().setActive(row.worktreePath, row.sessionId);
@@ -104,10 +106,11 @@ export function BotAgentsPanel() {
           className="grid grid-cols-1 gap-1"
         >
           {rows.map((row) => (
-            <li key={row.sessionId}>
+            <li key={row.memberId}>
               <button
                 type="button"
-                aria-label={text.open(row.taskSpec)}
+                disabled={row.sessionId === null}
+                aria-label={text.open(row.task)}
                 onClick={() => open(row)}
                 className="flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
               >
@@ -116,7 +119,7 @@ export function BotAgentsPanel() {
                   className="size-4 shrink-0"
                 />
                 <span className="min-w-0 flex-1 truncate text-ui">
-                  {row.taskSpec}
+                  {row.task}
                 </span>
                 <span
                   aria-hidden="true"

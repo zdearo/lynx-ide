@@ -5,7 +5,7 @@ import type { BotSummary, ThreadSummary } from "@/bindings";
 import { botThread, threadOf, useBotChatStore } from "@/bots/bot-chat-store";
 import { shownThreadOf, useBotsStore } from "@/bots/bots-store";
 import { threadAge } from "@/bots/thread-age";
-import { DotsThreeIcon, PlusIcon } from "@phosphor-icons/react";
+import { DotsThreeIcon, PlusIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import {
   AlertDialog,

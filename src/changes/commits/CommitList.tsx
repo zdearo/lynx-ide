@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { CaretRightIcon } from "@phosphor-icons/react";
+import { CaretRightIcon } from "@/components/icons/line-icons";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useBranchSyncStore } from "@/changes/branch-sync-store";
 import { ChangeMark } from "@/changes/ChangeMark";

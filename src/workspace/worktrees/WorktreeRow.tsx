@@ -1,12 +1,14 @@
 import {
-  DotsThreeIcon,
   LockIcon,
   StarIcon,
-  TerminalWindowIcon,
   TrashIcon,
   TreeStructureIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
+import {
+  DotsThreeIcon,
+  TerminalWindowIcon,
+} from "@/components/icons/line-icons";
 
 import type { WorktreeInfo } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";

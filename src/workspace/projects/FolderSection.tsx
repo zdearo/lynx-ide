@@ -1,12 +1,11 @@
 import type { ReactNode } from "react";
 import {
-  CaretRightIcon,
-  DotsThreeIcon,
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
   LinkIcon,
 } from "@phosphor-icons/react";
+import { CaretRightIcon, DotsThreeIcon } from "@/components/icons/line-icons";
 import { toast } from "sonner";
 
 import type { Folder } from "@/bindings";

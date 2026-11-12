@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { CommandPatternsDialog } from "@/bots/CommandPatternsDialog";
 import { DetailRow, DetailSection } from "@/bots/DetailSection";
-import { PlusIcon, XIcon } from "@phosphor-icons/react";
+import { PlusIcon, XIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { errorMessage } from "@/lib/error-message";
 import { unwrap } from "@/lib/ipc-result";

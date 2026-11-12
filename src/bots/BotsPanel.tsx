@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { BotAvatar } from "@/bots/BotAvatar";
 import { ChannelDialog } from "@/bots/ChannelDialog";
 import { useBotsStore } from "@/bots/bots-store";
-import { PlusIcon } from "@phosphor-icons/react";
+import { PlusIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useDialogStore } from "@/dialog-store";

@@ -1,9 +1,9 @@
 import {
   ArrowsOutIcon,
-  PlusIcon,
   SidebarSimpleIcon,
   TerminalIcon,
 } from "@phosphor-icons/react";
+import { PlusIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { TeamSummary } from "@/team/TeamStatus";

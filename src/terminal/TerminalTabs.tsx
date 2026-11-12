@@ -6,7 +6,8 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { PlusIcon, SidebarSimpleIcon, XIcon } from "@phosphor-icons/react";
+import { SidebarSimpleIcon } from "@phosphor-icons/react";
+import { PlusIcon, XIcon } from "@/components/icons/line-icons";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { useBrowserStore } from "@/browser/browser-store";

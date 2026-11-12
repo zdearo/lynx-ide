@@ -6,7 +6,7 @@ import { commands, type RunningCommand, type WorkerRow } from "@/bindings";
 import { selectedBotOf, useBotsStore } from "@/bots/bots-store";
 import { DetailSection } from "@/bots/DetailSection";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { XIcon } from "@phosphor-icons/react";
+import { XIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { errorMessage } from "@/lib/error-message";
 import { WIDE_LAYOUT_QUERY } from "@/hooks/layout-queries";

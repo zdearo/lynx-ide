@@ -1,7 +1,7 @@
 import { useBrowserStore } from "@/browser/browser-store";
 import { worktreePages } from "@/browser/browser-tabs";
 import { BrowserPageTile } from "@/browser/BrowserPageTile";
-import { PlusIcon } from "@phosphor-icons/react";
+import { PlusIcon } from "@/components/icons/line-icons";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { copy } from "@/ui-copy";

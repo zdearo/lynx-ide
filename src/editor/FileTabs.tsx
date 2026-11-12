@@ -1,6 +1,6 @@
 import type { KeyboardEvent } from "react";
 
-import { XIcon } from "@phosphor-icons/react";
+import { XIcon } from "@/components/icons/line-icons";
 import { FileTypeIcon } from "@/files/FileTypeIcon";
 import { requestCloseFile } from "@/editor/editor-actions";
 import { useEditorStore } from "@/editor/editor-store";

@@ -2,7 +2,7 @@ import type { BrowserPageInfo } from "@/bindings";
 import { useBrowserStore } from "@/browser/browser-store";
 import { agentName, isHarnessId } from "@/browser/browser-tabs";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { XIcon } from "@phosphor-icons/react";
+import { XIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";

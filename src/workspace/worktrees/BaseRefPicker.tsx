@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
-import { CaretDownIcon, CheckIcon } from "@phosphor-icons/react";
+import { CheckIcon } from "@phosphor-icons/react";
+import { CaretDownIcon } from "@/components/icons/line-icons";
 import { Button } from "@/components/ui/button";
 import {
   Command,

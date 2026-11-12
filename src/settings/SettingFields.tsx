@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { MinusIcon, PlusIcon } from "@phosphor-icons/react";
+import { MinusIcon, PlusIcon } from "@/components/icons/line-icons";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";

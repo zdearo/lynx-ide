@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { open as pickFolder } from "@tauri-apps/plugin-dialog";
-import { PlusIcon, XIcon } from "@phosphor-icons/react";
+import { PlusIcon, XIcon } from "@/components/icons/line-icons";
 import { toast } from "sonner";
 
 import { commands, type BotSkill } from "@/bindings";

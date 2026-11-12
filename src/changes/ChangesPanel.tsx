@@ -1,11 +1,7 @@
 import type { KeyboardEvent } from "react";
 
-import {
-  ArrowUUpLeftIcon,
-  ArrowsClockwiseIcon,
-  CaretRightIcon,
-  PlusIcon,
-} from "@phosphor-icons/react";
+import { ArrowUUpLeftIcon, ArrowsClockwiseIcon } from "@phosphor-icons/react";
+import { CaretRightIcon, PlusIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";

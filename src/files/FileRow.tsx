@@ -1,9 +1,5 @@
-import {
-  CaretRightIcon,
-  DotsThreeIcon,
-  LinkIcon,
-  SpinnerGapIcon,
-} from "@phosphor-icons/react";
+import { LinkIcon, SpinnerGapIcon } from "@phosphor-icons/react";
+import { CaretRightIcon, DotsThreeIcon } from "@/components/icons/line-icons";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import {

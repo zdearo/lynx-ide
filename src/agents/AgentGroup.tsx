@@ -1,4 +1,4 @@
-import { CaretRightIcon } from "@phosphor-icons/react";
+import { CaretRightIcon } from "@/components/icons/line-icons";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 
 import { useNow } from "@/hooks/use-now";

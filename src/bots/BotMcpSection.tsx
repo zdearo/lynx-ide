@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PlusIcon, XIcon } from "@phosphor-icons/react";
+import { PlusIcon, XIcon } from "@/components/icons/line-icons";
 import { toast } from "sonner";
 
 import { commands, type BotMcpServer } from "@/bindings";

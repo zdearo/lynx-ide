@@ -1,4 +1,5 @@
-import { ArrowUUpLeftIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react";
+import { ArrowUUpLeftIcon } from "@phosphor-icons/react";
+import { MinusIcon, PlusIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ChangeMark } from "@/changes/ChangeMark";
 import type { ChangeEntry } from "@/changes/change-sections";

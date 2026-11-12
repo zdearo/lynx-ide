@@ -10,7 +10,7 @@ import { useEffect } from "react";
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { CaretRightIcon } from "@phosphor-icons/react";
+import { CaretRightIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useNow } from "@/hooks/use-now";

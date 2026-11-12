@@ -6,7 +6,7 @@ import { botThread } from "@/bots/bot-chat-store";
 import { useBotsStore } from "@/bots/bots-store";
 import { Conversation } from "@/bots/Conversation";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { XIcon } from "@phosphor-icons/react";
+import { XIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import {

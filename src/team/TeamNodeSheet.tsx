@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { DotsThreeIcon } from "@phosphor-icons/react";
+import { DotsThreeIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import {

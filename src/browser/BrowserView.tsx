@@ -4,11 +4,10 @@ import { commands } from "@/bindings";
 import {
   ArrowSquareOutIcon,
   ArrowsClockwiseIcon,
-  CaretRightIcon,
   CornersInIcon,
   SparkleIcon,
-  XIcon,
 } from "@phosphor-icons/react";
+import { CaretRightIcon, XIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

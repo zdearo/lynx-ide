@@ -6,8 +6,8 @@ import {
   RadioButtonIcon,
   SpinnerGapIcon,
   XCircleIcon,
-  XIcon,
 } from "@phosphor-icons/react";
+import { XIcon } from "@/components/icons/line-icons";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";

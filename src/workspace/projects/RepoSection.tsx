@@ -1,10 +1,10 @@
 import { memo, useMemo } from "react";
+import { GitBranchIcon } from "@phosphor-icons/react";
 import {
   CaretRightIcon,
   DotsThreeIcon,
-  GitBranchIcon,
   PlusIcon,
-} from "@phosphor-icons/react";
+} from "@/components/icons/line-icons";
 
 import type { Repo, WorktreeInfo } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";

@@ -25,6 +25,8 @@ permissions:
 jobs:
   engine:
     name: ${{ matrix.name }}
+    # Holds the upload secret: only main and v* tags can run this job.
+    environment: release
     strategy:
       fail-fast: false
       matrix:

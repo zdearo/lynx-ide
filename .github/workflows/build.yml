@@ -82,6 +82,8 @@ jobs:
   package:
     name: Package ${{ matrix.name }}
     needs: changes
+    # Only main and v* tags can use this environment, which holds the signing and upload secrets.
+    environment: release
     if: needs.changes.outputs.release == 'true'
     strategy:
       fail-fast: false
@@ -237,6 +239,7 @@ jobs:
   publish:
     name: Publish the update
     needs: [package, engine]
+    environment: release
     # Also runs when the engine was not needed, but never after a failed package or engine build.
     if: always() && needs.package.result == 'success' && (needs.engine.result == 'success' || needs.engine.result == 'skipped')
     runs-on: ubuntu-22.04

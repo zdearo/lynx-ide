@@ -1,9 +1,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Select as SelectPrimitive } from "radix-ui";
-import { CheckGlyph18 } from "@/components/icons/CheckGlyph18";
-import { ChevronDownGlyph18 } from "@/components/icons/ChevronDownGlyph18";
-import { ChevronUpGlyph18 } from "@/components/icons/ChevronUpGlyph18";
+import { CaretDownIcon, CaretUpIcon, CheckIcon } from "@phosphor-icons/react";
 
 function Select({
   ...props
@@ -50,7 +48,7 @@ function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDownGlyph18 className="pointer-events-none size-4 text-muted-foreground" />
+        <CaretDownIcon className="pointer-events-none size-4 text-muted-foreground" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   );
@@ -123,7 +121,7 @@ function SelectItem({
     >
       <span className="pointer-events-none absolute right-2 flex size-4 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
-          <CheckGlyph18 className="pointer-events-none" />
+          <CheckIcon className="pointer-events-none" />
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
@@ -157,7 +155,7 @@ function SelectScrollUpButton({
       )}
       {...props}
     >
-      <ChevronUpGlyph18 />
+      <CaretUpIcon />
     </SelectPrimitive.ScrollUpButton>
   );
 }
@@ -175,7 +173,7 @@ function SelectScrollDownButton({
       )}
       {...props}
     >
-      <ChevronDownGlyph18 />
+      <CaretDownIcon />
     </SelectPrimitive.ScrollDownButton>
   );
 }

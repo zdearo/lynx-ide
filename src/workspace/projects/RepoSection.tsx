@@ -1,8 +1,10 @@
 import { memo, useMemo } from "react";
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
-import { CodeBranchGlyph18 } from "@/components/icons/CodeBranchGlyph18";
-import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
+import {
+  CaretRightIcon,
+  DotsThreeIcon,
+  GitBranchIcon,
+  PlusIcon,
+} from "@phosphor-icons/react";
 
 import type { Repo, WorktreeInfo } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
@@ -130,7 +132,7 @@ function RepoSectionView({
             "flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-ui font-medium text-sidebar-foreground hover:bg-sidebar-accent/50",
           )}
         >
-          <CodeBranchGlyph18
+          <GitBranchIcon
             aria-hidden
             className="size-3.5 shrink-0 text-muted-foreground"
           />
@@ -163,7 +165,7 @@ function RepoSectionView({
             shortcut={shortcutLabel("newWorktree")}
             onClick={() => openNewWorktree(repo.id)}
           >
-            <PlusGlyph18 />
+            <PlusIcon />
           </TooltipIconButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -171,7 +173,7 @@ function RepoSectionView({
                 label={copy.repo.actions(repo.name)}
                 className="pointer-events-auto"
               >
-                <DotsGlyph18 />
+                <DotsThreeIcon />
               </TooltipIconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-44">
@@ -195,7 +197,7 @@ function RepoSectionView({
             aria-hidden
             className="pointer-events-none grid size-6 place-items-center text-muted-foreground"
           >
-            <ChevronRightGlyph18
+            <CaretRightIcon
               data-icon="chevron-right"
               className={cn(
                 "size-3.5 transition-transform",

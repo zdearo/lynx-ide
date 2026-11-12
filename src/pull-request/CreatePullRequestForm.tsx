@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { commands, type PullRequestForm } from "@/bindings";
-import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
-import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
+import { SparkleIcon, SpinnerGapIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -208,9 +207,9 @@ export function CreatePullRequestForm({
           onClick={() => void generate()}
         >
           {generating ? (
-            <Loader2Glyph18 className="animate-spin" />
+            <SpinnerGapIcon className="animate-spin" />
           ) : (
-            <SparkleGlyph18 />
+            <SparkleIcon />
           )}
         </TooltipIconButton>
       </div>

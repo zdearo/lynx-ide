@@ -1,4 +1,4 @@
-import { GlobeGlyph18 } from "@/components/icons/GlobeGlyph18";
+import { GlobeIcon } from "@phosphor-icons/react";
 import { selectedBotOf, useBotsStore } from "@/bots/bots-store";
 import { copy } from "@/ui-copy";
 
@@ -14,7 +14,7 @@ export function BotBrowserPanel() {
   }
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-      <GlobeGlyph18 className="size-5 text-muted-foreground" />
+      <GlobeIcon className="size-5 text-muted-foreground" />
       <h2 className="text-ui font-medium">
         {copy.bots.browser.title(bot.name)}
       </h2>

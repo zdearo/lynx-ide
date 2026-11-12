@@ -1,4 +1,4 @@
-import { CircleQuestionGlyph18 } from "@/components/icons/CircleQuestionGlyph18";
+import { QuestionIcon } from "@phosphor-icons/react";
 import { copy } from "@/ui-copy";
 import type { GroupSummary } from "@/workspace/projects/collapsed-summary";
 
@@ -48,7 +48,7 @@ export function CollapsedSummary({
         )}
         {summary.needingYou > 0 && (
           <span className="flex items-center gap-1 text-attention">
-            <CircleQuestionGlyph18 aria-hidden className="size-3" />
+            <QuestionIcon aria-hidden className="size-3" />
             {summary.needingYou}
           </span>
         )}

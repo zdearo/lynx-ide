@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { CheckGlyph18 } from "@/components/icons/CheckGlyph18";
-import { ChevronDownGlyph18 } from "@/components/icons/ChevronDownGlyph18";
+import { CaretDownIcon, CheckIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -72,7 +71,7 @@ export function BaseRefPicker({
           <span className="truncate">
             {loading ? copy.newWorktree.loadingRefs : value}
           </span>
-          <ChevronDownGlyph18 className="text-muted-foreground" />
+          <CaretDownIcon className="text-muted-foreground" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -93,9 +92,7 @@ export function BaseRefPicker({
               {search.shown.map((ref) => (
                 <CommandItem key={ref} value={ref} onSelect={() => choose(ref)}>
                   <span className="truncate">{ref}</span>
-                  {ref === value && (
-                    <CheckGlyph18 className="ml-auto shrink-0" />
-                  )}
+                  {ref === value && <CheckIcon className="ml-auto shrink-0" />}
                 </CommandItem>
               ))}
             </CommandGroup>

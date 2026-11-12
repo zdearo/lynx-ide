@@ -1,9 +1,11 @@
 import type { KeyboardEvent } from "react";
 
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
-import { Undo2Glyph18 } from "@/components/icons/Undo2Glyph18";
-import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
+import {
+  ArrowUUpLeftIcon,
+  ArrowsClockwiseIcon,
+  CaretRightIcon,
+  PlusIcon,
+} from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -144,7 +146,7 @@ export function ChangesPanel() {
           label={copy.changes.refresh}
           onClick={() => void refreshWorktreeGit(path)}
         >
-          <RefreshGlyph18 />
+          <ArrowsClockwiseIcon />
         </TooltipIconButton>
       </div>
 
@@ -239,7 +241,7 @@ export function ChangesPanel() {
                           onClick={() => toggleSection(section.id)}
                           className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md pl-1.5 text-left uppercase outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
                         >
-                          <ChevronRightGlyph18
+                          <CaretRightIcon
                             aria-hidden
                             className={cn(
                               "size-3.5 shrink-0 transition-transform",
@@ -269,7 +271,7 @@ export function ChangesPanel() {
                           })
                         }
                       >
-                        <Undo2Glyph18 />
+                        <ArrowUUpLeftIcon />
                       </TooltipIconButton>
                     )}
                     {STAGE_ALL.has(section.id) && (
@@ -285,7 +287,7 @@ export function ChangesPanel() {
                           )
                         }
                       >
-                        <PlusGlyph18 />
+                        <PlusIcon />
                       </TooltipIconButton>
                     )}
                   </div>

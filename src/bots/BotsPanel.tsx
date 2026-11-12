@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { BotAvatar } from "@/bots/BotAvatar";
 import { ChannelDialog } from "@/bots/ChannelDialog";
 import { useBotsStore } from "@/bots/bots-store";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
+import { PlusIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useDialogStore } from "@/dialog-store";
@@ -64,7 +64,7 @@ export function BotsPanel() {
               label={channelText.newChannel}
               onClick={() => setCreating(true)}
             >
-              <PlusGlyph18 />
+              <PlusIcon />
             </TooltipIconButton>
           }
         >
@@ -108,7 +108,7 @@ export function BotsPanel() {
               label={text.newBot}
               onClick={() => askBotWizard(true)}
             >
-              <PlusGlyph18 />
+              <PlusIcon />
             </TooltipIconButton>
           }
         >

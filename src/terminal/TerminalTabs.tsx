@@ -6,10 +6,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
-import { SidebarLeftGlyph18 } from "@/components/icons/SidebarLeftGlyph18";
-import { SidebarRightGlyph18 } from "@/components/icons/SidebarRightGlyph18";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { PlusIcon, SidebarSimpleIcon, XIcon } from "@phosphor-icons/react";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { useBrowserStore } from "@/browser/browser-store";
@@ -90,7 +87,7 @@ export function TerminalTabs({
           shortcut={shortcutLabel("toggleSidebar")}
           onClick={onToggleSidebar}
         >
-          <SidebarLeftGlyph18 />
+          <SidebarSimpleIcon />
         </TooltipIconButton>
       </div>
 
@@ -170,7 +167,7 @@ export function TerminalTabs({
                         "opacity-0 group-focus-visible/tab:opacity-100 group-hover/tab:opacity-100",
                     )}
                   >
-                    <XmarkGlyph18 />
+                    <XIcon />
                   </span>
                 </button>
               </ContextMenuTrigger>
@@ -198,7 +195,7 @@ export function TerminalTabs({
               label={copy.terminal.newTerminal}
               shortcut={shortcutLabel("newTerminal")}
             >
-              <PlusGlyph18 />
+              <PlusIcon />
             </TooltipIconButton>
           </NewTerminalMenu>
         </div>
@@ -210,7 +207,7 @@ export function TerminalTabs({
           aria-pressed={rightPanelOpen}
           onClick={onToggleRightPanel}
         >
-          <SidebarRightGlyph18 />
+          <SidebarSimpleIcon mirrored />
         </TooltipIconButton>
       </div>
     </div>

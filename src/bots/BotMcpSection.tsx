@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { PlusIcon, XIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 import { commands, type BotMcpServer } from "@/bindings";
@@ -45,7 +44,7 @@ export function BotMcpSection({ botId }: { botId: string }) {
       hint={text.hint}
       actions={
         <TooltipIconButton label={text.add} onClick={() => setAdding(true)}>
-          <PlusGlyph18 />
+          <PlusIcon />
         </TooltipIconButton>
       }
     >
@@ -69,7 +68,7 @@ export function BotMcpSection({ botId }: { botId: string }) {
                     label={text.removeLabel(server.name)}
                     onClick={() => void remove(server.name)}
                   >
-                    <XmarkGlyph18 />
+                    <XIcon />
                   </TooltipIconButton>
                 }
               />

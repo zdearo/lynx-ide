@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { XIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 import { commands } from "@/bindings";
@@ -73,7 +73,7 @@ export function SettingsDialog() {
           </DialogDescription>
           <DialogClose asChild>
             <TooltipIconButton label={copy.settings.close} shortcut="Esc">
-              <XmarkGlyph18 />
+              <XIcon />
             </TooltipIconButton>
           </DialogClose>
         </header>

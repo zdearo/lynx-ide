@@ -1,10 +1,12 @@
-import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
-import { LockGlyph18 } from "@/components/icons/LockGlyph18";
-import { SquareTerminalGlyph18 } from "@/components/icons/SquareTerminalGlyph18";
-import { StarGlyph18 } from "@/components/icons/StarGlyph18";
-import { TeamGlyph18 } from "@/components/icons/TeamGlyph18";
-import { TrashGlyph18 } from "@/components/icons/TrashGlyph18";
-import { TriangleWarningGlyph18 } from "@/components/icons/TriangleWarningGlyph18";
+import {
+  DotsThreeIcon,
+  LockIcon,
+  StarIcon,
+  TerminalWindowIcon,
+  TrashIcon,
+  TreeStructureIcon,
+  WarningIcon,
+} from "@phosphor-icons/react";
 
 import type { WorktreeInfo } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
@@ -40,7 +42,7 @@ interface WorktreeRowProps {
 function RemoveWorktreeItem() {
   return (
     <>
-      <TrashGlyph18 aria-hidden />
+      <TrashIcon aria-hidden />
       {copy.worktree.remove}
     </>
   );
@@ -91,7 +93,8 @@ export function WorktreeRow({
           {label.text}
         </span>
         {worktree.isMain && (
-          <StarGlyph18
+          <StarIcon
+            weight="fill"
             className="size-3 shrink-0 text-muted-foreground"
             aria-label={copy.worktree.primary}
           />
@@ -102,13 +105,13 @@ export function WorktreeRow({
             : copy.worktree.noTerminals}
         </span>
         {worktree.prunable && (
-          <TriangleWarningGlyph18
+          <WarningIcon
             className="size-3 shrink-0 text-destructive"
             aria-label={copy.worktree.missingDirectory}
           />
         )}
         {worktree.locked && (
-          <LockGlyph18
+          <LockIcon
             className="size-3 shrink-0"
             aria-label={copy.worktree.locked}
           />
@@ -124,7 +127,7 @@ export function WorktreeRow({
                 label={copy.worktree.actions(label.text)}
                 className="opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
               >
-                <DotsGlyph18 />
+                <DotsThreeIcon />
               </TooltipIconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-44">
@@ -147,7 +150,7 @@ export function WorktreeRow({
             useWorkspaceStore.getState().selectWorktree(worktree.path);
           }}
         >
-          {inTeam ? <TeamGlyph18 /> : <SquareTerminalGlyph18 />}
+          {inTeam ? <TreeStructureIcon /> : <TerminalWindowIcon />}
         </TooltipIconButton>
       </div>
     </div>

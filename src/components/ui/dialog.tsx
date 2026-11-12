@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { Button } from "@/components/ui/button";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { XIcon } from "@phosphor-icons/react";
 
 function Dialog({
   ...props
@@ -76,7 +76,7 @@ function DialogContent({
               className="absolute top-2 right-2"
               size="icon-sm"
             >
-              <XmarkGlyph18 />
+              <XIcon />
               <span className="sr-only">Close</span>
             </Button>
           </DialogPrimitive.Close>

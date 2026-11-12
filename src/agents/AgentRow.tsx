@@ -1,12 +1,14 @@
 import type { HarnessId } from "@/bindings";
 import type { AgentStatus } from "@/bindings";
-import { CircleCheckGlyph18 } from "@/components/icons/CircleCheckGlyph18";
-import { CircleQuestionGlyph18 } from "@/components/icons/CircleQuestionGlyph18";
-import { CircleXmarkGlyph18 } from "@/components/icons/CircleXmarkGlyph18";
-import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
-import { RadioCheckedGlyph18 } from "@/components/icons/RadioCheckedGlyph18";
+import {
+  CheckCircleIcon,
+  QuestionIcon,
+  RadioButtonIcon,
+  SpinnerGapIcon,
+  XCircleIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
@@ -29,39 +31,34 @@ export interface AgentItem {
 export function AgentStatusIcon({ agent }: { agent: AgentItem }) {
   if (!agent.running) {
     return agent.exitCode === 0 ? (
-      <CircleCheckGlyph18
+      <CheckCircleIcon
         aria-hidden
         className="size-3 shrink-0 text-muted-foreground"
       />
     ) : (
-      <CircleXmarkGlyph18
-        aria-hidden
-        className="size-3 shrink-0 text-destructive"
-      />
+      <XCircleIcon aria-hidden className="size-3 shrink-0 text-destructive" />
     );
   }
   switch (agent.status) {
     case "working":
       return (
-        <Loader2Glyph18
+        <SpinnerGapIcon
           aria-hidden
           className="size-3 shrink-0 animate-spin text-live"
         />
       );
     case "needsYou":
       return (
-        <CircleQuestionGlyph18
-          aria-hidden
-          className="size-3 shrink-0 text-attention"
-        />
+        <QuestionIcon aria-hidden className="size-3 shrink-0 text-attention" />
       );
     case "done":
       return (
-        <CircleCheckGlyph18 aria-hidden className="size-3 shrink-0 text-live" />
+        <CheckCircleIcon aria-hidden className="size-3 shrink-0 text-live" />
       );
     default:
       return (
-        <RadioCheckedGlyph18
+        <RadioButtonIcon
+          weight="fill"
           aria-hidden
           className="size-3 shrink-0 text-muted-foreground"
         />
@@ -131,7 +128,7 @@ export function AgentRow({
           className="size-5"
           onClick={onClose}
         >
-          <XmarkGlyph18 />
+          <XIcon />
         </TooltipIconButton>
       </div>
     </li>

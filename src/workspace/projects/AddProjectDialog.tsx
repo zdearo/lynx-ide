@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { open as pickFolder } from "@tauri-apps/plugin-dialog";
-import { FolderPlusGlyph18 } from "@/components/icons/FolderPlusGlyph18";
-import { FolderSearchGlyph18 } from "@/components/icons/FolderSearchGlyph18";
+import { FolderOpenIcon, FolderPlusIcon } from "@phosphor-icons/react";
 import type { IconComponent } from "@/components/icons/icon-component";
 
 import { Button } from "@/components/ui/button";
@@ -70,13 +69,13 @@ function ProjectChooser({
       </DialogHeader>
       <div className="grid gap-2">
         <ProjectOption
-          icon={FolderSearchGlyph18}
+          icon={FolderOpenIcon}
           title={copy.addProject.browse}
           description={copy.addProject.browseDescription}
           onSelect={onBrowse}
         />
         <ProjectOption
-          icon={FolderPlusGlyph18}
+          icon={FolderPlusIcon}
           title={copy.addProject.create}
           description={copy.addProject.createDescription}
           onSelect={onCreate}

@@ -2,8 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { commands, type CheckLog, type PullRequestCheck } from "@/bindings";
-import { CircleCheckGlyph18 } from "@/components/icons/CircleCheckGlyph18";
-import { CircleXmarkGlyph18 } from "@/components/icons/CircleXmarkGlyph18";
+import { CheckCircleIcon, XCircleIcon } from "@phosphor-icons/react";
 import { errorMessage } from "@/lib/error-message";
 import { unwrap } from "@/lib/ipc-result";
 import { hasJobLog } from "@/pull-request/pull-request-view";
@@ -14,14 +13,14 @@ function CheckMark({ state }: { state: PullRequestCheck["state"] }) {
   switch (state) {
     case "passed":
       return (
-        <CircleCheckGlyph18
+        <CheckCircleIcon
           aria-hidden
           className="size-3.5 shrink-0 text-diff-added"
         />
       );
     case "failed":
       return (
-        <CircleXmarkGlyph18
+        <XCircleIcon
           aria-hidden
           className="size-3.5 shrink-0 text-diff-removed"
         />

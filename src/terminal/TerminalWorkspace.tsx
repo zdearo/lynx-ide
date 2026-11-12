@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 
-import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
+import { FolderSimpleIcon } from "@phosphor-icons/react";
 
 import { Button } from "@/components/ui/button";
 import { BotArea, BotTopBar } from "@/bots/BotMain";
@@ -206,7 +206,7 @@ function Welcome() {
         </p>
       </div>
       <Button onClick={() => askAddProject(true)}>
-        <Folder2Glyph18 />
+        <FolderSimpleIcon />
         {copy.sidebar.addProject}
       </Button>
     </div>

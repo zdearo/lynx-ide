@@ -1,8 +1,10 @@
-import { CircleCheckGlyph18 } from "@/components/icons/CircleCheckGlyph18";
-import { CircleQuestionGlyph18 } from "@/components/icons/CircleQuestionGlyph18";
-import { CircleXmarkGlyph18 } from "@/components/icons/CircleXmarkGlyph18";
-import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
-import { RadioCheckedGlyph18 } from "@/components/icons/RadioCheckedGlyph18";
+import {
+  CheckCircleIcon,
+  QuestionIcon,
+  RadioButtonIcon,
+  SpinnerGapIcon,
+  XCircleIcon,
+} from "@phosphor-icons/react";
 import type { TeamMember, TeamStatus } from "@/team/team-fixtures";
 import { teamCounts } from "@/team/team-counts";
 import { useTerminalStore } from "@/terminal/terminal-store";
@@ -12,36 +14,31 @@ export function TeamStatusIcon({ status }: { status: TeamStatus }) {
   switch (status) {
     case "working":
       return (
-        <Loader2Glyph18
+        <SpinnerGapIcon
           aria-hidden
           className="size-3 shrink-0 animate-spin text-live"
         />
       );
     case "needsYou":
       return (
-        <CircleQuestionGlyph18
-          aria-hidden
-          className="size-3 shrink-0 text-attention"
-        />
+        <QuestionIcon aria-hidden className="size-3 shrink-0 text-attention" />
       );
     case "done":
     case "closed":
       return (
-        <CircleCheckGlyph18
+        <CheckCircleIcon
           aria-hidden
           className="size-3 shrink-0 text-muted-foreground"
         />
       );
     case "failed":
       return (
-        <CircleXmarkGlyph18
-          aria-hidden
-          className="size-3 shrink-0 text-destructive"
-        />
+        <XCircleIcon aria-hidden className="size-3 shrink-0 text-destructive" />
       );
     default:
       return (
-        <RadioCheckedGlyph18
+        <RadioButtonIcon
+          weight="fill"
           aria-hidden
           className="size-3 shrink-0 text-muted-foreground"
         />

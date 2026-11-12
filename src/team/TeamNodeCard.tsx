@@ -10,7 +10,7 @@ import { useEffect } from "react";
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
@@ -151,7 +151,7 @@ export function TeamNodeCard({ id, data, selected }: NodeProps<TeamCardNode>) {
                   void useTeamStore.getState().toggle(member.id);
                 }}
               >
-                <ChevronRightGlyph18
+                <CaretRightIcon
                   className={cn(
                     "transition-transform",
                     expanded && "rotate-90",

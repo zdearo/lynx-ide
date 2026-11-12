@@ -1,7 +1,9 @@
 import { useMemo, useState, type KeyboardEvent } from "react";
-import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
-import { FolderPlusGlyph18 } from "@/components/icons/FolderPlusGlyph18";
-import { InputSearchGlyph18 } from "@/components/icons/InputSearchGlyph18";
+import {
+  FolderPlusIcon,
+  FolderSimpleIcon,
+  MagnifyingGlassIcon,
+} from "@phosphor-icons/react";
 
 import {
   SegmentedControl,
@@ -82,20 +84,20 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
             label={copy.folders.newFolder}
             onClick={() => askFolderDialog({ mode: "create", parentId: null })}
           >
-            <FolderPlusGlyph18 />
+            <FolderPlusIcon />
           </TooltipIconButton>
           <TooltipIconButton
             label={copy.sidebar.addProject}
             onClick={() => askAddProject(true)}
           >
-            <Folder2Glyph18 />
+            <FolderSimpleIcon />
           </TooltipIconButton>
         </div>
       </div>
       {!empty && (
         <div className="flex flex-col items-start gap-2 px-2 pb-2">
           <div className="relative w-full">
-            <InputSearchGlyph18
+            <MagnifyingGlassIcon
               aria-hidden
               className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
             />

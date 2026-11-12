@@ -10,8 +10,7 @@ import {
   useBotChatStore,
   type AnswerStatus,
 } from "@/bots/bot-chat-store";
-import { ArrowUpGlyph18 } from "@/components/icons/ArrowUpGlyph18";
-import { StopGlyph18 } from "@/components/icons/StopGlyph18";
+import { ArrowUpIcon, StopIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -205,7 +204,7 @@ export function Conversation({
               className="rounded-full"
               onClick={stopAnswer}
             >
-              <StopGlyph18 />
+              <StopIcon weight="fill" />
             </TooltipIconButton>
           ) : (
             <TooltipIconButton
@@ -216,7 +215,7 @@ export function Conversation({
               disabled={!draft.trim() || blocked !== undefined}
               onClick={submit}
             >
-              <ArrowUpGlyph18 />
+              <ArrowUpIcon />
             </TooltipIconButton>
           )}
         </div>

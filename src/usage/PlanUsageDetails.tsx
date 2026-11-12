@@ -1,6 +1,6 @@
 import type { HarnessId, PlanUsage, PlanWindow, UsageConfig } from "@/bindings";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
+import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -94,7 +94,7 @@ function RefreshButton() {
           .catch(() => undefined);
       }}
     >
-      <RefreshGlyph18 />
+      <ArrowsClockwiseIcon />
     </TooltipIconButton>
   );
 }

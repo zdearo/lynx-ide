@@ -1,7 +1,9 @@
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
-import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
-import { Link2Glyph18 } from "@/components/icons/Link2Glyph18";
-import { Loader2Glyph18 } from "@/components/icons/Loader2Glyph18";
+import {
+  CaretRightIcon,
+  DotsThreeIcon,
+  LinkIcon,
+  SpinnerGapIcon,
+} from "@phosphor-icons/react";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import {
@@ -99,12 +101,12 @@ export function FileRow({
     >
       {row.isDirectory ? (
         row.loading ? (
-          <Loader2Glyph18
+          <SpinnerGapIcon
             aria-hidden
             className="size-3.5 shrink-0 animate-spin text-muted-foreground"
           />
         ) : (
-          <ChevronRightGlyph18
+          <CaretRightIcon
             aria-hidden
             className={cn(
               "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -125,7 +127,7 @@ export function FileRow({
         {row.name}
       </span>
       {row.symlink && (
-        <Link2Glyph18
+        <LinkIcon
           aria-hidden
           className="size-3 shrink-0 text-muted-foreground"
         />
@@ -148,7 +150,7 @@ export function FileRow({
               className="size-5"
               onClick={(event) => event.stopPropagation()}
             >
-              <DotsGlyph18 />
+              <DotsThreeIcon />
             </TooltipIconButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-52">

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useBranchSyncStore } from "@/changes/branch-sync-store";
 import { ChangeMark } from "@/changes/ChangeMark";
@@ -134,7 +134,7 @@ function CommitRow({
         onClick={onToggle}
         className="flex w-full min-w-0 items-start gap-1 rounded-md px-1 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       >
-        <ChevronRightGlyph18
+        <CaretRightIcon
           aria-hidden
           className={cn(
             "mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform",

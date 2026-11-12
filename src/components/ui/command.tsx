@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Command as CommandPrimitive } from "cmdk";
 import { cn } from "@/lib/utils";
-import { InputSearchGlyph18 } from "@/components/icons/InputSearchGlyph18";
+import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 
 function Command({
   className,
@@ -28,7 +28,7 @@ function CommandInput({
       data-slot="command-input-wrapper"
       className="flex items-center gap-2 border-b px-3"
     >
-      <InputSearchGlyph18 className="size-4 shrink-0 text-muted-foreground" />
+      <MagnifyingGlassIcon className="size-4 shrink-0 text-muted-foreground" />
       <CommandPrimitive.Input
         data-slot="command-input"
         className={cn(

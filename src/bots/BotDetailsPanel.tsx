@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { XIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 import { commands, type BotDetail, type Grant } from "@/bindings";
@@ -93,7 +93,7 @@ function BotAccess({ botId }: { botId: string }) {
                     label={text.revokeLabel(grant.name)}
                     onClick={() => void revoke(grant.id)}
                   >
-                    <XmarkGlyph18 />
+                    <XIcon />
                   </TooltipIconButton>
                 }
               />
@@ -151,7 +151,7 @@ function BotWorkerAccess({ botId }: { botId: string }) {
                     label={text.revokeWorkersLabel(grant.name)}
                     onClick={() => void revoke(grant.id)}
                   >
-                    <XmarkGlyph18 />
+                    <XIcon />
                   </TooltipIconButton>
                 }
               />

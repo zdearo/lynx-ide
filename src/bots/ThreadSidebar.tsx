@@ -5,8 +5,7 @@ import type { BotSummary, ThreadSummary } from "@/bindings";
 import { botThread, threadOf, useBotChatStore } from "@/bots/bot-chat-store";
 import { shownThreadOf, useBotsStore } from "@/bots/bots-store";
 import { threadAge } from "@/bots/thread-age";
-import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
+import { DotsThreeIcon, PlusIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import {
   AlertDialog,
@@ -103,7 +102,7 @@ export function ThreadSidebar({
           className="text-muted-foreground"
           onClick={() => void create()}
         >
-          <PlusGlyph18 />
+          <PlusIcon />
         </TooltipIconButton>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -209,7 +208,7 @@ function ThreadRow({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <TooltipIconButton label={`${text.rename} / ${text.delete}`}>
-              <DotsGlyph18 />
+              <DotsThreeIcon />
             </TooltipIconButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-36">

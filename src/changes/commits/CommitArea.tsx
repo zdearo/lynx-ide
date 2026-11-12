@@ -4,7 +4,7 @@ import { commitFailurePrompt } from "@/agents/fix-prompts";
 import { fixWithAgent, useHasFixAgent } from "@/agents/fix-with-agent";
 import { commands } from "@/bindings";
 import { useChangesStore } from "@/changes/changes-store";
-import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
+import { SparkleIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { useBranchSyncStore } from "@/changes/branch-sync-store";
 import { refreshWorktreeGit } from "@/changes/refresh-worktree-git";
@@ -291,7 +291,7 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
           )}
           onClick={() => void generate()}
         >
-          <SparkleGlyph18 />
+          <SparkleIcon />
         </TooltipIconButton>
       </div>
       <Textarea
@@ -374,7 +374,7 @@ export function CommitArea({ worktreePath, stagedCount }: CommitAreaProps) {
               title={copy.fixWithAi.hint}
               onClick={fixCommit}
             >
-              <SparkleGlyph18 aria-hidden />
+              <SparkleIcon aria-hidden />
               {copy.fixWithAi.button}
             </Button>
           )}

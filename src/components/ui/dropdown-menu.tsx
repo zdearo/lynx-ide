@@ -1,8 +1,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
-import { CheckGlyph18 } from "@/components/icons/CheckGlyph18";
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { CaretRightIcon, CheckIcon } from "@phosphor-icons/react";
 
 function DropdownMenu({
   ...props
@@ -107,7 +106,7 @@ function DropdownMenuCheckboxItem({
         data-slot="dropdown-menu-checkbox-item-indicator"
       >
         <DropdownMenuPrimitive.ItemIndicator>
-          <CheckGlyph18 />
+          <CheckIcon />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -149,7 +148,7 @@ function DropdownMenuRadioItem({
         data-slot="dropdown-menu-radio-item-indicator"
       >
         <DropdownMenuPrimitive.ItemIndicator>
-          <CheckGlyph18 />
+          <CheckIcon />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -231,7 +230,7 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      <ChevronRightGlyph18 className="ml-auto" />
+      <CaretRightIcon className="ml-auto" />
     </DropdownMenuPrimitive.SubTrigger>
   );
 }

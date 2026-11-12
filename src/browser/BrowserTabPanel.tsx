@@ -1,7 +1,7 @@
 import { useBrowserStore } from "@/browser/browser-store";
 import { worktreePages } from "@/browser/browser-tabs";
 import { BrowserPageTile } from "@/browser/BrowserPageTile";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
+import { PlusIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { copy } from "@/ui-copy";
@@ -37,7 +37,7 @@ export function BrowserTabPanel() {
             className="ml-auto h-[26px] gap-1.5 px-2 text-nested text-muted-foreground hover:text-foreground"
             onClick={createTab}
           >
-            <PlusGlyph18 className="size-3.5" />
+            <PlusIcon className="size-3.5" />
             {copy.browser.panel.newTab}
           </Button>
         )}

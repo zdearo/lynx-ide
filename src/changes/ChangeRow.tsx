@@ -1,6 +1,4 @@
-import { MinusGlyph18 } from "@/components/icons/MinusGlyph18";
-import { Undo2Glyph18 } from "@/components/icons/Undo2Glyph18";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
+import { ArrowUUpLeftIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ChangeMark } from "@/changes/ChangeMark";
 import type { ChangeEntry } from "@/changes/change-sections";
@@ -119,7 +117,7 @@ export function ChangeRow({
             }}
             onDoubleClick={(event) => event.stopPropagation()}
           >
-            <Undo2Glyph18 />
+            <ArrowUUpLeftIcon />
           </TooltipIconButton>
         )}
         {index && (
@@ -138,7 +136,7 @@ export function ChangeRow({
             }}
             onDoubleClick={(event) => event.stopPropagation()}
           >
-            {index.kind === "stage" ? <PlusGlyph18 /> : <MinusGlyph18 />}
+            {index.kind === "stage" ? <PlusIcon /> : <MinusIcon />}
           </TooltipIconButton>
         )}
         {lines && (lines.added > 0 || lines.removed > 0) && (

@@ -1,6 +1,5 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { MinusGlyph18 } from "@/components/icons/MinusGlyph18";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
+import { MinusIcon, PlusIcon } from "@phosphor-icons/react";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
@@ -400,7 +399,7 @@ export function StepperSetting({
           disabled={locked || value <= min}
           onClick={() => void save(value - 1)}
         >
-          <MinusGlyph18 />
+          <MinusIcon />
         </TooltipIconButton>
         <output
           id={id}
@@ -414,7 +413,7 @@ export function StepperSetting({
           disabled={locked || value >= max}
           onClick={() => void save(value + 1)}
         >
-          <PlusGlyph18 />
+          <PlusIcon />
         </TooltipIconButton>
       </div>
     </SettingFrame>

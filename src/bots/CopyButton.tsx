@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { CheckGlyph18 } from "@/components/icons/CheckGlyph18";
-import { CopyGlyph18 } from "@/components/icons/CopyGlyph18";
+import { CheckIcon, CopyIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
@@ -53,7 +52,7 @@ export function CopyButton({
         )}
         onClick={() => void copyIt()}
       >
-        {copied ? <CheckGlyph18 /> : <CopyGlyph18 />}
+        {copied ? <CheckIcon /> : <CopyIcon />}
       </TooltipIconButton>
       {/* A live region without the status role: the chat reads status elements as "still working". */}
       <span aria-live="polite" className="sr-only">

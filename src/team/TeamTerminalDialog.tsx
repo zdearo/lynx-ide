@@ -6,7 +6,7 @@ import { botThread } from "@/bots/bot-chat-store";
 import { useBotsStore } from "@/bots/bots-store";
 import { Conversation } from "@/bots/Conversation";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { XIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import {
@@ -102,7 +102,7 @@ function PaneHeader({
         className="absolute top-2 right-2"
         onClick={() => useTeamStore.getState().closeTerminal()}
       >
-        <XmarkGlyph18 />
+        <XIcon />
       </TooltipIconButton>
     </header>
   );

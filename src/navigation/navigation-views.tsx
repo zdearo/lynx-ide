@@ -1,6 +1,5 @@
 import type { ComponentType } from "react";
-import { BotGlyph18 } from "@/components/icons/BotGlyph18";
-import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
+import { FolderSimpleIcon, RobotIcon } from "@phosphor-icons/react";
 import type { IconComponent } from "@/components/icons/icon-component";
 
 import { BotsPanel } from "@/bots/BotsPanel";
@@ -21,13 +20,13 @@ export const NAVIGATION_VIEWS: readonly NavigationView[] = [
   {
     id: "projects",
     label: copy.navigation.projects,
-    icon: Folder2Glyph18,
+    icon: FolderSimpleIcon,
     panel: ProjectsPanel,
   },
   {
     id: "bots",
     label: copy.navigation.bots,
-    icon: BotGlyph18,
+    icon: RobotIcon,
     panel: BotsPanel,
   },
 ];

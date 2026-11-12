@@ -1,3 +1,4 @@
+import { IconContext } from "@phosphor-icons/react";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
@@ -21,7 +22,10 @@ async function installDevBackend() {
 void installDevBackend().then(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
-      {isBrowserWindow() ? <DetachedBrowserApp /> : <App />}
+      {/* The 18 px the icons were drawn at; a size class on an icon still wins. */}
+      <IconContext.Provider value={{ size: 18 }}>
+        {isBrowserWindow() ? <DetachedBrowserApp /> : <App />}
+      </IconContext.Provider>
     </React.StrictMode>,
   );
 });

@@ -1,4 +1,4 @@
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 
 import { useNow } from "@/hooks/use-now";
@@ -64,7 +64,7 @@ export function AgentGroup({
             <span aria-hidden className="flex-1" />
           </>
         )}
-        <ChevronRightGlyph18
+        <CaretRightIcon
           aria-hidden
           className={cn(
             "size-3.5 shrink-0 transition-transform",

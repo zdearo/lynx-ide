@@ -4,8 +4,7 @@ import { toast } from "sonner";
 import type { ResumableSession } from "@/bindings";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { ArrowsClockwiseIcon, XIcon } from "@phosphor-icons/react";
 import { errorMessage } from "@/lib/error-message";
 import { copy } from "@/ui-copy";
 import { resumeLine, startTerminal } from "@/terminal/terminal-actions";
@@ -67,13 +66,13 @@ export function ResumableList({ worktreePath }: { worktreePath: string }) {
               label={copy.resumable.resume}
               onClick={() => void resume(item)}
             >
-              <RefreshGlyph18 aria-hidden className="size-3" />
+              <ArrowsClockwiseIcon aria-hidden className="size-3" />
             </TooltipIconButton>
             <TooltipIconButton
               label={copy.resumable.remove}
               onClick={() => take(item)}
             >
-              <XmarkGlyph18 aria-hidden className="size-3" />
+              <XIcon aria-hidden className="size-3" />
             </TooltipIconButton>
           </li>
         ))}

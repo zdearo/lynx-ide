@@ -4,8 +4,7 @@ import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { CommandPatternsDialog } from "@/bots/CommandPatternsDialog";
 import { DetailRow, DetailSection } from "@/bots/DetailSection";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { PlusIcon, XIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { errorMessage } from "@/lib/error-message";
 import { unwrap } from "@/lib/ipc-result";
@@ -45,7 +44,7 @@ export function BotCommandsSection({ botId }: { botId: string }) {
       hint={text.hint}
       actions={
         <TooltipIconButton label={text.add} onClick={() => setAdding(true)}>
-          <PlusGlyph18 />
+          <PlusIcon />
         </TooltipIconButton>
       }
     >
@@ -68,7 +67,7 @@ export function BotCommandsSection({ botId }: { botId: string }) {
                     label={text.removeLabel(pattern)}
                     onClick={() => void remove(pattern)}
                   >
-                    <XmarkGlyph18 />
+                    <XIcon />
                   </TooltipIconButton>
                 }
               />

@@ -1,3 +1,1 @@
-import type { ComponentType, SVGProps } from "react";
-
-export type IconComponent = ComponentType<SVGProps<SVGSVGElement>>;
+export type { Icon as IconComponent } from "@phosphor-icons/react";

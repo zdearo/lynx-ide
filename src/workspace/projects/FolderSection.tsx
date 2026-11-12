@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
-import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
-import { FolderGlyph18 } from "@/components/icons/FolderGlyph18";
-import { FolderOpenGlyph18 } from "@/components/icons/FolderOpenGlyph18";
-import { FolderPlusGlyph18 } from "@/components/icons/FolderPlusGlyph18";
-import { Link2Glyph18 } from "@/components/icons/Link2Glyph18";
+import {
+  CaretRightIcon,
+  DotsThreeIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
+  LinkIcon,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 import type { Folder } from "@/bindings";
@@ -99,12 +101,12 @@ export function FolderSection({
         >
           {!root &&
             (expanded ? (
-              <FolderOpenGlyph18
+              <FolderOpenIcon
                 aria-hidden
                 className="size-3.5 shrink-0 text-muted-foreground"
               />
             ) : (
-              <FolderGlyph18
+              <FolderIcon
                 aria-hidden
                 className="size-3.5 shrink-0 text-muted-foreground"
               />
@@ -128,7 +130,7 @@ export function FolderSection({
             {folder.name}
           </span>
           {linked && (
-            <Link2Glyph18
+            <LinkIcon
               aria-hidden
               className="size-3 shrink-0 text-muted-foreground"
             />
@@ -151,7 +153,7 @@ export function FolderSection({
               askFolderDialog({ mode: "create", parentId: folder.id })
             }
           >
-            <FolderPlusGlyph18 />
+            <FolderPlusIcon />
           </TooltipIconButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -159,7 +161,7 @@ export function FolderSection({
                 label={copy.folders.actions(folder.name)}
                 className="pointer-events-auto"
               >
-                <DotsGlyph18 />
+                <DotsThreeIcon />
               </TooltipIconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-44">
@@ -200,7 +202,7 @@ export function FolderSection({
             aria-hidden
             className="pointer-events-none grid size-6 place-items-center text-muted-foreground"
           >
-            <ChevronRightGlyph18
+            <CaretRightIcon
               data-icon="chevron-right"
               className={cn(
                 "size-3.5 transition-transform",

@@ -4,13 +4,15 @@ import { BotAgentsPanel } from "@/bots/BotAgentsPanel";
 import { BotBrowserPanel } from "@/bots/BotBrowserPanel";
 import { BotDetailsPanel } from "@/bots/BotDetailsPanel";
 import { ChangesPanel } from "@/changes/ChangesPanel";
-import { CircleInfoGlyph18 } from "@/components/icons/CircleInfoGlyph18";
-import { CodeCompareGlyph18 } from "@/components/icons/CodeCompareGlyph18";
-import { CodePullRequestGlyph18 } from "@/components/icons/CodePullRequestGlyph18";
-import { FolderTreeGlyph18 } from "@/components/icons/FolderTreeGlyph18";
-import { GlobeGlyph18 } from "@/components/icons/GlobeGlyph18";
+import {
+  GitDiffIcon,
+  GitPullRequestIcon,
+  GlobeIcon,
+  InfoIcon,
+  TerminalIcon,
+  TreeViewIcon,
+} from "@phosphor-icons/react";
 import type { IconComponent } from "@/components/icons/icon-component";
-import { TerminalGlyph18 } from "@/components/icons/TerminalGlyph18";
 
 import { FilesPanel } from "@/files/FilesPanel";
 import { PullRequestPanel } from "@/pull-request/PullRequestPanel";
@@ -31,25 +33,25 @@ export const RIGHT_PANEL_TABS: readonly RightPanelTab[] = [
   {
     id: "files",
     label: copy.files.title,
-    icon: FolderTreeGlyph18,
+    icon: TreeViewIcon,
     panel: FilesPanel,
   },
   {
     id: "changes",
     label: copy.changes.title,
-    icon: CodeCompareGlyph18,
+    icon: GitDiffIcon,
     panel: ChangesPanel,
   },
   {
     id: "pull-request",
     label: copy.pullRequest.tab,
-    icon: CodePullRequestGlyph18,
+    icon: GitPullRequestIcon,
     panel: PullRequestPanel,
   },
   {
     id: "browser",
     label: copy.browser.tab,
-    icon: GlobeGlyph18,
+    icon: GlobeIcon,
     panel: BrowserTabPanel,
     separatorBefore: true,
   },
@@ -60,19 +62,19 @@ export const BOT_RIGHT_PANEL_TABS: readonly RightPanelTab[] = [
   {
     id: "bot-details",
     label: copy.bots.details.tab,
-    icon: CircleInfoGlyph18,
+    icon: InfoIcon,
     panel: BotDetailsPanel,
   },
   {
     id: "bot-agents",
     label: copy.bots.agents.tab,
-    icon: TerminalGlyph18,
+    icon: TerminalIcon,
     panel: BotAgentsPanel,
   },
   {
     id: "bot-browser",
     label: copy.bots.browser.tab,
-    icon: GlobeGlyph18,
+    icon: GlobeIcon,
     panel: BotBrowserPanel,
   },
 ];

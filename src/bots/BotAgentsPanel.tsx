@@ -6,7 +6,7 @@ import { commands, type RunningCommand, type WorkerRow } from "@/bindings";
 import { selectedBotOf, useBotsStore } from "@/bots/bots-store";
 import { DetailSection } from "@/bots/DetailSection";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { XIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { errorMessage } from "@/lib/error-message";
 import { WIDE_LAYOUT_QUERY } from "@/hooks/layout-queries";
@@ -187,7 +187,7 @@ function CommandsList({
                     label={text.stop(one.command)}
                     onClick={() => onStop(one.session)}
                   >
-                    <XmarkGlyph18 />
+                    <XIcon />
                   </TooltipIconButton>
                 )}
               </div>

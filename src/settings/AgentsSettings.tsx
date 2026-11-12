@@ -18,14 +18,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { GaugeGlyph18 } from "@/components/icons/GaugeGlyph18";
-import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
+import {
+  ArrowsClockwiseIcon,
+  GaugeIcon,
+  SparkleIcon,
+} from "@phosphor-icons/react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UsageSettings } from "@/settings/UsageSettings";
 import { Switch } from "@/components/ui/switch";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
 import {
   ChoiceSetting,
   SwitchSetting,
@@ -110,11 +112,11 @@ export function AgentsSettings() {
     <Tabs defaultValue="setup" className="gap-6">
       <TabsList variant="line" aria-label={text.tabs.label}>
         <TabsTrigger value="setup">
-          <SparkleGlyph18 aria-hidden className="size-3.5" />
+          <SparkleIcon aria-hidden className="size-3.5" />
           {text.tabs.setup}
         </TabsTrigger>
         <TabsTrigger value="limits">
-          <GaugeGlyph18 aria-hidden className="size-3.5" />
+          <GaugeIcon aria-hidden className="size-3.5" />
           {copy.settings.usage.title}
         </TabsTrigger>
       </TabsList>
@@ -127,7 +129,7 @@ export function AgentsSettings() {
             className="size-7 shrink-0"
             onClick={() => void refreshCatalog()}
           >
-            <RefreshGlyph18 />
+            <ArrowsClockwiseIcon />
           </TooltipIconButton>
         </div>
 

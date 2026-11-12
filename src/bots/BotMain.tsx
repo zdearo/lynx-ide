@@ -7,9 +7,7 @@ import {
   selectedChannelOf,
   useBotsStore,
 } from "@/bots/bots-store";
-import { ThreadsGlyph18 } from "@/components/icons/ThreadsGlyph18";
-import { SidebarLeftGlyph18 } from "@/components/icons/SidebarLeftGlyph18";
-import { SidebarRightGlyph18 } from "@/components/icons/SidebarRightGlyph18";
+import { ChatsIcon, SidebarSimpleIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { copy } from "@/ui-copy";
@@ -37,7 +35,7 @@ export function BotTopBar({
         shortcut={shortcutLabel("toggleSidebar")}
         onClick={onToggleSidebar}
       >
-        <SidebarLeftGlyph18 />
+        <SidebarSimpleIcon />
       </TooltipIconButton>
       {bot && (
         <TooltipIconButton
@@ -45,7 +43,7 @@ export function BotTopBar({
           aria-pressed={threadsOpen}
           onClick={toggleThreads}
         >
-          <ThreadsGlyph18 />
+          <ChatsIcon />
         </TooltipIconButton>
       )}
       {bot && (
@@ -69,7 +67,7 @@ export function BotTopBar({
           aria-pressed={rightPanelOpen}
           onClick={onToggleRightPanel}
         >
-          <SidebarRightGlyph18 />
+          <SidebarSimpleIcon mirrored />
         </TooltipIconButton>
       </div>
     </div>

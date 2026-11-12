@@ -4,9 +4,11 @@ import { toast } from "sonner";
 import { brokenChecksPrompt } from "@/agents/fix-prompts";
 import { fixWithAgent, useHasFixAgent } from "@/agents/fix-with-agent";
 import { commands, type PullRequest } from "@/bindings";
-import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
-import { CodePullRequestGlyph18 } from "@/components/icons/CodePullRequestGlyph18";
-import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
+import {
+  ArrowsClockwiseIcon,
+  GitPullRequestIcon,
+  SparkleIcon,
+} from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -97,7 +99,7 @@ export function PullRequestPanel() {
           </span>
         </h2>
         <TooltipIconButton label={copy.pullRequest.refresh} onClick={refresh}>
-          <RefreshGlyph18 />
+          <ArrowsClockwiseIcon />
         </TooltipIconButton>
       </div>
 
@@ -209,7 +211,7 @@ function PullRequestDetails({
     <div className="space-y-3 px-3 pt-1 pb-3">
       <div className="min-w-0 space-y-1">
         <p className="flex items-center gap-1.5 text-meta font-medium text-muted-foreground uppercase">
-          <CodePullRequestGlyph18 aria-hidden className="size-3.5 shrink-0" />
+          <GitPullRequestIcon aria-hidden className="size-3.5 shrink-0" />
           {BADGE_TEXT[badge]}
         </p>
         <h3 className="text-ui font-medium break-words">
@@ -320,7 +322,7 @@ function PullRequestDetails({
                     )
                   }
                 >
-                  <SparkleGlyph18 aria-hidden />
+                  <SparkleIcon aria-hidden />
                   {copy.fixWithAi.fixChecks}
                 </Button>
               )}

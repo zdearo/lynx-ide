@@ -2,7 +2,7 @@ import type { BrowserPageInfo } from "@/bindings";
 import { useBrowserStore } from "@/browser/browser-store";
 import { agentName, isHarnessId } from "@/browser/browser-tabs";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { XIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { cn } from "@/lib/utils";
 import { copy } from "@/ui-copy";
@@ -100,7 +100,7 @@ export function BrowserPageTile({
         onClick={() => void closePage(page.id)}
         className="absolute top-2.5 right-2.5 bg-sidebar/80 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 hover:text-foreground"
       >
-        <XmarkGlyph18 className="size-3" />
+        <XIcon className="size-3" />
       </TooltipIconButton>
     </li>
   );

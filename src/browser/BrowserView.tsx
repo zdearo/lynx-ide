@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 
 import { commands } from "@/bindings";
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
-import { MinimizeWindowGlyph18 } from "@/components/icons/MinimizeWindowGlyph18";
-import { OpenInNewWindowGlyph18 } from "@/components/icons/OpenInNewWindowGlyph18";
-import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
-import { SparkleGlyph18 } from "@/components/icons/SparkleGlyph18";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import {
+  ArrowSquareOutIcon,
+  ArrowsClockwiseIcon,
+  CaretRightIcon,
+  CornersInIcon,
+  SparkleIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -126,21 +128,21 @@ function Toolbar() {
         disabled={!hasPage || !state.canGoBack}
         onClick={() => void commands.browserBack()}
       >
-        <ChevronRightGlyph18 className="rotate-180" />
+        <CaretRightIcon className="rotate-180" />
       </TooltipIconButton>
       <TooltipIconButton
         label={copy.browser.forward}
         disabled={!hasPage || !state.canGoForward}
         onClick={() => void commands.browserForward()}
       >
-        <ChevronRightGlyph18 />
+        <CaretRightIcon />
       </TooltipIconButton>
       <TooltipIconButton
         label={state.loading ? copy.browser.stop : copy.browser.reload}
         disabled={!hasPage}
         onClick={state.loading ? stop : reload}
       >
-        {state.loading ? <XmarkGlyph18 /> : <RefreshGlyph18 />}
+        {state.loading ? <XIcon /> : <ArrowsClockwiseIcon />}
       </TooltipIconButton>
       <form
         className="min-w-0 flex-1"
@@ -174,7 +176,7 @@ function Toolbar() {
           if (state.page !== null) void assignAgentPage(state.page);
         }}
       >
-        <SparkleGlyph18 />
+        <SparkleIcon />
       </TooltipIconButton>
       {agentAction && !detachedHere && (
         <span
@@ -196,7 +198,7 @@ function Toolbar() {
             if (state.page !== null) void attachPage(state.page);
           }}
         >
-          <MinimizeWindowGlyph18 />
+          <CornersInIcon />
         </TooltipIconButton>
       ) : (
         <TooltipIconButton
@@ -206,7 +208,7 @@ function Toolbar() {
             if (state.page !== null) void detachPage(state.page);
           }}
         >
-          <OpenInNewWindowGlyph18 />
+          <ArrowSquareOutIcon />
         </TooltipIconButton>
       )}
     </div>

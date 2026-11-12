@@ -1,8 +1,9 @@
-import { ExpandGlyph18 } from "@/components/icons/ExpandGlyph18";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
-import { SidebarLeftGlyph18 } from "@/components/icons/SidebarLeftGlyph18";
-import { SidebarRightGlyph18 } from "@/components/icons/SidebarRightGlyph18";
-import { TerminalGlyph18 } from "@/components/icons/TerminalGlyph18";
+import {
+  ArrowsOutIcon,
+  PlusIcon,
+  SidebarSimpleIcon,
+  TerminalIcon,
+} from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { TeamSummary } from "@/team/TeamStatus";
@@ -36,7 +37,7 @@ export function TeamTopBar({
           shortcut={shortcutLabel("toggleSidebar")}
           onClick={onToggleSidebar}
         >
-          <SidebarLeftGlyph18 />
+          <SidebarSimpleIcon />
         </TooltipIconButton>
         {/* With the sidebar hidden, nothing else on screen leads back to the terminals. */}
         {!sidebarVisible && (
@@ -46,7 +47,7 @@ export function TeamTopBar({
               if (path) useTeamStore.getState().setMode(path, "terminal");
             }}
           >
-            <TerminalGlyph18 />
+            <TerminalIcon />
           </TooltipIconButton>
         )}
       </div>
@@ -65,13 +66,13 @@ export function TeamTopBar({
           disabled={!path}
           onClick={() => useTeamStore.getState().setAddOpen(true)}
         >
-          <PlusGlyph18 />
+          <PlusIcon />
         </TooltipIconButton>
         <TooltipIconButton
           label={copy.team.fit}
           onClick={() => useTeamStore.getState().fitMap?.()}
         >
-          <ExpandGlyph18 />
+          <ArrowsOutIcon />
         </TooltipIconButton>
         <TooltipIconButton
           label={copy.rightPanel.toggle}
@@ -79,7 +80,7 @@ export function TeamTopBar({
           aria-pressed={rightPanelOpen}
           onClick={onToggleRightPanel}
         >
-          <SidebarRightGlyph18 />
+          <SidebarSimpleIcon mirrored />
         </TooltipIconButton>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import type { SVGProps } from "react";
 
 import type { HarnessId } from "@/bindings";
-import { BotGlyph18 } from "@/components/icons/BotGlyph18";
+import { RobotIcon } from "@phosphor-icons/react";
 import ompLogo from "@/assets/agents/omp.svg";
 
 /**
@@ -54,7 +54,7 @@ export function AgentBrandIcon({
   ...props
 }: { harness: HarnessId | null } & SVGProps<SVGSVGElement>) {
   // A member the orchestrator added has no agent until its first worker starts: the generic mark names none.
-  if (harness === null) return <BotGlyph18 {...props} />;
+  if (harness === null) return <RobotIcon {...props} />;
   const mark = MARKS[harness];
   return (
     <svg

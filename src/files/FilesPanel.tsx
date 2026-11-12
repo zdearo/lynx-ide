@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import { CaretMinimizeGlyph18 } from "@/components/icons/CaretMinimizeGlyph18";
-import { RefreshGlyph18 } from "@/components/icons/RefreshGlyph18";
+import { ArrowsClockwiseIcon, ArrowsInSimpleIcon } from "@phosphor-icons/react";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
@@ -173,7 +172,7 @@ export function FilesPanel() {
             label={copy.files.refresh}
             onClick={() => void store.refresh(path)}
           >
-            <RefreshGlyph18
+            <ArrowsClockwiseIcon
               className={cn(root?.status === "loading" && "animate-spin")}
             />
           </TooltipIconButton>
@@ -181,7 +180,7 @@ export function FilesPanel() {
             label={copy.files.collapseAll}
             onClick={() => store.collapseAll(path)}
           >
-            <CaretMinimizeGlyph18 />
+            <ArrowsInSimpleIcon />
           </TooltipIconButton>
         </div>
       </div>

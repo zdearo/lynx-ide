@@ -1,7 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { CheckGlyph18 } from "@/components/icons/CheckGlyph18";
-import { ChevronRightGlyph18 } from "@/components/icons/ChevronRightGlyph18";
+import { CaretRightIcon, CheckIcon } from "@phosphor-icons/react";
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui";
 
 function ContextMenu({
@@ -93,7 +92,7 @@ function ContextMenuSubTrigger({
       {...props}
     >
       {children}
-      <ChevronRightGlyph18 className="ml-auto" />
+      <CaretRightIcon className="ml-auto" />
     </ContextMenuPrimitive.SubTrigger>
   );
 }
@@ -139,7 +138,7 @@ function ContextMenuCheckboxItem({
         data-slot="context-menu-checkbox-item-indicator"
       >
         <ContextMenuPrimitive.ItemIndicator>
-          <CheckGlyph18 />
+          <CheckIcon />
         </ContextMenuPrimitive.ItemIndicator>
       </span>
       {children}

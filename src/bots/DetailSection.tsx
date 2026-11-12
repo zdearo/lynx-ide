@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CircleInfoGlyph18 } from "@/components/icons/CircleInfoGlyph18";
+import { InfoIcon } from "@phosphor-icons/react";
 
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 
@@ -28,7 +28,7 @@ export function DetailSection({
             tooltipSide="top"
             className="text-muted-foreground"
           >
-            <CircleInfoGlyph18 />
+            <InfoIcon />
           </TooltipIconButton>
         )}
         <div className="ml-auto flex items-center gap-0.5">{actions}</div>

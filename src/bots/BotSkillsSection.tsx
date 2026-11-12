@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { open as pickFolder } from "@tauri-apps/plugin-dialog";
-import { PlusGlyph18 } from "@/components/icons/PlusGlyph18";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { PlusIcon, XIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 import { commands, type BotSkill } from "@/bindings";
@@ -54,7 +53,7 @@ export function BotSkillsSection({ botId }: { botId: string }) {
       hint={text.hint}
       actions={
         <TooltipIconButton label={text.add} onClick={() => void add()}>
-          <PlusGlyph18 />
+          <PlusIcon />
         </TooltipIconButton>
       }
     >
@@ -77,7 +76,7 @@ export function BotSkillsSection({ botId }: { botId: string }) {
                     label={text.removeLabel(skill.name)}
                     onClick={() => void remove(skill.name)}
                   >
-                    <XmarkGlyph18 />
+                    <XIcon />
                   </TooltipIconButton>
                 }
               />

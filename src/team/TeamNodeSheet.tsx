@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
+import { DotsThreeIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import {
@@ -199,7 +199,7 @@ export function TeamNodeSheet({
               label={copy.team.actions(member.role)}
               className="ml-auto"
             >
-              <DotsGlyph18 />
+              <DotsThreeIcon />
             </TooltipIconButton>
           </DropdownMenuTrigger>
           <TeamMemberMenu member={member} />

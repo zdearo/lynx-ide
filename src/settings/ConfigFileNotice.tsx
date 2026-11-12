@@ -1,4 +1,4 @@
-import { TriangleWarningGlyph18 } from "@/components/icons/TriangleWarningGlyph18";
+import { WarningIcon } from "@phosphor-icons/react";
 
 import { useConfigStore } from "@/config/config-store";
 import { copy } from "@/ui-copy";
@@ -15,10 +15,7 @@ export function ConfigFileNotice() {
       role="alert"
       className="flex gap-2 rounded-lg bg-destructive/10 p-3 text-xs text-destructive"
     >
-      <TriangleWarningGlyph18
-        className="mt-0.5 size-3.5 shrink-0"
-        aria-hidden
-      />
+      <WarningIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
       <div className="grid gap-1">
         <p className="font-medium">
           {snapshot.fileBroken

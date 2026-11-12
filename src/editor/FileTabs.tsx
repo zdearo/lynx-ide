@@ -1,6 +1,6 @@
 import type { KeyboardEvent } from "react";
 
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
+import { XIcon } from "@phosphor-icons/react";
 import { FileTypeIcon } from "@/files/FileTypeIcon";
 import { requestCloseFile } from "@/editor/editor-actions";
 import { useEditorStore } from "@/editor/editor-store";
@@ -91,7 +91,7 @@ export function FileTabs({ worktreePath }: { worktreePath: string }) {
               {file.dirty ? (
                 <span className="size-1.5 rounded-full bg-foreground" />
               ) : (
-                <XmarkGlyph18 />
+                <XIcon />
               )}
             </span>
             {file.dirty && (

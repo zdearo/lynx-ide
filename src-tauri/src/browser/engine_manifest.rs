@@ -3,6 +3,9 @@
 //! this file next to the archive (`bun run browser:engine -- --bundle`), and the app reads it
 //! before downloading anything.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use minisign_verify::{PublicKey, Signature};
 use serde::Deserialize;
 use url::Url;
 
@@ -35,6 +38,48 @@ pub struct EngineManifest {
     pub sha256: String,
     /// The archive's size in bytes.
     pub size: u64,
+}
+
+/// The updater's config, which holds the public half of the key that signs the app's updates. The
+/// same key signs the engine manifest, so the app has one key to trust and nothing new to ship.
+const APP_CONFIG: &str = include_str!("../../tauri.conf.json");
+
+/// The key a published manifest must be signed with.
+pub fn release_key() -> Result<PublicKey, EngineInstallError> {
+    let config: serde_json::Value = serde_json::from_str(APP_CONFIG)
+        .map_err(|error| EngineInstallError::BadSignature(error.to_string()))?;
+    let encoded = config["plugins"]["updater"]["pubkey"]
+        .as_str()
+        .ok_or_else(|| EngineInstallError::BadSignature("the app has no public key".to_owned()))?;
+    public_key(encoded)
+}
+
+/// A public key as `tauri signer generate` writes it: the minisign key file, base64 encoded.
+fn public_key(encoded: &str) -> Result<PublicKey, EngineInstallError> {
+    let text = decode_text(encoded, "the public key")?;
+    PublicKey::decode(&text).map_err(|error| EngineInstallError::BadSignature(error.to_string()))
+}
+
+fn decode_text(encoded: &str, what: &str) -> Result<String, EngineInstallError> {
+    let bytes = STANDARD
+        .decode(encoded.trim())
+        .map_err(|_| EngineInstallError::BadSignature(format!("{what} is not base64")))?;
+    String::from_utf8(bytes)
+        .map_err(|_| EngineInstallError::BadSignature(format!("{what} is not text")))
+}
+
+/// Checks that `manifest` is exactly what the holder of `key` signed. `signature` is the `.sig` file
+/// `tauri signer sign` writes: the minisign signature, base64 encoded.
+pub fn verify_signature(
+    key: &PublicKey,
+    manifest: &str,
+    signature: &str,
+) -> Result<(), EngineInstallError> {
+    let text = decode_text(signature, "the signature")?;
+    let signature = Signature::decode(&text)
+        .map_err(|error| EngineInstallError::BadSignature(error.to_string()))?;
+    key.verify(manifest.as_bytes(), &signature, false)
+        .map_err(|error| EngineInstallError::BadSignature(error.to_string()))
 }
 
 pub fn manifest_url() -> String {
@@ -171,5 +216,49 @@ mod tests {
             absolute.archive_url("https://example.test/m.json").unwrap(),
             "https://cdn.test/e.tar.gz"
         );
+    }
+
+    // A throwaway key made for these tests with `tauri signer generate`; its private half was thrown away.
+    const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDNTIwOTA3Njk5Q0E5ODMKUldTRHFaeHBCd2xTckVVbkprbHcyRUswcWdNWUp2dlYzNUFzeDZRRytPbmxVTDcxWjc4dGN4YnUK";
+    const SIGNED_MANIFEST: &str = "{\"version\":\"154.0.34-p2\",\"protocol\":2}\n";
+    const SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRHFaeHBCd2xTckFuTjNlNXdaRzdEZW9XSGg5TUFwRFZYMFlXUmZ0U0VOVFRCZ1p3U1NyUmZoK2NLeGNseEJZc2pWZndZNWNMa1BjVFNKN1hmcnZzZ1dvaDdvWkdObndBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NTAyODQ4CWZpbGU6bWFuaWZlc3QuanNvbgppM2JWcVh5bk5RSzV1bXNUS3dsY0VFVDFmR0dlM1BnajdHYkpmVkNQQXpadEdiNmo2dlFjUkU2R1ZOZFcrUzd1RGkyMDh6OHZwRUFOa1FxanhnbDFDUT09Cg==";
+
+    #[test]
+    fn the_manifest_its_owner_signed_is_accepted() {
+        let key = public_key(TEST_KEY).expect("key");
+        verify_signature(&key, SIGNED_MANIFEST, SIGNATURE).expect("verified");
+    }
+
+    #[test]
+    fn a_manifest_changed_after_signing_is_refused() {
+        let key = public_key(TEST_KEY).expect("key");
+        let changed = SIGNED_MANIFEST.replace("154.0.34", "999.0.0");
+        let error = verify_signature(&key, &changed, SIGNATURE).unwrap_err();
+        assert!(matches!(error, EngineInstallError::BadSignature(_)));
+    }
+
+    #[test]
+    fn a_signature_from_another_key_is_refused() {
+        // The app's own key did not make this signature.
+        let key = release_key().expect("the app's key");
+        let error = verify_signature(&key, SIGNED_MANIFEST, SIGNATURE).unwrap_err();
+        assert!(matches!(error, EngineInstallError::BadSignature(_)));
+    }
+
+    #[test]
+    fn a_signature_that_is_not_a_signature_is_refused() {
+        let key = public_key(TEST_KEY).expect("key");
+        for junk in ["", "not base64 !", "aGVsbG8="] {
+            let error = verify_signature(&key, SIGNED_MANIFEST, junk).unwrap_err();
+            assert!(
+                matches!(error, EngineInstallError::BadSignature(_)),
+                "{junk}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_app_carries_a_usable_key() {
+        release_key().expect("the updater key in tauri.conf.json parses");
     }
 }

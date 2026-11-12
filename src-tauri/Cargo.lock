@@ -2700,6 +2700,7 @@ dependencies = [
  "log",
  "lynx-browser-protocol",
  "lynx-pty-daemon",
+ "minisign-verify",
  "nix 0.31.3",
  "notify",
  "open",

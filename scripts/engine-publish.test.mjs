@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   pendingUploads,
   plan,
+  signFile,
   readManifest,
   uploadArgs,
   verifyArchive,
@@ -101,14 +102,16 @@ describe("plan", () => {
     expect(pointer.version).toBe("154.0.34-p2");
   });
 
-  it("uploads the archive, then the version's manifest, and the pointer last", () => {
+  it("uploads the archive, the version's manifest, the signature, and the pointer last", () => {
     const { uploads } = plan(manifestFor(), MANIFEST);
     expect(uploads.map((entry) => entry.key)).toEqual([
       `engine/154.0.34-p2/${ARCHIVE}`,
       `engine/154.0.34-p2/${MANIFEST}`,
+      `engine/${MANIFEST}.sig`,
       `engine/${MANIFEST}`,
     ]);
     expect(uploads[2].from).toBe("out");
+    expect(uploads[3].from).toBe("out");
   });
 });
 
@@ -129,7 +132,7 @@ describe("uploadArgs", () => {
   });
 
   it("takes the pointer from the output folder, not the package", () => {
-    const pointer = plan(manifestFor(), MANIFEST).uploads[2];
+    const pointer = plan(manifestFor(), MANIFEST).uploads[3];
     const args = uploadArgs(pointer, "engine-package", "engine-out");
     const file = args[args.indexOf("--file") + 1];
     expect(file.endsWith(join("engine-out", MANIFEST))).toBe(true);
@@ -147,8 +150,17 @@ describe("pendingUploads", () => {
     const pending = pendingUploads(uploads, ARCHIVE, true);
     expect(pending.map((entry) => entry.key)).toEqual([
       `engine/154.0.34-p2/${MANIFEST}`,
+      `engine/${MANIFEST}.sig`,
       `engine/${MANIFEST}`,
     ]);
-    expect(pending[1].from).toBe("out");
+    expect(pending[2].from).toBe("out");
+  });
+});
+
+describe("signFile", () => {
+  it("refuses to sign without the key, so nothing unsigned is published", () => {
+    expect(() => signFile("pointer.json", {})).toThrow(
+      /TAURI_SIGNING_PRIVATE_KEY is not set/,
+    );
   });
 });

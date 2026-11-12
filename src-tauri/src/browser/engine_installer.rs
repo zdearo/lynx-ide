@@ -20,7 +20,9 @@ use super::engine_files::{
     EngineState, HOST_NAME, INFO_FILE, RELEASE_PREFIX, current_dir, engine_root, read_status,
 };
 use super::engine_install_error::EngineInstallError;
-use super::engine_manifest::{EngineManifest, PLATFORM};
+use minisign_verify::PublicKey;
+
+use super::engine_manifest::{EngineManifest, PLATFORM, release_key, verify_signature};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// How often progress is reported while downloading.
@@ -64,9 +66,39 @@ impl Drop for EngineInstallGuard<'_> {
     }
 }
 
-/// Installs the engine the manifest at `manifest_url` describes. With `force` false, an engine of
-/// the same version that is already there is left alone.
+/// Debug builds only: `1` installs from a manifest without a signature, for an engine package served
+/// from the developer's own machine. A release build never reads it.
+pub const ALLOW_UNSIGNED_ENV: &str = "LYNX_ENGINE_ALLOW_UNSIGNED";
+
+/// Who a manifest must be signed by before the app reads anything it says.
+pub enum Trust {
+    Signed(Box<PublicKey>),
+    /// No signature is asked for. Only tests and debug builds with `ALLOW_UNSIGNED_ENV` get here.
+    Unsigned,
+}
+
+impl Trust {
+    pub fn release() -> Result<Self, EngineInstallError> {
+        if cfg!(debug_assertions) && std::env::var(ALLOW_UNSIGNED_ENV).as_deref() == Ok("1") {
+            return Ok(Self::Unsigned);
+        }
+        Ok(Self::Signed(Box::new(release_key()?)))
+    }
+}
+
+/// Installs the engine the manifest at `manifest_url` describes, if Lynx's key signed it. With
+/// `force` false, an engine of the same version that is already there is left alone.
 pub fn install(
+    lynx_home: &Path,
+    manifest_url: &str,
+    force: bool,
+    report: &mut dyn FnMut(EngineProgress),
+) -> Result<(), EngineInstallError> {
+    install_with(&Trust::release()?, lynx_home, manifest_url, force, report)
+}
+
+fn install_with(
+    trust: &Trust,
     lynx_home: &Path,
     manifest_url: &str,
     force: bool,
@@ -75,7 +107,7 @@ pub fn install(
     if PLATFORM == "unsupported" {
         return Err(EngineInstallError::Unsupported);
     }
-    let manifest = fetch_manifest(manifest_url)?;
+    let manifest = fetch_manifest(manifest_url, trust)?;
     manifest.check(PROTOCOL_VERSION)?;
 
     let installed = read_status(lynx_home);
@@ -130,15 +162,25 @@ fn network_error(url: &str, error: &ureq::Error) -> EngineInstallError {
     }
 }
 
-fn fetch_manifest(url: &str) -> Result<EngineManifest, EngineInstallError> {
+fn fetch_text(url: &str) -> Result<String, EngineInstallError> {
     let mut response = agent()
         .get(url)
         .call()
         .map_err(|error| network_error(url, &error))?;
-    let text = response
+    response
         .body_mut()
         .read_to_string()
-        .map_err(|error| network_error(url, &error))?;
+        .map_err(|error| network_error(url, &error))
+}
+
+/// The manifest, read only after its signature (the `.sig` file next to it) checks out against the
+/// exact bytes that were downloaded: the checksum inside it is what vouches for the archive.
+fn fetch_manifest(url: &str, trust: &Trust) -> Result<EngineManifest, EngineInstallError> {
+    let text = fetch_text(url)?;
+    if let Trust::Signed(key) = trust {
+        let signature = fetch_text(&format!("{url}.sig"))?;
+        verify_signature(key, &text, &signature)?;
+    }
     serde_json::from_str(&text).map_err(|error| EngineInstallError::BadManifest(error.to_string()))
 }
 
@@ -478,11 +520,17 @@ mod tests {
         force: bool,
     ) -> (Result<(), EngineInstallError>, Vec<EnginePhase>) {
         let mut phases = Vec::new();
-        let result = install(home, &server.manifest_url, force, &mut |progress| {
-            if phases.last() != Some(&progress.phase) {
-                phases.push(progress.phase);
-            }
-        });
+        let result = install_with(
+            &Trust::Unsigned,
+            home,
+            &server.manifest_url,
+            force,
+            &mut |progress| {
+                if phases.last() != Some(&progress.phase) {
+                    phases.push(progress.phase);
+                }
+            },
+        );
         (result, phases)
     }
 
@@ -699,6 +747,27 @@ mod tests {
             matches!(result, Err(EngineInstallError::Network { .. })),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn a_manifest_without_a_signature_from_lynx_is_refused_before_anything_is_downloaded() {
+        let home = tempfile::tempdir().unwrap();
+        let bytes = archive(VERSION, PROTOCOL_VERSION, true);
+        // The server answers the `.sig` request with the manifest itself: not a signature.
+        let server = serve(manifest_for(&bytes, VERSION, PROTOCOL_VERSION), bytes);
+        let trust = Trust::Signed(Box::new(release_key().expect("the app's key")));
+
+        let result = install_with(
+            &trust,
+            home.path(),
+            &server.manifest_url,
+            false,
+            &mut |_| {},
+        );
+
+        assert!(matches!(result, Err(EngineInstallError::BadSignature(_))));
+        assert_eq!(server.archive_requests.load(Ordering::SeqCst), 0);
+        assert_eq!(read_status(home.path()).state, EngineState::Missing);
     }
 
     #[test]

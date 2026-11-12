@@ -6,6 +6,8 @@ pub enum EngineInstallError {
     Network { url: String, reason: String },
     #[error("the engine manifest is not usable: {0}")]
     BadManifest(String),
+    #[error("the engine manifest is not signed by Lynx ({0}), so nothing was downloaded")]
+    BadSignature(String),
     #[error("this engine is built for {engine}, and this computer is {here}")]
     WrongPlatform { engine: String, here: String },
     #[error(

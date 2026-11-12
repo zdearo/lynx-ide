@@ -2,7 +2,9 @@
 // folder, which is never overwritten. The platform's pointer moves last, so the app never reads a
 // manifest whose archive is not there yet:
 //   bun scripts/engine-publish.mjs --package <dir> --out <dir> [--upload]
-// Without --upload it only checks the package and writes the pointer file into --out.
+// Without --upload it only checks the package and writes the pointer file into --out. With --upload
+// the pointer is signed first, with the key in TAURI_SIGNING_PRIVATE_KEY (the updater's key): the app
+// refuses a pointer whose .sig it cannot verify, so nothing unsigned is ever published.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -19,6 +21,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKER = join(ROOT, "services", "update-worker");
 const WRANGLER = join(WORKER, "node_modules", "wrangler", "bin", "wrangler.js");
+const TAURI_CLI = join(ROOT, "node_modules", "@tauri-apps", "cli", "tauri.js");
 
 export const BUCKET = "lynx-releases-prod";
 export const ENGINE_BASE = "https://downloads.zdearo.dev/engine";
@@ -94,6 +97,13 @@ export function plan(manifest, manifestFile) {
         key: `${folder}/${manifestFile}`,
         contentType: "application/json",
       },
+      // The signature lands just before the pointer it signs.
+      {
+        name: `${manifestFile}.sig`,
+        from: "out",
+        key: `engine/${manifestFile}.sig`,
+        contentType: "text/plain",
+      },
       {
         name: manifestFile,
         from: "out",
@@ -112,6 +122,24 @@ export function pendingUploads(uploads, archive, published) {
   return published
     ? uploads.filter((entry) => entry.name !== archive)
     : uploads;
+}
+
+/**
+ * Signs a file with the updater's key, which writes `<file>.sig` next to it. A missing key stops
+ * the publish: an unsigned pointer would be refused by every app.
+ */
+export function signFile(file, env = process.env) {
+  if (!env.TAURI_SIGNING_PRIVATE_KEY && !env.TAURI_SIGNING_PRIVATE_KEY_PATH) {
+    throw new Error(
+      "TAURI_SIGNING_PRIVATE_KEY is not set, so the pointer cannot be signed",
+    );
+  }
+  const result = spawnSync(
+    process.execPath,
+    [TAURI_CLI, "signer", "sign", file],
+    { env, stdio: "inherit" },
+  );
+  if (result.status !== 0) throw new Error(`signing ${file} failed`);
 }
 
 function sha256File(path) {
@@ -196,6 +224,7 @@ async function main(argv) {
     );
     return;
   }
+  signFile(join(args.out, file));
   const published = await alreadyPublished(
     `${ENGINE_BASE}/${manifest.version}/${manifest.archive}`,
   );

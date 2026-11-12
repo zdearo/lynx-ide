@@ -108,9 +108,19 @@ scripts/         build e publicação
 
 ## Licença
 
-Lynx é licenciado sob a [AGPL-3.0-only](./LICENSE). Veja também o [NOTICE](./NOTICE) (atribuição e licenças de terceiros) e o [CONTRIBUTING.md](./CONTRIBUTING.md).
+Lynx é licenciado sob a [AGPL-3.0-only](./LICENSE). Veja também o [NOTICE](./NOTICE) (atribuição e licenças de terceiros) e a seção [Contribuir](#contribuir).
 
 Lynx não é afiliado à Anthropic, à OpenAI nem aos projetos cujas logos aparecem no app (Claude, Codex, OpenCode e oh-my-pi). As logos só identificam cada agente e pertencem aos seus donos.
+
+## Contribuir
+
+- Bugs e pedidos de recurso: abra uma issue. Mudanças grandes: converse numa issue antes de escrever o código.
+- Vulnerabilidades: não abra issue pública. Veja [SECURITY.md](./SECURITY.md).
+- Antes do PR, rode `bun run check` (frontend), `bun run rust:check` e `bun run rust:test` (backend). Detalhes em [AGENTS.md](./AGENTS.md).
+- Commits e títulos de PR seguem [Conventional Commits](https://www.conventionalcommits.org), em inglês, como o código.
+- Sua contribuição entra sob a AGPL-3.0-only ("inbound = outbound"): você mantém o copyright do que escreve. Não há CLA nem DCO.
+- Envie só código seu, ou código sob MIT, BSD, ISC, Apache-2.0 ou MPL-2.0, com os avisos originais. Nunca GPL, AGPL, sem licença ou proprietário.
+- Código feito com IA é aceito; você responde pela origem dele.
 
 ## Documentação
 

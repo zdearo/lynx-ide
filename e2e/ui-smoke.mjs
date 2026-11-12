@@ -4770,7 +4770,7 @@ await session("?mock=full", 1400, 800, async (p) => {
   await p.getByRole("tab", { name: "Bots", exact: true }).click();
   await p.waitForTimeout(300);
   const signIn = p.getByRole("button", {
-    name: "Sign in with ChatGPT",
+    name: "Continue with ChatGPT",
     exact: true,
   });
   const plan = p.getByRole("switch", { name: "Use the ChatGPT plan" });

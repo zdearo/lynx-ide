@@ -247,7 +247,7 @@ export const settingsCopy = {
         signedIn: (email: string | null) =>
           email ? `Signed in as ${email}.` : "Signed in.",
         failed: "The last sign-in did not finish.",
-        signIn: "Sign in with ChatGPT",
+        signIn: "Continue with ChatGPT",
         signOut: "Sign out",
         signInFailed: "Could not start the sign-in",
         signOutFailed: "Could not sign out",

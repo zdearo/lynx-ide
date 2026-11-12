@@ -34,3 +34,22 @@ dist-ssr
 # Impeccable: keep the durable surface briefs, drop generated artifacts
 .impeccable/*
 !.impeccable/surfaces/
+
+# Secrets and local credentials: never commit these
+.dev.vars*
+*.pem
+*.key
+*.p12
+*.pfx
+*.db
+*.sqlite
+*.sqlite3
+auth.json
+hub.json
+.npmrc
+.netrc
+.envrc
+.mcp.json
+.claude/settings.local.json
+CLAUDE.local.md
+*.har

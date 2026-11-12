@@ -12,7 +12,7 @@ O foco atual é o **núcleo**: worktrees, terminais de agentes e estado básico.
 
 O Orca (`stablyai/orca`, licença MIT) é a principal referência de produto e de arquitetura. Clone local:
 
-- `/home/user/Projects/Coding/git-clone/orca`
+- Um clone local do repositório (o caminho varia por máquina).
 - Documentação do modelo de produto: `docs/site/content/docs/model/` nesse clone.
 
 Use o Orca como referência de comportamento e de decisões de arquitetura. Não copie código dele: a implementação é escrita aqui.

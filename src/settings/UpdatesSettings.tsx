@@ -77,6 +77,7 @@ export function UpdatesSettings() {
       <p className="text-nested text-muted-foreground">{text.intro}</p>
       <div className="grid gap-1.5">
         <p className="text-ui">{text.installed(status.currentVersion)}</p>
+        <p className="text-meta text-muted-foreground">{text.attribution}</p>
         <p role="status" className="text-nested text-muted-foreground">
           {phaseText(phase)}
         </p>

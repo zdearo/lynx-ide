@@ -20,12 +20,12 @@ bun run tauri dev      # the desktop app with hot reload
 
 Before opening a pull request, run the checks that apply to your change:
 
-| Change | Command |
-| --- | --- |
-| Frontend | `bun run check` |
-| Backend (Rust) | `bun run rust:check` and `bun run rust:test` |
-| IPC types | `bun run bindings` (`src/bindings.ts` is generated, never edit it by hand) |
-| UI | `bun run e2e` (headless Chrome against the mock backend) |
+| Change         | Command                                                                    |
+| -------------- | -------------------------------------------------------------------------- |
+| Frontend       | `bun run check`                                                            |
+| Backend (Rust) | `bun run rust:check` and `bun run rust:test`                               |
+| IPC types      | `bun run bindings` (`src/bindings.ts` is generated, never edit it by hand) |
+| UI             | `bun run e2e` (headless Chrome against the mock backend)                   |
 
 [AGENTS.md](AGENTS.md) describes the architecture and the conventions in detail.
 

@@ -195,6 +195,8 @@ export const settingsCopy = {
       intro:
         "Lynx looks for new versions and tells you when one is out. An update replaces the app itself. Your projects, worktrees and settings stay as they are.",
       installed: (version: string) => `Installed version ${version}`,
+      attribution:
+        "Based on Lynx by Adryel Dearo (https://github.com/zdearo/lynx-ide). Licensed under the AGPL-3.0.",
       lastChecked: (time: string) => `Last checked ${time}`,
       unsupported:
         "This copy of Lynx cannot update itself. On Linux, updates work for the AppImage only.",

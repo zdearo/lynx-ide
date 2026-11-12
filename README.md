@@ -20,11 +20,11 @@ Versão atual: **0.4.0**.
 
 Instaladores são publicados pelo CI a cada release (tag `v*`) em `downloads.zdearo.dev`:
 
-| Sistema | Formatos |
-|---|---|
-| Linux x64 | `.AppImage`, `.deb`, `.rpm` |
-| Windows x64 | `.exe` (NSIS), `.msi` |
-| macOS | ainda não |
+| Sistema     | Formatos                    |
+| ----------- | --------------------------- |
+| Linux x64   | `.AppImage`, `.deb`, `.rpm` |
+| Windows x64 | `.exe` (NSIS), `.msi`       |
+| macOS       | ainda não                   |
 
 O app se atualiza sozinho (Configurações → Updates). No Linux, só o AppImage se autoatualiza; `.deb` e `.rpm` ficam com o gerenciador de pacotes.
 
@@ -75,15 +75,15 @@ bun run browser:engine -- --bundle  # gera o pacote distribuível
 
 ## Comandos
 
-| Comando | O que faz |
-|---|---|
-| `bun run check` | typecheck, ESLint, Prettier e Vitest |
-| `bun run rust:check` | `cargo fmt --check` e `clippy -D warnings` |
-| `bun run rust:test` | testes do backend (inclui sincronia dos bindings) |
-| `bun run bindings` | regenera `src/bindings.ts` a partir do Rust |
-| `bun run e2e` | testes de interface no Chrome headless (inclui axe WCAG) |
-| `bun run bench <rótulo>` | benchmarks de backend e frontend |
-| `bun run format` | formata com Prettier |
+| Comando                  | O que faz                                                |
+| ------------------------ | -------------------------------------------------------- |
+| `bun run check`          | typecheck, ESLint, Prettier e Vitest                     |
+| `bun run rust:check`     | `cargo fmt --check` e `clippy -D warnings`               |
+| `bun run rust:test`      | testes do backend (inclui sincronia dos bindings)        |
+| `bun run bindings`       | regenera `src/bindings.ts` a partir do Rust              |
+| `bun run e2e`            | testes de interface no Chrome headless (inclui axe WCAG) |
+| `bun run bench <rótulo>` | benchmarks de backend e frontend                         |
+| `bun run format`         | formata com Prettier                                     |
 
 ## Stack
 

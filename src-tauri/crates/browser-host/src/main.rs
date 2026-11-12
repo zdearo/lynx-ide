@@ -9,6 +9,7 @@
 
 mod engine;
 mod input;
+mod sandbox;
 
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -117,9 +118,17 @@ fn run(args: &cef::args::Args, app: &mut App) -> Result<(), String> {
         .parent()
         .map(Path::to_path_buf)
         .ok_or("the host has no folder")?;
+    let sandbox = sandbox::decide();
+    if sandbox.enabled {
+        eprintln!("lynx-browser-host: the sandbox is on");
+    } else {
+        eprintln!(
+            "lynx-browser-host: running WITHOUT the sandbox: {}",
+            sandbox.reason
+        );
+    }
     let settings = Settings {
-        // Spike-grade: the sandbox needs a setuid helper the engine folder does not ship yet.
-        no_sandbox: 1,
+        no_sandbox: i32::from(!sandbox.enabled),
         windowless_rendering_enabled: 1,
         external_message_pump: 1,
         root_cache_path: path_string(&arguments.cache),

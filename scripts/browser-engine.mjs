@@ -172,8 +172,8 @@ function buildHost(cefDir) {
   return join(tauriDir, "target", release ? "release" : "debug", hostName);
 }
 
-// What is left out of the engine: the sandbox helper (the sandbox is off until the engine ships
-// one), and the files only used to link or debug.
+// What is left out of the engine: the setuid sandbox helper (the Linux sandbox builds its jail from
+// user namespaces, so the host needs no privileged file), and the files only used to link or debug.
 function skipped(name) {
   return (
     name === "chrome-sandbox" ||

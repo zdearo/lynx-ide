@@ -2669,6 +2669,7 @@ dependencies = [
  "cef",
  "embed-manifest",
  "image",
+ "libc",
  "lynx-browser-protocol",
  "serde_json",
 ]

@@ -106,6 +106,12 @@ scripts/         build e publicação
 - Estado do app: `app.db` (SQLite) na pasta de dados do sistema.
 - Logs: `~/.lynx/logs/lynx.log`.
 
+## Licença
+
+Lynx é licenciado sob a [AGPL-3.0-only](./LICENSE). Veja também o [NOTICE](./NOTICE) (atribuição e licenças de terceiros) e o [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+Lynx não é afiliado à Anthropic, à OpenAI nem aos projetos cujas logos aparecem no app (Claude, Codex, OpenCode e oh-my-pi). As logos só identificam cada agente e pertencem aos seus donos.
+
 ## Documentação
 
 - [AGENTS.md](./AGENTS.md): arquitetura e convenções em detalhe.

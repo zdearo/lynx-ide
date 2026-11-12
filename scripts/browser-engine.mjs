@@ -257,6 +257,10 @@ async function bundle(cefDir, host, version, protocol) {
       });
     }
   }
+  // CEF is BSD-3-Clause, and its credits list the licenses of the Chromium parts it contains.
+  for (const name of ["LICENSE.txt", "CREDITS.html"]) {
+    await copyFile(join(cefDir, name), join(stage, name));
+  }
   for (const name of await readdir(stage)) {
     if (!windows && /\.so(\.\d+)*$/.test(name)) {
       // Debug symbols are most of libcef's size. A missing `strip` only makes the package bigger.

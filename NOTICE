@@ -15,26 +15,59 @@ network, can find it from its settings or menus (such as an About screen):
 
 THIRD-PARTY NOTICES
 
-Fonts bundled with the app. Full license texts are in src/assets/fonts/licenses/.
+The full texts of the font licenses are in src/assets/fonts/licenses/. The
+browser engine ships CEF's LICENSE.txt and CREDITS.html in its package.
+
+Fonts
+
+  Geist Variable (interface font)
+    SIL Open Font License 1.1
+    Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font)
+    Shipped through @fontsource-variable/geist.
 
   JetBrains Mono (terminal text)
     SIL Open Font License 1.1
-    https://github.com/JetBrains/JetBrainsMono, shipped through
-    @fontsource/jetbrains-mono
+    https://github.com/JetBrains/JetBrainsMono, shipped through @fontsource/jetbrains-mono.
 
-  Symbols Nerd Font Mono (terminal icons, Nerd Fonts glyphs)
-    MIT
+  Symbols Nerd Font Mono (terminal icons)
+    MIT License, Copyright (c) 2014 Ryan L McIntyre
     https://github.com/ryanoasis/nerd-fonts
+    The symbols come from several icon sets, each under its own license. Some of
+    those sets require attribution: Font Awesome, for example, is CC BY 4.0. See
+    the Nerd Fonts repository for each set's license.
 
-  The Nerd Fonts symbols are a collection of icon sets, each under its own
-  license (Font Awesome, Material Design Icons, Octicons, Devicons, Powerline
-  and others). See the Nerd Fonts repository for the per-set licenses before
-  shipping a release.
+Icons
+
+  Phosphor Icons (@phosphor-icons/react, the icons of the interface)
+    MIT License, Copyright (c) 2020 Phosphor Icons
+    https://github.com/phosphor-icons/react
+
+  The components in src/components/ui/ are adapted from shadcn/ui
+    MIT License, Copyright (c) 2023 shadcn
+    https://github.com/shadcn-ui/ui
 
 Agent logos
 
-  src/assets/agents/omp.svg is the assets/icon.svg of the oh-my-pi repository
-  (https://github.com/can1357/oh-my-pi), MIT-licensed. Each logo is a trademark
-  of its owner, shown only to name the agent. The vector marks in
-  src/components/icons/brands/AgentBrandIcon.tsx come from Simple Icons (CC0 for
-  the drawings, same caveat for the trademarks) and from the OpenCode repository.
+  Each logo is a trademark of its owner, shown only to name the agent.
+
+  Claude and OpenAI marks (src/components/icons/brands/AgentBrandIcon.tsx):
+    from Simple Icons, CC0 1.0 for the drawings.
+
+  OpenCode mark: from the OpenCode repository, https://github.com/anomalyco/opencode,
+    MIT License, Copyright (c) 2025 opencode.
+
+  oh-my-pi mark (src/assets/agents/omp.svg): assets/icon.svg of
+    https://github.com/can1357/oh-my-pi, MIT License, Copyright (c) 2025 Mario
+    Zechner and Copyright (c) 2025-2026 Can Bölük.
+
+Browser engine
+
+  Chromium Embedded Framework (CEF)
+    BSD 3-Clause. LICENSE.txt and CREDITS.html ship inside the engine package,
+    with the licenses of the Chromium components it contains.
+
+Rust crates
+
+  cssparser, cssparser-macros, dtoa-short, option-ext and selectors are under the
+  Mozilla Public License 2.0. Their source is the crates.io release of each
+  version, which Lynx builds without changes.

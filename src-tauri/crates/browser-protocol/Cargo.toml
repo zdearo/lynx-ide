@@ -1,6 +1,7 @@
 [package]
 name = "lynx-browser-protocol"
 version = "0.1.0"
+license = "AGPL-3.0-only"
 description = "Messages and shared frame memory between Lynx and the browser host process"
 edition = "2024"
 

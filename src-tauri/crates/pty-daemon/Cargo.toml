@@ -1,6 +1,7 @@
 [package]
 name = "lynx-pty-daemon"
 version = "0.1.0"
+license = "AGPL-3.0-only"
 description = "The process that owns the terminals' PTYs, so sessions outlive the app's window"
 edition = "2024"
 

@@ -1,6 +1,7 @@
 [package]
 name = "lynx-browser-host"
 version = "0.1.0"
+license = "AGPL-3.0-only"
 description = "Runs the browser engine (CEF) in its own process and serves it to Lynx"
 edition = "2024"
 

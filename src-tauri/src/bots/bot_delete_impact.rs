@@ -93,7 +93,10 @@ mod tests {
             .add_member(NewTeamMember::Bot {
                 bot_id: "docs".to_owned(),
                 role: "Docs".to_owned(),
-                worktree: "/repo/app".to_owned(),
+                worktree: std::env::temp_dir()
+                    .join("app")
+                    .to_string_lossy()
+                    .into_owned(),
             })
             .expect("the bot joins the team");
         let writer = orchestration

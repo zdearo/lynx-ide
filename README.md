@@ -111,4 +111,4 @@ scripts/         build e publicação
 - [AGENTS.md](./AGENTS.md): arquitetura e convenções em detalhe.
 - [PRODUCT.md](./PRODUCT.md): produto e público.
 - [TODO.md](./TODO.md): fases e tarefas.
-- [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md): licenças de terceiros.
+- [NOTICE](./NOTICE): copyright, atribuição e licenças de terceiros.

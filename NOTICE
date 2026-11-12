@@ -1,0 +1,40 @@
+Lynx - Copyright (C) 2026 Adryel Dearo and contributors
+
+Unless a file or folder says otherwise, this repository is licensed under the
+GNU Affero General Public License version 3 only (SPDX: AGPL-3.0-only), in
+LICENSE. Third-party components keep their own licenses (see below).
+
+ADDITIONAL TERM UNDER AGPL-3.0 SECTION 7(b) (attribution)
+Every copy of this work, and every modified version or work based on it, that has
+an interactive user interface must keep this attribution in its Appropriate
+Legal Notices (section 0), where everyone who uses it, including remotely over a
+network, can find it from its settings or menus (such as an About screen):
+
+    Based on Lynx by Adryel Dearo (https://github.com/zdearo/lynx-ide)
+
+
+THIRD-PARTY NOTICES
+
+Fonts bundled with the app. Full license texts are in src/assets/fonts/licenses/.
+
+  JetBrains Mono (terminal text)
+    SIL Open Font License 1.1
+    https://github.com/JetBrains/JetBrainsMono, shipped through
+    @fontsource/jetbrains-mono
+
+  Symbols Nerd Font Mono (terminal icons, Nerd Fonts glyphs)
+    MIT
+    https://github.com/ryanoasis/nerd-fonts
+
+  The Nerd Fonts symbols are a collection of icon sets, each under its own
+  license (Font Awesome, Material Design Icons, Octicons, Devicons, Powerline
+  and others). See the Nerd Fonts repository for the per-set licenses before
+  shipping a release.
+
+Agent logos
+
+  src/assets/agents/omp.svg is the assets/icon.svg of the oh-my-pi repository
+  (https://github.com/can1357/oh-my-pi), MIT-licensed. Each logo is a trademark
+  of its owner, shown only to name the agent. The vector marks in
+  src/components/icons/brands/AgentBrandIcon.tsx come from Simple Icons (CC0 for
+  the drawings, same caveat for the trademarks) and from the OpenCode repository.

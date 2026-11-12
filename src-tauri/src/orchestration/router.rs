@@ -59,7 +59,7 @@ mod tests {
     use crate::agents::activity::AgentStatus;
     use crate::agents::harness::HarnessId;
     use crate::agents::hook_hub::ToolHandler;
-    use crate::config::app_config::OrchestrationConfig;
+    use crate::config::app_config::{AgentEffort, OrchestrationConfig};
     use crate::orchestration::service::{Orchestration, WorkerHost};
     use crate::persistence::AppDatabase;
     use crate::team::team_service::TeamService;
@@ -82,7 +82,12 @@ mod tests {
         fn prompt_file(&self, _text: &str) -> Result<String, String> {
             Err("no files".to_owned())
         }
-        fn launch_line(&self, _harness: HarnessId, _unattended: bool) -> String {
+        fn launch_line(
+            &self,
+            _harness: HarnessId,
+            _unattended: bool,
+            _effort: Option<AgentEffort>,
+        ) -> String {
             String::new()
         }
         fn start(&self, _worktree: &str, _command: &str) -> Result<String, String> {

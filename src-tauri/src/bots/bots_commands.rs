@@ -957,6 +957,8 @@ mod tests {
                     .to_string_lossy()
                     .into_owned(),
                 session_id: None,
+                key: None,
+                start_when_released: false,
             })
             .expect("a member under the bot");
         team.add_message(&TeamMessage {

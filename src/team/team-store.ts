@@ -7,6 +7,7 @@ import type {
   HarnessId,
   NewTeamMember,
   TeamMember as TeamMemberRecord,
+  TeamNote,
   TeamSnapshot,
   TerminalInfo,
 } from "@/bindings";
@@ -26,6 +27,7 @@ import {
 import { teamBackend, onTeamChanged } from "@/team/team-backend";
 import { isDrawn } from "@/team/team-hierarchy";
 import type { SiblingOrder } from "@/team/team-layout";
+import { activityOf } from "@/team/team-live";
 import type { TeamPair } from "@/team/team-pairs";
 import { requestCloseTerminal, resumeLine } from "@/terminal/terminal-actions";
 import { isClosedByBackend, useTerminalStore } from "@/terminal/terminal-store";
@@ -100,6 +102,8 @@ interface TeamState {
   /** Every worktree's members. The screen shows the ones in the worktree selected on the sidebar. */
   members: TeamMember[];
   pairs: TeamPair[];
+  /** Every worktree's notes, as the backend keeps them. The screen shows the ones in the worktree selected on the sidebar. */
+  notes: TeamNote[];
   /** The members whose own members are listed under them: each member's flag from the backend's snapshot. */
   expanded: string[];
   selectedId: string | null;
@@ -146,6 +150,7 @@ interface TeamState {
 
 /** A member the backend lists, with its live fields. One that lacks the agent or bot its kind names is refused, not guessed. */
 function memberOf(record: TeamMemberRecord): TeamMember {
+  const live = LIVE[record.id] ?? IDLE;
   const base = {
     id: record.id,
     worktree: record.worktree,
@@ -158,7 +163,9 @@ function memberOf(record: TeamMemberRecord): TeamMember {
     dependsOn: record.dependsOn,
     executionWorktree: record.executionWorktree,
     workerState: workerStateOf(record.workerState),
-    ...(LIVE[record.id] ?? IDLE),
+    ...live,
+    // The newest message is what the member last did. The mock's simulated activity stays for a member with none.
+    activity: activityOf(record.lastMessage) ?? live.activity,
   };
   if (record.kind === "bot" && record.botId) {
     return { ...base, kind: "bot", botId: record.botId };
@@ -488,6 +495,7 @@ function teamOf(
       useTerminalStore.getState().sessions,
     ),
     pairs: snapshot.pairs.map(({ a, b }) => ({ from: a, to: b })),
+    notes: snapshot.notes,
     // A picked member that the team no longer has is not picked.
     selectedId: snapshot.members.some((member) => member.id === selectedId)
       ? selectedId
@@ -506,6 +514,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   loaded: false,
   members: [],
   pairs: [],
+  notes: [],
   expanded: [],
   // The mock opens on its seeded pick; the real app starts with nothing picked.
   selectedId: isMockBackend() ? TEAM_NEEDS_YOU_ID : null,

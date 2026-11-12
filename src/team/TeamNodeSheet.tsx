@@ -12,10 +12,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { DOCK_RIGHT_QUERY } from "@/hooks/layout-queries";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useNow } from "@/hooks/use-now";
 import { useRightPanelStore } from "@/right-panel/right-panel-store";
 import { formatAge } from "@/terminal/relative-time";
+import { useTerminalStore } from "@/terminal/terminal-store";
 import type { TeamMember } from "@/team/team-fixtures";
 import { focusMemberCard } from "@/team/team-focus";
+import { runningLabelOf } from "@/team/team-live";
 import { talksToOf } from "@/team/team-talks";
 import { TeamMemberMenu } from "@/team/TeamMemberMenu";
 import { TeamStatusIcon } from "@/team/TeamStatus";
@@ -50,6 +53,10 @@ export function TeamNodeSheet({
   const changed = member.added > 0 || member.removed > 0;
   // Ages are read when the panel opens; it is remounted for each member picked.
   const [openedAt] = useState(() => Date.now());
+  const now = useNow();
+  const running = useTerminalStore((state) =>
+    runningLabelOf(member, state.sessions, now),
+  );
 
   // Focus goes into the panel when it opens, and back to the member's card when it closes.
   useEffect(() => {
@@ -86,6 +93,9 @@ export function TeamNodeSheet({
       <p className="flex items-center gap-1.5 text-meta text-muted-foreground">
         <TeamStatusIcon status={member.status} />
         {copy.team.status[member.status]}
+        {running !== null && (
+          <span className="ml-auto tabular-nums">{running}</span>
+        )}
       </p>
 
       {member.question && (
@@ -154,12 +164,18 @@ export function TeamNodeSheet({
         )}
       </dl>
 
-      {member.activity.text && (
+      {(member.activity.text || member.activity.kind) && (
         <p className="truncate text-nested text-muted-foreground">
-          {copy.team.activityLine(
-            member.activity.text,
-            formatAge(member.activity.at, openedAt),
-          )}
+          {member.activity.kind
+            ? copy.team.messageLine(
+                copy.team.messageKind[member.activity.kind],
+                member.activity.text,
+                formatAge(member.activity.at, openedAt),
+              )
+            : copy.team.activityLine(
+                member.activity.text,
+                formatAge(member.activity.at, openedAt),
+              )}
         </p>
       )}
 

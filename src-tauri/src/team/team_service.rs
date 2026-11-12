@@ -1,6 +1,7 @@
 //! The team's changes. Each one reads the team, checks the rules, and writes in one transaction. A lock
 //! lets one change at a time, so two requests cannot both pass a check that the other one breaks.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::agents::harness::{HarnessId, harness_name};
@@ -8,19 +9,27 @@ use crate::persistence::AppDatabase;
 
 use super::team_error::TeamError;
 use super::team_model::{
-    DispatchState, NewTeamMember, TaskState, TeamMember, TeamMemberKind, TeamMessage, TeamPair,
-    TeamSnapshot,
+    DispatchState, NewTeamMember, TaskState, TeamExchange, TeamMember, TeamMemberKind, TeamMessage,
+    TeamPair, TeamSnapshot,
 };
 use super::team_rules::{
-    check_agent_only, check_bot_id, check_bot_join, check_dependencies, check_has_orchestrator,
-    check_orchestrator_off, check_pair, check_parent, check_role_change, check_session_free,
-    check_task_pending, clean_role, clean_session_id, clean_text, clean_worktree, member_of,
+    check_agent_only, check_bot_id, check_bot_join, check_dependencies, check_exchange,
+    check_has_orchestrator, check_orchestrator_off, check_pair, check_parent, check_role_change,
+    check_session_free, check_task_pending, clean_key, clean_role, clean_session_id, clean_text,
+    clean_worktree, member_of,
 };
 use super::team_store::{
-    clear_tasks_of, insert_member, insert_message, insert_pair, remove_member, remove_pair,
-    replace_dependencies, set_dispatch_state_row, set_task_state_row, start_worker_row,
-    take_unread_messages, update_expanded, update_member, update_session,
+    clear_tasks_of, insert_exchange, insert_member, insert_message, insert_pair, mark_message_read,
+    remove_member, remove_pair, replace_dependencies, set_dispatch_state_row, set_task_state_row,
+    start_worker_row, take_unread_messages, update_expanded, update_member, update_session,
 };
+
+/// A member of a batch as it is planned: the member, what it waits for by key or id, and its key.
+struct PlannedMember {
+    member: TeamMember,
+    waits_for: Vec<String>,
+    key: Option<String>,
+}
 
 const MAX_ROLE_PROMPT_CHARS: usize = 4_000;
 const MAX_NOTE_NAME_CHARS: usize = 60;
@@ -74,9 +83,15 @@ impl TeamService {
     /// Every worktree's members and lines, read in one turn so they belong together.
     pub fn snapshot(&self) -> Result<TeamSnapshot, TeamError> {
         let _turn = self.turn();
+        let mut members = self.database.team_members()?;
+        let mut last = self.database.last_messages()?;
+        for member in &mut members {
+            member.last_message = last.remove(&member.id);
+        }
         Ok(TeamSnapshot {
-            members: self.database.team_members()?,
+            members,
             pairs: self.database.team_pairs()?,
+            notes: self.database.team_notes()?,
         })
     }
 
@@ -89,10 +104,100 @@ impl TeamService {
     /// Adds a member to its worktree's team. An agent may start under an orchestrator of that worktree; without
     /// one it is the root of a new tree and gets no task. A bot joins as an orchestrator.
     pub fn add_member(&self, input: NewTeamMember) -> Result<TeamMember, TeamError> {
+        let mut added = self.add_members(vec![input])?;
+        Ok(added.remove(0))
+    }
+
+    /// Adds members to one worktree's team, or to several, as one change. The whole batch is checked first: a member
+    /// may wait for a member of the batch by its key, and a bad key, a cycle or a bad member writes nothing.
+    /// Returns the members in the order they were given.
+    pub fn add_members(&self, inputs: Vec<NewTeamMember>) -> Result<Vec<TeamMember>, TeamError> {
         let _turn = self.turn();
-        let members = self.database.team_members()?;
-        let mut waits_for = Vec::new();
-        let mut member = match input {
+        let existing = self.database.team_members()?;
+        // The team as it stands, with the batch members built so far, so each check sees the ones before it.
+        let mut members = existing.clone();
+        let mut batch: Vec<PlannedMember> = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let planned = self.plan_member(&members, input)?;
+            if let Some(key) = &planned.key
+                && batch.iter().any(|other| other.key.as_ref() == Some(key))
+            {
+                return Err(TeamError::DuplicateKey);
+            }
+            members.push(planned.member.clone());
+            batch.push(planned);
+        }
+
+        // A reference is a key of the batch when one matches, and otherwise the id of a member already in the team.
+        let ids_by_key: HashMap<String, String> = batch
+            .iter()
+            .filter_map(|planned| {
+                planned
+                    .key
+                    .as_ref()
+                    .map(|key| (key.clone(), planned.member.id.clone()))
+            })
+            .collect();
+        let waits_for: Vec<Vec<String>> = batch
+            .iter()
+            .map(|planned| {
+                planned
+                    .waits_for
+                    .iter()
+                    .map(|reference| {
+                        ids_by_key
+                            .get(reference)
+                            .cloned()
+                            .unwrap_or_else(|| reference.clone())
+                    })
+                    .collect()
+            })
+            .collect();
+        // The lines of the team and of the batch: a cycle through any of them is refused.
+        let edges: Vec<(String, String)> = existing
+            .iter()
+            .flat_map(|member| {
+                member
+                    .depends_on
+                    .iter()
+                    .map(|on| (member.id.clone(), on.clone()))
+            })
+            .chain(batch.iter().zip(&waits_for).flat_map(|(planned, ids)| {
+                ids.iter().map(|on| (planned.member.id.clone(), on.clone()))
+            }))
+            .collect();
+        for (planned, ids) in batch.iter().zip(&waits_for) {
+            check_dependencies(&members, &edges, &planned.member, ids)?;
+        }
+
+        let written: Vec<TeamMember> = batch
+            .into_iter()
+            .zip(&waits_for)
+            .map(|(planned, ids)| TeamMember {
+                depends_on: ids.clone(),
+                ..planned.member
+            })
+            .collect();
+        self.database.team_transaction(|connection| {
+            for member in &written {
+                insert_member(connection, member)?;
+            }
+            for member in &written {
+                replace_dependencies(connection, &member.id, &member.depends_on)?;
+            }
+            Ok(())
+        })?;
+        Ok(written)
+    }
+
+    /// Checks one member of a batch against the team and the batch members before it, and builds it. What it waits
+    /// for is checked by `add_members`, once every key of the batch is known.
+    fn plan_member(
+        &self,
+        members: &[TeamMember],
+        input: NewTeamMember,
+    ) -> Result<PlannedMember, TeamError> {
+        let (mut member, waits_for, key) = match input {
             NewTeamMember::Agent {
                 role,
                 harness,
@@ -103,10 +208,13 @@ impl TeamService {
                 depends_on,
                 worktree,
                 session_id,
+                key,
+                start_when_released,
             } => {
                 let mut member = TeamMember {
                     harness,
                     orchestrator,
+                    start_when_released,
                     session_id: session_id.as_deref().map(clean_session_id).transpose()?,
                     ..blank_member(
                         clean_worktree(&worktree)?,
@@ -116,20 +224,20 @@ impl TeamService {
                 };
                 // The screen adopts a terminal agent as it appears, which can race a worker a bot attached to it.
                 if let Some(session_id) = &member.session_id {
-                    check_session_free(&members, session_id, None)?;
+                    check_session_free(members, session_id, None)?;
                 }
                 // A member with no orchestrator keeps no task, so the task is only read with a parent.
+                let mut waits_for = Vec::new();
                 if let Some(parent_id) = parent_id {
-                    check_parent(&members, &member, &parent_id)?;
+                    check_parent(members, &member, &parent_id)?;
                     member.task = clean_text(&task)?;
                     member.acceptance = clean_text(&acceptance)?;
                     member.parent_id = Some(parent_id);
                     member.task_state = Some(TaskState::Pending);
-                    check_dependencies(&members, &[], &member, &depends_on)?;
                     waits_for = depends_on;
                 }
-                member.depends_on = waits_for.clone();
-                member
+                let key = key.as_deref().map(clean_key).transpose()?;
+                (member, waits_for, key)
             }
             NewTeamMember::Bot {
                 bot_id,
@@ -138,21 +246,46 @@ impl TeamService {
             } => {
                 let worktree = clean_worktree(&worktree)?;
                 self.check_bot(&bot_id)?;
-                check_bot_join(&members, &worktree, &bot_id)?;
-                TeamMember {
+                check_bot_join(members, &worktree, &bot_id)?;
+                let member = TeamMember {
                     bot_id: Some(bot_id),
                     orchestrator: true,
                     ..blank_member(worktree, TeamMemberKind::Bot, clean_role(&role)?)
-                }
+                };
+                (member, Vec::new(), None)
             }
         };
         // A root orchestrator opens its branch; anything else starts closed.
         member.expanded = member.orchestrator && member.parent_id.is_none();
-        self.database.team_transaction(|connection| {
-            insert_member(connection, &member)?;
-            replace_dependencies(connection, &member.id, &waits_for)
-        })?;
-        Ok(member)
+        Ok(PlannedMember {
+            member,
+            waits_for,
+            key,
+        })
+    }
+
+    /// Keeps a question or an answer between two members of one worktree's team, with who sent it and who receives it.
+    pub fn add_exchange(&self, exchange: &TeamExchange) -> Result<(), TeamError> {
+        let _turn = self.turn();
+        check_exchange(&self.database.team_members()?, exchange)?;
+        self.database
+            .team_transaction(|connection| insert_exchange(connection, exchange))?;
+        Ok(())
+    }
+
+    /// The questions and answers a member sent or received, oldest first. Reading them does not mark them read.
+    #[cfg(test)]
+    pub fn exchanges_of(&self, member_id: &str) -> Result<Vec<TeamExchange>, TeamError> {
+        let _turn = self.turn();
+        Ok(self.database.exchanges_of(member_id)?)
+    }
+
+    /// Marks one message read, so the next check does not repeat it.
+    pub fn mark_message_read(&self, message_id: &str) -> Result<(), TeamError> {
+        let _turn = self.turn();
+        self.database
+            .team_transaction(|connection| mark_message_read(connection, message_id))?;
+        Ok(())
     }
 
     /// Opens or closes a member's branch in the team tree. The screen reads it back from the snapshot.
@@ -567,6 +700,8 @@ fn blank_member(worktree: String, kind: TeamMemberKind, role: String) -> TeamMem
         session_id: None,
         expanded: false,
         worker_state: None,
+        last_message: None,
+        start_when_released: false,
     }
 }
 

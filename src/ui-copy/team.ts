@@ -19,7 +19,10 @@ export const teamCopy = {
       failed: "Failed",
     },
     needsYouBadge: "needs you",
-    rowLabel: (role: string, status: string) => `${role}, ${status}`,
+    runningFor: (age: string) => `Running ${age}`,
+    justStarted: "Just started",
+    rowLabel: (role: string, status: string, running: string | null = null) =>
+      running ? `${role}, ${status}, ${running}` : `${role}, ${status}`,
     sheetLabel: (role: string, agent: string) => `${role} · ${agent}`,
     actions: (role: string) => `Actions for ${role}`,
     collapse: (role: string) => `Collapse ${role}`,
@@ -77,7 +80,23 @@ export const teamCopy = {
     runsIn: "Runs in",
     talksTo: "Talks to",
     activityLine: (text: string, age: string) => `${text} · ${age}`,
+    /** A message's activity: its kind's name, then its text when it has one. */
+    messageLine: (kind: string, text: string, age: string) =>
+      text ? `${kind}: ${text} · ${age}` : `${kind} · ${age}`,
+    messageKind: {
+      done: "Report",
+      failed: "Failed",
+      noReport: "No report",
+      needsYou: "Needs you",
+      question: "Asks",
+      answer: "Answer",
+      other: "Message",
+    },
     notes: "Notes",
+    teamNotes: {
+      title: "Team notes",
+      count: (count: number) => (count === 1 ? "1 note" : `${count} notes`),
+    },
     simulatedTerminal:
       "Simulated output: no session is attached to a team member in this prototype.",
     terminalClosed: "This agent's terminal is closed.",

@@ -1122,9 +1122,12 @@ export function installMockTauri(scenario: string): void {
     expanded: mockExpanded.has(member.id),
     // The mock has no orchestration, so no member is a worker.
     workerState: null,
+    // The mock's simulated activity stands in for messages, so no member has one here.
+    lastMessage: null,
   });
   const teamSnapshot = (): TeamSnapshot => ({
     members: mockMembers.map(recordOf),
+    notes: [],
     pairs: mockPairs.map(({ from, to }) => ({
       a: from < to ? from : to,
       b: from < to ? to : from,

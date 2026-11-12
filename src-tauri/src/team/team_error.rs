@@ -54,6 +54,14 @@ pub enum TeamError {
     DependencyCycle,
     #[error("a task can only wait for tasks of its own worktree")]
     DependencyOtherWorktree,
+    #[error("a member's key needs 1 to 60 characters")]
+    InvalidKey,
+    #[error("two members of the batch have the same key")]
+    DuplicateKey,
+    #[error("only a question or an answer goes between two members")]
+    NotAnExchange,
+    #[error("a question or an answer needs a text of 1 to 8000 characters")]
+    InvalidExchange,
     #[error("the task already started, so what it waits for cannot change")]
     TaskStarted,
     #[error("a role prompt needs 1 to 4000 characters")]

@@ -5,6 +5,8 @@ use rusqlite::{OptionalExtension, params};
 
 use crate::persistence::{AppDatabase, DatabaseError};
 
+use super::team_model::TeamNote;
+
 impl AppDatabase {
     /// Every role preset as (name, prompt), by name.
     pub fn team_roles(&self) -> Result<Vec<(String, String)>, DatabaseError> {
@@ -43,6 +45,21 @@ impl AppDatabase {
             .lock()
             .execute("DELETE FROM team_roles WHERE name = ?1", [name])?
             > 0)
+    }
+
+    /// Every note of every worktree's team, in worktree and name order.
+    pub fn team_notes(&self) -> Result<Vec<TeamNote>, DatabaseError> {
+        let connection = self.lock();
+        let mut statement = connection
+            .prepare("SELECT worktree, name, content FROM team_notes ORDER BY worktree, name")?;
+        let rows = statement.query_map([], |row| {
+            Ok(TeamNote {
+                worktree: row.get(0)?,
+                name: row.get(1)?,
+                body: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// The names of the notes a worktree's team shares, by name.

@@ -1367,6 +1367,14 @@ export type TaskState = "pending" | "running" | "done" | "failed" | "cancelled";
 /**  The team changed: a member or a line between members. The screen reads the snapshot again. */
 export type TeamChanged = Record<string, never>;
 
+/**  The newest message kept for a member, as the screen shows it. The kind is the stored text. */
+export type TeamLastMessage = {
+	kind: string,
+	body: string,
+	/**  When the message was kept, in seconds since the Unix epoch. A u32: the contract has no 64-bit integers. */
+	createdAt: number,
+};
+
 export type TeamMember = {
 	id: string,
 	/**
@@ -1410,10 +1418,20 @@ export type TeamMember = {
 	 *  orchestration fills it from the member's reports and its process.
 	 */
 	workerState: string | null,
+	/**  The newest message kept for this member. Only the snapshot fills it. */
+	lastMessage: TeamLastMessage | null,
 };
 
 /**  A CLI agent in a worktree, or a Lynx bot. A bot only orchestrates. */
 export type TeamMemberKind = "agent" | "bot";
+
+/**  A note a team shares, as `team_notes` keeps it: its worktree, its name and its text. */
+export type TeamNote = {
+	/**  The worktree whose team the note belongs to. */
+	worktree: string,
+	name: string,
+	body: string,
+};
 
 /**  A permission for two members to talk. Stored once, with the lower id first. */
 export type TeamPair = {
@@ -1421,10 +1439,11 @@ export type TeamPair = {
 	b: string,
 };
 
-/**  Every worktree's members and lines, in the order they were made. The screen filters by worktree. */
+/**  Every worktree's members, lines and notes, in the order they were made. The screen filters by worktree. */
 export type TeamSnapshot = {
 	members: TeamMember[],
 	pairs: TeamPair[],
+	notes: TeamNote[],
 };
 
 /**

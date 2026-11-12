@@ -2,8 +2,8 @@
 //! orchestrator hears back. The workers are members of the team, so the team holds what they do. Terminals and
 //! worktrees come through `WorkerHost`, so the rules are tested without them.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -14,21 +14,34 @@ use crate::agents::activity::AgentStatus;
 use crate::agents::harness::{HarnessId, harness_name};
 use crate::agents::launch_line::unattended_settings;
 use crate::bots::bot_bridge::bot_of_session;
-use crate::config::app_config::OrchestrationConfig;
+use crate::config::app_config::{AgentEffort, OrchestrationConfig};
 use crate::persistence::DatabaseError;
 use crate::team::team_error::TeamError;
 use crate::team::team_model::{
-    DispatchState, MessageKind, NewTeamMember, Outcome, TaskState, TeamMember, TeamMemberKind,
-    TeamMessage, TeamSnapshot, worker_card_state,
+    DispatchState, MessageKind, NewTeamMember, Outcome, TaskState, TeamExchange, TeamMember,
+    TeamMemberKind, TeamMessage, TeamSnapshot, worker_card_state,
 };
+use crate::team::team_rules::MAX_EXCHANGE_CHARS;
 use crate::team::team_service::{TeamService, new_id};
+
+use super::agent_wake::free_to_type;
+use super::tools::AGENTS;
 
 const MAX_REPORT_CHARS: usize = 4_000;
 const MAX_MODEL_CHARS: usize = 100;
 /// The longest answer a coordinator may type into a worker's terminal, in characters.
 const MAX_REPLY: usize = 2000;
+/// The longest question a member may send, in characters: a multi-line text pasted into a terminal.
+const MAX_ASK: usize = 8_000;
 /// How often a check looks again while it waits for something to arrive.
 const CHECK_POLL: Duration = Duration::from_millis(500);
+/// How often a question looks again while it waits for its turn, its typing or its answer.
+const ASK_POLL: Duration = Duration::from_millis(100);
+/// How long a worker may look idle after a question went in before its turn counts as over. An agent shows that it
+/// started only after it reads the question, so an idle status that comes first is not the answer.
+/// shortcut: a worker that never shows work counts as done after this, so its answer can come before its work ends.
+/// Upgrade: end the turn only on the agent's Stop hook.
+const IDLE_AFTER_ASK: Duration = Duration::from_secs(2);
 
 /// Where a worker works: in a worktree of its own, or in the team's worktree, where the orchestrator works.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,9 +71,14 @@ pub trait WorkerHost: Send + Sync + 'static {
     fn new_worktree(&self, from: &str, name: &str) -> Result<String, String>;
     /// Writes `text` where an agent can read it, and returns the path.
     fn prompt_file(&self, text: &str) -> Result<String, String>;
-    /// The line that starts an agent, with the launch mode and arguments Settings hold for it.
-    /// `unattended` says nobody watches its terminal, so it must not stop to ask for permissions.
-    fn launch_line(&self, harness: HarnessId, unattended: bool) -> String;
+    /// The line that starts an agent, with the launch mode and arguments Settings hold for it, and the effort the
+    /// call names. `unattended` says nobody watches its terminal, so it must not stop to ask for permissions.
+    fn launch_line(
+        &self,
+        harness: HarnessId,
+        unattended: bool,
+        effort: Option<AgentEffort>,
+    ) -> String;
     /// Whether the coordinator may start workers in the project of `worktree`. Anyone may by default.
     /// A refusal says what to do, for the agent that reads it.
     fn allow_start(&self, _coordinator: &str, _worktree: &str) -> Result<(), String> {
@@ -98,6 +116,15 @@ pub trait WorkerHost: Send + Sync + 'static {
     fn changed(&self) {}
     /// Sends Enter to a worker once `text` shows on its screen. Nothing by default.
     fn submit_when_shown(&self, _session: &str, _text: &str) {}
+    /// Whether a question may be typed into the session now: the agent is idle or done, and the person has no
+    /// draft in its input. The same guard that decides when a note is typed.
+    fn ready_for_input(&self, session: &str) -> bool {
+        free_to_type(self.status(session), false)
+    }
+    /// Types `text` into the session as a paste, then presses Enter, so a question with line breaks reads as one.
+    fn send_pasted(&self, _session: &str, _text: &str) -> Result<(), String> {
+        Err("this host cannot type into a terminal".to_owned())
+    }
 }
 
 /// Why an orchestration request is refused. The messages reach the agent, so they say what to do.
@@ -149,6 +176,22 @@ pub enum OrchestrationError {
     WorkerRunning(String),
     #[error("this member has not started a worker yet")]
     NoWorker,
+    #[error(
+        "the question was not typed and nothing was sent: the worker was busy, had another question first, or the person had a draft in its input. Ask again later, or read the worker with lynx_worker_read"
+    )]
+    AskNotTyped,
+    #[error(
+        "the question was typed into the worker, and it did not answer in time. Read the worker with lynx_worker_read to see how far it got"
+    )]
+    AskNoAnswer,
+    #[error("{0} is not in your team: a member can only ask the members of its own team")]
+    NotInYourTeam(String),
+    #[error("a member cannot ask itself")]
+    AskSelf,
+    #[error(
+        "that member already waits for an answer from you, directly or through others, so it cannot answer you: ask someone else, or wait until its answer to you is in"
+    )]
+    AskCycle,
     #[error("{0}")]
     Host(String),
     #[error("{0}")]
@@ -230,11 +273,54 @@ pub enum Assignment {
     Pending,
 }
 
+/// What a question to a worker returns: the report it sent for the question, if any, what its terminal shows, and
+/// whether it still runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskAnswer {
+    pub report: Option<String>,
+    pub output: String,
+    pub running: bool,
+    pub status: Option<AgentStatus>,
+}
+
+/// One member of an `add_members` call. `key` names it for the other members of the same call, which may wait for
+/// it. `start` starts its worker with `agent`, now when what it waits for is done and once it is released otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewMember {
+    pub key: Option<String>,
+    pub role: String,
+    pub task: String,
+    pub acceptance: String,
+    pub depends_on: Vec<String>,
+    pub start: bool,
+    pub agent: Option<HarnessId>,
+}
+
+/// A member `add_members` wrote, and for a member that asked to start, what its start gave: the worker or the reason
+/// it did not start. A member that waits for its dependencies has none yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddedMember {
+    pub member: TeamMember,
+    pub started: Option<Result<WorkerStart, String>>,
+}
+
+/// What a worker starts with besides its agent: the model and the effort the call names.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LaunchSetup {
+    pub model: Option<String>,
+    pub effort: Option<AgentEffort>,
+}
+
 pub struct Orchestration {
     team: Arc<TeamService>,
     host: Arc<dyn WorkerHost>,
     /// Which workers were waiting for an answer at the last look, so each wait is said once.
     waiting: Mutex<HashMap<String, bool>>,
+    /// One gate per worker: a question holds it until its answer, so the next one waits its turn.
+    asks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// The asks in progress, as (asker, asked), one entry per ask: two asks of the same pair can overlap, and each
+    /// leaves its own entry. Kept in memory: an ask lasts one tool call.
+    waits: Mutex<Vec<(String, String)>>,
 }
 
 impl Orchestration {
@@ -243,22 +329,107 @@ impl Orchestration {
             team,
             host,
             waiting: Mutex::new(HashMap::new()),
+            asks: Mutex::new(HashMap::new()),
+            waits: Mutex::new(Vec::new()),
         }
     }
 
-    /// Adds a member under one of the caller's orchestrators: a task and a "done when" line, and what it waits for.
-    /// The member has no agent until a worker starts for it.
-    pub fn add_member(
+    /// Adds members under one of the caller's orchestrators as one change: the whole list is checked before any member
+    /// is written. A member may wait for another of the list by its key. A member that asks to start starts now when
+    /// what it waits for is done; otherwise its agent is kept and its worker starts once it is released.
+    pub fn add_members(
         &self,
         caller: &str,
         parent: Option<&str>,
-        role: &str,
-        task: &str,
-        acceptance: &str,
-        depends_on: Vec<String>,
+        members: Vec<NewMember>,
+    ) -> Result<Vec<AddedMember>, OrchestrationError> {
+        if members.is_empty() {
+            return Err(OrchestrationError::InvalidText(
+                "a member list needs at least one member".to_owned(),
+            ));
+        }
+        let parent = self.parent_under(caller, parent)?;
+        for member in &members {
+            if member.task.trim().is_empty() {
+                return Err(OrchestrationError::InvalidText(
+                    "a member needs a task: say what it must do".to_owned(),
+                ));
+            }
+            if member.start {
+                let agent = member.agent.ok_or_else(|| {
+                    OrchestrationError::InvalidText(format!(
+                        "a member that starts needs its agent: name one of {}",
+                        AGENTS.join(", ")
+                    ))
+                })?;
+                self.check_can_launch(caller, &parent.worktree, agent, None)?;
+            }
+        }
+        let existing = self.team.members()?;
+        let waits: Vec<bool> = members
+            .iter()
+            .map(|member| waits_for_tasks(&existing, &member.depends_on))
+            .collect();
+        let inputs = members
+            .iter()
+            .zip(&waits)
+            .map(|(member, waits)| NewTeamMember::Agent {
+                role: member.role.clone(),
+                // A member that waits keeps its agent until it is released; one that starts now gets it at its start.
+                harness: member.agent.filter(|_| member.start && *waits),
+                parent_id: Some(parent.id.clone()),
+                orchestrator: false,
+                task: member.task.clone(),
+                acceptance: member.acceptance.clone(),
+                depends_on: member.depends_on.clone(),
+                worktree: parent.worktree.clone(),
+                session_id: None,
+                key: member.key.clone(),
+                start_when_released: member.start && *waits,
+            })
+            .collect();
+        let written = self.team.add_members(inputs)?;
+        self.host.changed();
+        let mut added = Vec::with_capacity(written.len());
+        for ((member, request), waits) in written.into_iter().zip(&members).zip(&waits) {
+            let started = match request.agent {
+                Some(agent) if request.start && !*waits => Some(
+                    self.start_worker(
+                        caller,
+                        &member.id,
+                        agent,
+                        WorkerWorktree::Current,
+                        LaunchSetup::default(),
+                    )
+                    .map_err(|error| error.to_string()),
+                ),
+                _ => None,
+            };
+            added.push(AddedMember { member, started });
+        }
+        // The members the calls above changed are read again, so the answer shows their state.
+        let now = self.team.members()?;
+        Ok(added
+            .into_iter()
+            .map(|added| AddedMember {
+                member: now
+                    .iter()
+                    .find(|other| other.id == added.member.id)
+                    .cloned()
+                    .unwrap_or(added.member),
+                started: added.started,
+            })
+            .collect())
+    }
+
+    /// The orchestrator the caller adds a member under: the one it names, or its only one.
+    fn parent_under(
+        &self,
+        caller: &str,
+        parent: Option<&str>,
     ) -> Result<TeamMember, OrchestrationError> {
         let parents = self.orchestrators(caller)?;
-        let parent = match (parent, parents.as_slice()) {
+        let chosen = match (parent, parents.as_slice()) {
             (Some(id), _) => parents
                 .iter()
                 .find(|parent| parent.id == id)
@@ -272,24 +443,64 @@ impl Orchestration {
                 return Err(OrchestrationError::ParentChoice(choices.join(", ")));
             }
         };
-        if task.trim().is_empty() {
-            return Err(OrchestrationError::InvalidText(
-                "a member needs a task: say what it must do".to_owned(),
-            ));
+        Ok(chosen.clone())
+    }
+
+    /// Starts the workers of the members that waited for finished tasks, once everything each waits for is done. A
+    /// start that fails leaves its member pending, where the orchestrator sees it in the team.
+    fn start_released(&self) -> Result<(), OrchestrationError> {
+        let members = self.team.members()?;
+        for member in members.iter().filter(|member| {
+            member.start_when_released
+                && member.task_state == Some(TaskState::Pending)
+                && member.depends_on.iter().all(|id| {
+                    members
+                        .iter()
+                        .any(|other| &other.id == id && other.task_state == Some(TaskState::Done))
+                })
+        }) {
+            let caller = member
+                .parent_id
+                .as_deref()
+                .and_then(|parent| members.iter().find(|other| other.id == parent))
+                .and_then(|parent| parent.session_id.clone());
+            let (Some(caller), Some(harness)) = (caller, member.harness) else {
+                continue;
+            };
+            let _ = self.launch(
+                &caller,
+                member,
+                harness,
+                WorkerWorktree::Current,
+                LaunchSetup::default(),
+                false,
+            );
         }
-        let member = self.team.add_member(NewTeamMember::Agent {
+        Ok(())
+    }
+
+    /// One member under one of the caller's orchestrators, as `add_members` writes it with no start.
+    #[cfg(test)]
+    pub fn add_member(
+        &self,
+        caller: &str,
+        parent: Option<&str>,
+        role: &str,
+        task: &str,
+        acceptance: &str,
+        depends_on: Vec<String>,
+    ) -> Result<TeamMember, OrchestrationError> {
+        let member = NewMember {
+            key: None,
             role: role.to_owned(),
-            harness: None,
-            parent_id: Some(parent.id.clone()),
-            orchestrator: false,
             task: task.to_owned(),
             acceptance: acceptance.to_owned(),
             depends_on,
-            worktree: parent.worktree.clone(),
-            session_id: None,
-        })?;
-        self.host.changed();
-        Ok(member)
+            start: false,
+            agent: None,
+        };
+        let mut added = self.add_members(caller, parent, vec![member])?;
+        Ok(added.remove(0).member)
     }
 
     /// Removes one of the caller's members. A worker that still runs stops the dismissal, since nothing would
@@ -321,12 +532,12 @@ impl Orchestration {
         member_ref: &str,
         harness: HarnessId,
         worktree: WorkerWorktree,
-        model: Option<&str>,
+        setup: LaunchSetup,
     ) -> Result<WorkerStart, OrchestrationError> {
         let parents = self.orchestrators(caller)?;
         let member = self.child_of(&parents, member_ref)?;
         self.check_can_start(&member)?;
-        self.launch(caller, &member, harness, worktree, model, false)
+        self.launch(caller, &member, harness, worktree, setup, false)
     }
 
     /// The member's task is pending, has text, and everything it waits for is done.
@@ -362,12 +573,12 @@ impl Orchestration {
     fn check_can_launch(
         &self,
         caller: &str,
-        member: &TeamMember,
+        worktree: &str,
         harness: HarnessId,
         model: Option<&str>,
     ) -> Result<(), OrchestrationError> {
         self.host
-            .allow_start(caller, &member.worktree)
+            .allow_start(caller, worktree)
             .map_err(OrchestrationError::Host)?;
         // A worker reports through Lynx's tools, which come with the agent's hooks: without them it cannot finish.
         if !self.host.agent_on(harness) {
@@ -388,10 +599,10 @@ impl Orchestration {
         member: &TeamMember,
         harness: HarnessId,
         worktree: WorkerWorktree,
-        model: Option<&str>,
+        setup: LaunchSetup,
         continuing: bool,
     ) -> Result<WorkerStart, OrchestrationError> {
-        self.check_can_launch(caller, member, harness, model)?;
+        self.check_can_launch(caller, &member.worktree, harness, setup.model.as_deref())?;
         let project = member.worktree.clone();
         let execution = match worktree {
             WorkerWorktree::Current => project.clone(),
@@ -417,7 +628,7 @@ impl Orchestration {
             .map_err(OrchestrationError::Host)?;
         // A bot does not watch its workers' terminals, so they never stop to ask for permissions.
         let unattended = bot_of_session(caller).is_some();
-        let line = self.host.launch_line(harness, unattended);
+        let line = self.host.launch_line(harness, unattended, setup.effort);
         // Nobody answers an unattended worker's first-run prompts, so its settings turn them off.
         let line = match unattended_settings(harness) {
             Some(settings) if unattended => format!(
@@ -427,7 +638,7 @@ impl Orchestration {
             _ => line,
         };
         let instruction = read_instruction(&prompt);
-        let command = agent_command(harness, &line, &instruction, model);
+        let command = agent_command(harness, &line, &instruction, setup.model.as_deref());
         let session = self
             .host
             .start(&execution, &command)
@@ -514,7 +725,7 @@ impl Orchestration {
         caller: &str,
         member_ref: &str,
         harness: HarnessId,
-        model: Option<&str>,
+        setup: LaunchSetup,
     ) -> Result<WorkerStart, OrchestrationError> {
         let parents = self.orchestrators(caller)?;
         let member = self.child_of(&parents, member_ref)?;
@@ -522,7 +733,7 @@ impl Orchestration {
             return Err(OrchestrationError::NoWorker);
         }
         // Refused before the old agent is touched, so a refusal never leaves the member without a worker.
-        self.check_can_launch(caller, &member, harness, model)?;
+        self.check_can_launch(caller, &member.worktree, harness, setup.model.as_deref())?;
         if let Some(session) = &member.session_id
             && self.host.running(session)
         {
@@ -531,7 +742,7 @@ impl Orchestration {
         self.team
             .set_dispatch_state(&member.id, DispatchState::Stopped)?;
         self.team.set_task_state(&member.id, TaskState::Pending)?;
-        self.launch(caller, &member, harness, WorkerWorktree::Same, model, true)
+        self.launch(caller, &member, harness, WorkerWorktree::Same, setup, true)
     }
 
     /// Brings the work of a member that worked in a worktree of its own into the team's worktree. Only when the
@@ -692,6 +903,8 @@ impl Orchestration {
         };
         self.team
             .record_report(&worker.id, outcome.task_state(), &message)?;
+        // A member that waited for this task may start now; a start that fails leaves it pending.
+        self.start_released()?;
         // The worker's card shows Done from this report, even while its process still runs.
         self.host.changed();
         self.tell(&worker)?;
@@ -897,7 +1110,10 @@ impl Orchestration {
                 .find_map(|message| match message.kind {
                     MessageKind::Done => Some(Outcome::Done),
                     MessageKind::Failed => Some(Outcome::Failed),
-                    MessageKind::NoReport | MessageKind::NeedsYou => None,
+                    MessageKind::NoReport
+                    | MessageKind::NeedsYou
+                    | MessageKind::Question
+                    | MessageKind::Answer => None,
                 });
             let process_running = member
                 .session_id
@@ -959,12 +1175,7 @@ impl Orchestration {
             .session_id
             .clone()
             .ok_or(OrchestrationError::NoWorker)?;
-        let output = match self.host.output(&session) {
-            Ok(text) => text,
-            // A closed terminal has no screen left, whether or not the app has noticed yet.
-            Err(_) if !self.host.running(&session) => String::new(),
-            Err(error) => return Err(OrchestrationError::Host(error)),
-        };
+        let output = self.screen_of(&session)?;
         let reports = self
             .team
             .messages_of(&member.id)?
@@ -1010,6 +1221,280 @@ impl Orchestration {
         self.host
             .send(&session, text)
             .map_err(OrchestrationError::Host)
+    }
+
+    /// Types `text` into a running worker and waits for its answer, within `wait` in all. The question waits behind
+    /// the worker's other questions, and while the worker is busy or the person has a draft in its input. The answer
+    /// is the report the worker sends after the question, or the end of its turn, with what its terminal shows. The
+    /// question and the answer are kept in the team, both read, since the caller has them already.
+    pub fn ask_worker(
+        &self,
+        caller: &str,
+        member_ref: &str,
+        text: &str,
+        wait: Duration,
+    ) -> Result<AskAnswer, OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let member = self.child_of(&parents, member_ref)?;
+        let session = member
+            .session_id
+            .clone()
+            .ok_or(OrchestrationError::NoWorker)?;
+        let from = member
+            .parent_id
+            .clone()
+            .ok_or_else(|| OrchestrationError::UnknownMember(member_ref.to_owned()))?;
+        let text = clean_question(text)?;
+        if !self.host.running(&session) {
+            return Err(OrchestrationError::Host(
+                "the worker has ended, so there is no one to answer".to_owned(),
+            ));
+        }
+        let _asking = self.start_ask(&from, &member.id)?;
+        let deadline = Instant::now() + wait;
+        let report = self.ask_session(&member, &session, &text, deadline, || {
+            self.record(MessageKind::Question, &from, &member.id, &text, true)
+        })?;
+        // The report goes to the caller now, so the next check does not say it again.
+        let report = match report {
+            Some(message) => {
+                self.team.mark_message_read(&message.id)?;
+                Some(message.body)
+            }
+            None => None,
+        };
+        let output = self.screen_of(&session)?;
+        self.record(
+            MessageKind::Answer,
+            &member.id,
+            &from,
+            &answer_body(report.as_deref(), &output),
+            true,
+        )?;
+        self.host.checked(caller);
+        Ok(AskAnswer {
+            report,
+            output,
+            running: self.host.running(&session),
+            status: self.host.status(&session),
+        })
+    }
+
+    /// A member of the caller's team asks another member a question and waits for its answer, as `ask_worker` does
+    /// for an orchestrator. The target is named by id or by role and must be in the same team. A member that already
+    /// waits for the asker, directly or through others, cannot answer, so the question is refused at once. The
+    /// question and the answer stay unread in the team: the asker's orchestrator hears them at its next check.
+    pub fn member_ask(
+        &self,
+        caller: &str,
+        member_ref: &str,
+        text: &str,
+        wait: Duration,
+    ) -> Result<AskAnswer, OrchestrationError> {
+        self.ensure_enabled()?;
+        let asker = self
+            .caller_members(caller)?
+            .into_iter()
+            .find(|member| member.kind == TeamMemberKind::Agent)
+            .ok_or(OrchestrationError::NotInTeam)?;
+        let target = self.teammate(&asker.worktree, member_ref)?;
+        let session = target
+            .session_id
+            .clone()
+            .ok_or(OrchestrationError::NoWorker)?;
+        let text = clean_question(text)?;
+        if !self.host.running(&session) {
+            return Err(OrchestrationError::Host(
+                "the worker has ended, so there is no one to answer".to_owned(),
+            ));
+        }
+        let _asking = self.start_ask(&asker.id, &target.id)?;
+        let deadline = Instant::now() + wait;
+        let report = self.ask_session(&target, &session, &text, deadline, || {
+            self.record(MessageKind::Question, &asker.id, &target.id, &text, false)
+        })?;
+        let output = self.screen_of(&session)?;
+        let report = report.map(|message| message.body);
+        self.record(
+            MessageKind::Answer,
+            &target.id,
+            &asker.id,
+            &answer_body(report.as_deref(), &output),
+            false,
+        )?;
+        Ok(AskAnswer {
+            report,
+            output,
+            running: self.host.running(&session),
+            status: self.host.status(&session),
+        })
+    }
+
+    /// Waits for the worker's turn, types `text` into it and waits for the answer, all within `deadline`. `on_typed`
+    /// runs once the question is in the worker's input, before it is sent. The answer is the report the worker sent
+    /// after the question, if one came; None when its turn ended without one.
+    fn ask_session(
+        &self,
+        member: &TeamMember,
+        session: &str,
+        text: &str,
+        deadline: Instant,
+        on_typed: impl FnOnce() -> Result<(), OrchestrationError>,
+    ) -> Result<Option<TeamMessage>, OrchestrationError> {
+        let gate = self.ask_gate(&member.id);
+        let _turn = poll_until(deadline, || {
+            Ok(match gate.try_lock() {
+                Ok(turn) => Some(turn),
+                Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+                Err(TryLockError::WouldBlock) => None,
+            })
+        })?
+        .ok_or(OrchestrationError::AskNotTyped)?;
+        poll_until(deadline, || {
+            if !self.host.running(session) {
+                return Err(OrchestrationError::Host(
+                    "the worker has ended, so there is no one to answer".to_owned(),
+                ));
+            }
+            Ok(self.host.ready_for_input(session).then_some(()))
+        })?
+        .ok_or(OrchestrationError::AskNotTyped)?;
+        let before: HashSet<String> = self
+            .team
+            .messages_of(&member.id)?
+            .into_iter()
+            .map(|message| message.id)
+            .collect();
+        on_typed()?;
+        self.host
+            .send_pasted(session, text)
+            .map_err(OrchestrationError::Host)?;
+        let typed_at = Instant::now();
+        let mut busy = false;
+        let mut report: Option<TeamMessage> = None;
+        let over = poll_until(deadline, || {
+            let status = self.host.status(session);
+            busy |= matches!(status, Some(AgentStatus::Working | AgentStatus::NeedsYou));
+            report = self.report_after(&member.id, &before)?;
+            if report.is_some() || !self.host.running(session) {
+                return Ok(Some(()));
+            }
+            let idle = matches!(status, Some(AgentStatus::Idle | AgentStatus::Done));
+            Ok((idle && (busy || typed_at.elapsed() >= IDLE_AFTER_ASK)).then_some(()))
+        })?;
+        if over.is_none() {
+            return Err(OrchestrationError::AskNoAnswer);
+        }
+        Ok(report)
+    }
+
+    /// Holds the ask `from` makes of `to` for as long as it lasts. It is refused at once when the two are the same
+    /// member, and when `to` already waits for `from`, directly or through others: neither could answer the other.
+    fn start_ask(&self, from: &str, to: &str) -> Result<AskEdge<'_>, OrchestrationError> {
+        if from == to {
+            return Err(OrchestrationError::AskSelf);
+        }
+        let mut waits = self.waits.lock().unwrap_or_else(PoisonError::into_inner);
+        if waits_through(&waits, to, from) {
+            return Err(OrchestrationError::AskCycle);
+        }
+        let edge = (from.to_owned(), to.to_owned());
+        waits.push(edge.clone());
+        Ok(AskEdge {
+            waits: &self.waits,
+            edge,
+        })
+    }
+
+    /// Keeps a question or an answer between two members of one team. A line the caller already has is kept read.
+    fn record(
+        &self,
+        kind: MessageKind,
+        from: &str,
+        to: &str,
+        body: &str,
+        read: bool,
+    ) -> Result<(), OrchestrationError> {
+        let exchange = TeamExchange {
+            id: new_id(),
+            kind,
+            from_member_id: from.to_owned(),
+            to_member_id: to.to_owned(),
+            body: body.to_owned(),
+            created_at: now(),
+        };
+        self.team.add_exchange(&exchange)?;
+        if read {
+            self.team.mark_message_read(&exchange.id)?;
+        }
+        Ok(())
+    }
+
+    /// The gate that holds `member_id`'s question until its answer. Made on first use.
+    fn ask_gate(&self, member_id: &str) -> Arc<Mutex<()>> {
+        self.asks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(member_id.to_owned())
+            .or_default()
+            .clone()
+    }
+
+    /// The first report of the member that was not there before the question, if one came.
+    fn report_after(
+        &self,
+        member_id: &str,
+        before: &HashSet<String>,
+    ) -> Result<Option<TeamMessage>, OrchestrationError> {
+        Ok(self
+            .team
+            .messages_of(member_id)?
+            .into_iter()
+            .rev()
+            .find(|message| {
+                matches!(message.kind, MessageKind::Done | MessageKind::Failed)
+                    && !before.contains(&message.id)
+            }))
+    }
+
+    /// What a worker's terminal shows. A closed terminal has no screen left, whether or not the app has noticed yet.
+    fn screen_of(&self, session: &str) -> Result<String, OrchestrationError> {
+        match self.host.output(session) {
+            Ok(text) => Ok(text),
+            Err(_) if !self.host.running(session) => Ok(String::new()),
+            Err(error) => Err(OrchestrationError::Host(error)),
+        }
+    }
+
+    /// The member of the team at `worktree` that `member_ref` names, by id or by role. A role shared by several
+    /// members must be told apart by id.
+    fn teammate(&self, worktree: &str, member_ref: &str) -> Result<TeamMember, OrchestrationError> {
+        let members: Vec<TeamMember> = self
+            .team
+            .members()?
+            .into_iter()
+            .filter(|member| member.worktree == worktree)
+            .collect();
+        if let Some(member) = members.iter().find(|member| member.id == member_ref) {
+            return Ok(member.clone());
+        }
+        let wanted = member_ref.trim();
+        let named: Vec<&TeamMember> = members
+            .iter()
+            .filter(|member| member.role.eq_ignore_ascii_case(wanted))
+            .collect();
+        match named.as_slice() {
+            [only] => Ok((*only).clone()),
+            [] => Err(OrchestrationError::NotInYourTeam(member_ref.to_owned())),
+            several => Err(OrchestrationError::AmbiguousMember(
+                wanted.to_owned(),
+                several
+                    .iter()
+                    .map(|member| member.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )),
+        }
     }
 
     /// Ends a worker. Its task is cancelled if it was still running.
@@ -1186,7 +1671,7 @@ fn reports_through_tools(harness: HarnessId) -> bool {
 }
 
 /// The name the agents tab shows for a worker's agent status.
-fn agent_status_name(status: AgentStatus) -> String {
+pub fn agent_status_name(status: AgentStatus) -> String {
     match status {
         AgentStatus::Working => "working",
         AgentStatus::NeedsYou => "needs_you",
@@ -1214,11 +1699,113 @@ fn worker_prompt(harness: HarnessId, role: Option<&str>, task: &str) -> String {
     let role = role.map_or_else(String::new, |prompt| format!("Your role:\n{prompt}\n\n"));
     if reports_through_tools(harness) {
         format!(
-            "{role}{task}\n\nThe team shares notes: lynx_note_read lists them and reads one, lynx_note_write and lynx_note_edit change them.\n\nWhen you finish, or if you cannot, report to your orchestrator with lynx_report (outcome \"done\" or \"failed\" and a short summary). lynx_report is a Lynx tool: call it from your shell through the lynx skill, as the skill describes."
+            "{role}{task}\n\nThe team shares notes: lynx_note_read lists them and reads one, lynx_note_write and lynx_note_edit change them.\n\nTo ask a member of your team something, call lynx_member_ask with its id or role and your question. The call waits for the answer, so ask only what you need.\n\nWhen you finish, or if you cannot, report to your orchestrator with lynx_report (outcome \"done\" or \"failed\" and a short summary). lynx_report is a Lynx tool: call it from your shell through the lynx skill, as the skill describes."
         )
     } else {
         format!("{role}{task}")
     }
+}
+
+/// Whether a member that waits for these ids must wait: one of them is not a done member of the team. A name of a
+/// member of the same batch is not in the team yet, so it waits.
+fn waits_for_tasks(members: &[TeamMember], depends_on: &[String]) -> bool {
+    depends_on.iter().any(|id| {
+        members
+            .iter()
+            .find(|other| &other.id == id)
+            .is_none_or(|other| other.task_state != Some(TaskState::Done))
+    })
+}
+
+/// An ask in progress: the edge that says its asker waits for the member it asked. It leaves the wait map when the
+/// ask ends, however it ends.
+struct AskEdge<'a> {
+    waits: &'a Mutex<Vec<(String, String)>>,
+    edge: (String, String),
+}
+
+impl Drop for AskEdge<'_> {
+    fn drop(&mut self) {
+        let mut waits = self.waits.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(at) = waits.iter().position(|edge| edge == &self.edge) {
+            waits.remove(at);
+        }
+    }
+}
+
+/// Whether `from` waits for `to`, directly or through members that wait for others, along the asks in `waits`.
+fn waits_through(waits: &[(String, String)], from: &str, to: &str) -> bool {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut pending = vec![from];
+    while let Some(current) = pending.pop() {
+        if current == to {
+            return true;
+        }
+        if !seen.insert(current) {
+            continue;
+        }
+        pending.extend(
+            waits
+                .iter()
+                .filter(|(asker, _)| asker.as_str() == current)
+                .map(|(_, asked)| asked.as_str()),
+        );
+    }
+    false
+}
+
+/// The answer kept in the team: the report when there is one, else the end of the screen, else a line that says the
+/// worker showed nothing, so every answer keeps some text.
+fn answer_body(report: Option<&str>, screen: &str) -> String {
+    let text = match report {
+        Some(report) => report.trim().to_owned(),
+        None => last_chars(screen.trim(), MAX_EXCHANGE_CHARS)
+            .trim()
+            .to_owned(),
+    };
+    if text.is_empty() {
+        "The worker showed no answer.".to_owned()
+    } else {
+        text
+    }
+}
+
+/// The last `count` characters of `text`, or all of it when it is shorter.
+fn last_chars(text: &str, count: usize) -> &str {
+    let start = text
+        .char_indices()
+        .rev()
+        .nth(count.saturating_sub(1))
+        .map_or(0, |(index, _)| index);
+    &text[start..]
+}
+
+/// Looks again every `ASK_POLL` until `look` finds something, or `deadline` passes: then None.
+fn poll_until<T>(
+    deadline: Instant,
+    mut look: impl FnMut() -> Result<Option<T>, OrchestrationError>,
+) -> Result<Option<T>, OrchestrationError> {
+    loop {
+        if let Some(found) = look()? {
+            return Ok(Some(found));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(ASK_POLL);
+    }
+}
+
+/// A question is text the worker reads as its input: line breaks stay, other control characters are refused.
+fn clean_question(text: &str) -> Result<String, OrchestrationError> {
+    let text = text.trim().replace("\r\n", "\n");
+    let control = |c: char| c.is_control() && c != '\n' && c != '\t';
+    if text.is_empty() || text.chars().count() > MAX_ASK || text.chars().any(control) {
+        return Err(OrchestrationError::InvalidText(format!(
+            "a question is 1 to {MAX_ASK} characters, with no control characters but line breaks"
+        )));
+    }
+    Ok(text)
 }
 
 /// The sentence that tells a worker to read its task from the file.

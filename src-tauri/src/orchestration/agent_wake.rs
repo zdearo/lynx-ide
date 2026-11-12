@@ -70,6 +70,11 @@ impl WakeBook {
         self.draft.remove(session);
     }
 
+    /// Whether the person has typed a draft into `session` without submitting it.
+    pub fn has_draft(&self, session: &str) -> bool {
+        self.draft.contains(session)
+    }
+
     /// What to do with the note of `session` now.
     pub fn decide(
         &self,
@@ -92,6 +97,16 @@ impl WakeBook {
             Some(AgentStatus::Working | AgentStatus::NeedsYou) | None => Step::Wait,
         }
     }
+}
+
+/// Whether a question may be typed into a session now: its agent is idle or done, and the person has no draft.
+pub fn free_to_type(status: Option<AgentStatus>, draft: bool) -> bool {
+    !draft && matches!(status, Some(AgentStatus::Idle | AgentStatus::Done))
+}
+
+/// Wraps `text` as a paste, so a program that reads it takes its line breaks as text and not as Enter.
+pub fn as_paste(text: &str) -> String {
+    format!("\u{1b}[200~{text}\u{1b}[201~")
 }
 
 /// Whether the input has a draft after the person typed `data`: printable text that was not submitted.
@@ -171,6 +186,11 @@ impl AgentWakes {
 
     pub fn closed(&self, session: &str) {
         self.book().closed(session);
+    }
+
+    /// Whether the person has a draft in `session`'s input, which holds back anything typed into it.
+    pub fn has_draft(&self, session: &str) -> bool {
+        self.book().has_draft(session)
     }
 
     /// Tries the note on its own thread: the status event comes from a monitor that must not wait on a terminal.
@@ -425,5 +445,23 @@ mod tests {
             book.decide(S, true, Some(AgentStatus::Idle), t),
             Step::Nothing
         );
+    }
+
+    #[test]
+    fn a_question_is_typed_only_into_an_idle_agent_with_no_draft() {
+        assert!(free_to_type(Some(AgentStatus::Idle), false));
+        assert!(free_to_type(Some(AgentStatus::Done), false));
+        assert!(!free_to_type(Some(AgentStatus::Working), false));
+        assert!(!free_to_type(Some(AgentStatus::NeedsYou), false));
+        assert!(!free_to_type(None, false), "no status is not idle");
+        assert!(
+            !free_to_type(Some(AgentStatus::Idle), true),
+            "a draft holds it"
+        );
+    }
+
+    #[test]
+    fn a_question_is_pasted_between_the_paste_markers() {
+        assert_eq!(as_paste("uma\nduas"), "\u{1b}[200~uma\nduas\u{1b}[201~");
     }
 }

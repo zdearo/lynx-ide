@@ -65,7 +65,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::agents::harness::HarnessId;
-    use crate::orchestration::service::{Orchestration, WorkerHost, WorkerWorktree};
+    use crate::orchestration::service::{LaunchSetup, Orchestration, WorkerHost, WorkerWorktree};
     use crate::orchestration::service_tests::FakeHost;
     use crate::persistence::AppDatabase;
     use crate::team::team_model::{NewTeamMember, TeamMember};
@@ -105,7 +105,7 @@ mod tests {
                 &writer.id,
                 HarnessId::Claude,
                 WorkerWorktree::Current,
-                None,
+                LaunchSetup::default(),
             )
             .expect("the bot starts a worker that keeps running");
         Fixture {

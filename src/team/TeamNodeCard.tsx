@@ -13,13 +13,16 @@ import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 import { CaretRightIcon } from "@phosphor-icons/react";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { useNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
 import type { TeamMember } from "@/team/team-fixtures";
 import { hasTask } from "@/team/team-hierarchy";
 import { TEAM_CARD_HEIGHT, TEAM_CARD_WIDTH } from "@/team/team-layout";
+import { runningLabelOf } from "@/team/team-live";
 import { TeamMemberContextMenu } from "@/team/TeamMemberMenu";
 import { TeamStatusIcon } from "@/team/TeamStatus";
 import { botOf, engineOf, openMember, useTeamStore } from "@/team/team-store";
+import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
 
 export interface TeamCardData extends Record<string, unknown> {
@@ -52,13 +55,17 @@ export function TeamNodeCard({ id, data, selected }: NodeProps<TeamCardNode>) {
     updateNodeInternals(id);
   }, [id, member.kind, member.orchestrator, updateNodeInternals]);
   const bot = botOf(member, bots);
+  const now = useNow();
+  const running = useTerminalStore((state) =>
+    runningLabelOf(member, state.sessions, now),
+  );
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
           role="group"
-          aria-label={copy.team.rowLabel(member.role, status)}
+          aria-label={copy.team.rowLabel(member.role, status, running)}
           data-team-id={member.id}
           tabIndex={0}
           onKeyDown={(event) => {
@@ -183,9 +190,14 @@ export function TeamNodeCard({ id, data, selected }: NodeProps<TeamCardNode>) {
           <div className="flex h-4 items-center gap-1.5 text-meta text-muted-foreground">
             <TeamStatusIcon status={member.status} />
             <span className="truncate">{status}</span>
-            {member.status === "needsYou" && (
-              <span className="ml-auto shrink-0 rounded-sm bg-muted px-1.5 text-attention">
-                {copy.team.needsYouBadge}
+            {(member.status === "needsYou" || running !== null) && (
+              <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                {member.status === "needsYou" && (
+                  <span className="rounded-sm bg-muted px-1.5 text-attention">
+                    {copy.team.needsYouBadge}
+                  </span>
+                )}
+                {running !== null && <span>{running}</span>}
               </span>
             )}
           </div>

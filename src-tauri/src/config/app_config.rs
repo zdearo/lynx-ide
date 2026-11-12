@@ -113,6 +113,17 @@ pub enum LaunchMode {
     Yolo,
 }
 
+/// How hard an agent thinks. Each agent's launch line maps it to its own flag; agents without one ignore it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentEffort {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
 /// How agents are started from a new terminal.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]

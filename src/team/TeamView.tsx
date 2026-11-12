@@ -7,6 +7,7 @@ import { errorMessage } from "@/lib/error-message";
 import { TeamAddDialog } from "@/team/TeamAddDialog";
 import { TeamMap } from "@/team/TeamMap";
 import { TeamNodeSheet } from "@/team/TeamNodeSheet";
+import { TeamNotes } from "@/team/TeamNotes";
 import { TeamTerminalDialog } from "@/team/TeamTerminalDialog";
 import { useTeamMembers, useTeamStore } from "@/team/team-store";
 import { copy } from "@/ui-copy";
@@ -39,7 +40,7 @@ export function TeamView({ area }: { area: HTMLElement | null }) {
 
   return (
     <div
-      className="relative h-full"
+      className="relative flex h-full flex-col"
       onKeyDown={(event) => {
         // Keys from the dialog and the menus come through the portals, which are not inside here.
         if (
@@ -51,28 +52,31 @@ export function TeamView({ area }: { area: HTMLElement | null }) {
         }
       }}
     >
-      {loaded &&
-        (members.length > 0 ? (
-          <>
-            <TeamMap
-              members={members}
-              expanded={expanded}
-              selectedId={selectedId}
-              extraRows={extraRows}
-              siblingOrder={siblingOrder}
-              pairs={pairs}
-            />
-            {selected && (
-              <TeamNodeSheet
-                key={selected.id}
-                member={selected}
+      <div className="relative min-h-0 flex-1">
+        {loaded &&
+          (members.length > 0 ? (
+            <>
+              <TeamMap
                 members={members}
+                expanded={expanded}
+                selectedId={selectedId}
+                extraRows={extraRows}
+                siblingOrder={siblingOrder}
+                pairs={pairs}
               />
-            )}
-          </>
-        ) : (
-          <TeamEmpty hasWorktree={worktree !== null} />
-        ))}
+              {selected && (
+                <TeamNodeSheet
+                  key={selected.id}
+                  member={selected}
+                  members={members}
+                />
+              )}
+            </>
+          ) : (
+            <TeamEmpty hasWorktree={worktree !== null} />
+          ))}
+      </div>
+      {loaded && <TeamNotes />}
       <TeamTerminalDialog container={area} />
       <TeamAddDialog />
     </div>

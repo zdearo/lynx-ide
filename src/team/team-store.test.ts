@@ -87,6 +87,7 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       sessionId: null,
       workerState: null,
       expanded: false,
+      lastMessage: null,
     },
     {
       id: "builder",
@@ -106,6 +107,7 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       sessionId: null,
       workerState: null,
       expanded: false,
+      lastMessage: null,
     },
     {
       id: "reviewer",
@@ -125,6 +127,7 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       sessionId: null,
       workerState: null,
       expanded: false,
+      lastMessage: null,
     },
     {
       id: "docs-lead",
@@ -144,9 +147,11 @@ const snapshot = (overrides: Partial<TeamSnapshot> = {}): TeamSnapshot => ({
       sessionId: null,
       workerState: null,
       expanded: false,
+      lastMessage: null,
     },
   ],
   pairs: [{ a: "builder", b: "reviewer" }],
+  notes: [],
   ...overrides,
 });
 
@@ -229,6 +234,33 @@ describe("team load", () => {
     expect(ids(AUTH)).toEqual(["lead", "builder", "reviewer"]);
     expect(ids(DOCS)).toEqual(["docs-lead"]);
     expect(ids(null)).toEqual([]);
+  });
+
+  it("takes a member's activity from its newest message, with the message's kind", async () => {
+    const team = snapshot();
+    team.members[0] = {
+      ...team.members[0],
+      lastMessage: {
+        kind: "needsYou",
+        body: "pick a branch",
+        createdAt: 1_700,
+      },
+    };
+    await loadTeam(team);
+
+    expect(member("lead")?.activity).toEqual({
+      text: "pick a branch",
+      at: 1_700,
+      kind: "needsYou",
+    });
+    expect(member("builder")?.activity).toEqual({ text: "", at: 0 });
+  });
+
+  it("keeps the team's notes from the snapshot", async () => {
+    const notes = [{ worktree: AUTH, name: "plan", body: "step 1" }];
+    await loadTeam(snapshot({ notes }));
+
+    expect(store().notes).toEqual(notes);
   });
 
   it("drops a read that a newer read overtakes", async () => {

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Lynx">
+  <rect width="512" height="512" rx="112" fill="#f0974b" />
+  <mask id="cuts">
+    <rect width="512" height="512" fill="#fff" />
+    <g stroke="#000" stroke-width="12" stroke-linecap="round">
+      <path d="M122 118 174 90" />
+      <path d="M390 118 338 90" />
+    </g>
+    <path d="M236 384h40l-20 22z" fill="#000" stroke="#000" stroke-width="8" stroke-linejoin="round" />
+  </mask>
+  <g transform="translate(46 43.6) scale(.82)">
+    <path mask="url(#cuts)" fill="#0f0f0f" stroke="#0f0f0f" stroke-width="14" stroke-linejoin="round" d="M256 200 214 178 140 62 112 238 62 320 128 342 114 404 256 456 398 404 384 342 450 320 400 238 372 62 298 178Z" />
+    <g fill="#fafafa" stroke="#fafafa" stroke-width="8" stroke-linejoin="round">
+      <path d="M150 290 226 320 190 336Z" />
+      <path d="M362 290 286 320 322 336Z" />
+    </g>
+  </g>
+</svg>

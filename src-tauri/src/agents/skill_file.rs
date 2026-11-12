@@ -12,13 +12,57 @@ use super::tool_catalog;
 
 pub const NAME: &str = "lynx";
 
+/// The flows the tool descriptions only name: a team in one call, the asks and their wait, the effort, and how a
+/// delivery closes.
+const WORKFLOW: &str = r#"## Building a team
+
+Add a plan in one `lynx_member_add` call with `members`, a list. Each member takes `role` and `task` (both required), `acceptance`, `key` (a name inside this list) and `dependsOn` (ids of members already in the team, or keys of members of this list). A member that should start by itself also takes `start: true` and `agent`. The whole list is checked before any member is written: if one is wrong, none is added. Use `parentId` only when you orchestrate in several worktrees.
+
+- `agent` is `claude`, `codex`, `opencode` or `omp`. Ask the person which agent to use, and which model and effort if they care, unless they already said.
+- `start: true` starts the worker in the team's worktree as soon as every member it waits for reports done, or at once if they are done. A `failed` report releases nothing. It launches with the agent's own model and effort: to choose them, leave `start` out and call `lynx_worker_start`.
+- Without `start` the member stays pending until you call `lynx_worker_start`.
+
+## Starting and changing workers
+
+`lynx_worker_start` (`memberId`, `agent`, `worktree`: `new` or `current`, optional `model` and `effort`) and `lynx_worker_replace` (`memberId`, `agent`, optional `model` and `effort`) take `effort` (`low`, `medium`, `high`, `xhigh` or `max`) when the person asked for a level. Claude and Codex take it; OpenCode and OMP ignore it. Leave it out to keep the agent's own.
+
+## Asking a worker
+
+`lynx_ask` with `memberId` and `text` types the text into a running worker and returns at once. Add `waitSeconds` (0 to 540) and the call waits: it types the text once the worker is free and the person has no draft in its input, then blocks until the worker reports or its turn ends. With `waitSeconds` a text may have several lines; without it, one line. It returns `report` (null when the turn ended without one), `output` (the end of the worker's screen), `running` and `status`.
+
+If the call fails, read the message:
+- Not typed: the worker stayed busy, or had a draft, for the whole wait. Nothing was sent.
+- Typed, no answer: the worker has the text and did not answer in time.
+
+In both cases read the worker with `lynx_worker_read` before you ask again.
+
+`batch` (a list of `memberId` and `text`) sends one text to each of several workers and does not wait. Do not combine it with `waitSeconds`.
+
+## Asking a member
+
+`lynx_member_ask` (`memberId`: a teammate's id or role; `text`; `waitSeconds`, 540 by default) asks a teammate of your own team and waits the same way. The teammate gets the question in its terminal and answers it with `lynx_report`; the answer comes back to you. The call is refused at once, without waiting, when the teammate is outside your team, is you, has no worker, or already waits for you, directly or through others: neither could answer the other. The question and the answer reach your orchestrator at its next `lynx_check`.
+
+## Timeouts
+
+A call with `waitSeconds` can take up to 540 seconds, and the transport waits 30 seconds longer than the call asks. Give the shell call a timeout of at least 570000 ms, or the shell ends it before Lynx answers.
+
+## Closing a delivery
+
+When every worker has reported and you have read the reports, close the delivery yourself. Lynx runs no lint, test or commit for you.
+
+1. Run the project's lint. Its command is in the project's `AGENTS.md` or `CLAUDE.md`, or the person names it. Fix what it reports before you go on.
+2. Commit only when the person asked for a commit. If a worker had its own worktree (`worktree: new`), merge it with `lynx_worker_land` first, also only when asked. Then add a member with the role `Commit`, `start: true` and `agent`, whose `dependsOn` lists the members whose work it commits. Its task lists the exact files to commit, one per line, and says to commit nothing else. No `git add .`.
+3. Check the commit with `git log -1 --stat`: the message and the files must be the ones you listed.
+4. Tell the person what was done, what was committed, and what is left.
+"#;
+
 /// The skill an agent reads: the tools it has, with the app's own executable as the command.
 pub fn agent_skill(executable: &Path) -> String {
     render(
         executable,
         AGENT_PURPOSE,
         &tool_catalog::list(),
-        &tool_catalog::instructions(),
+        &format!("{}\n\n{WORKFLOW}", tool_catalog::instructions()),
     )
 }
 
@@ -174,5 +218,40 @@ mod tests {
         remove(&skills).expect("remove");
         assert!(!skills.join("lynx").exists());
         remove(&skills).expect("removing a missing skill is not an error");
+    }
+
+    #[test]
+    fn the_agent_skill_teaches_the_team_the_asks_the_effort_and_the_closing() {
+        let text = agent_skill(&PathBuf::from("/opt/lynx/lynx-ide"));
+        for topic in [
+            "`members`",
+            "`key`",
+            "`dependsOn`",
+            "`start: true`",
+            "`lynx_ask`",
+            "`waitSeconds`",
+            "`lynx_member_ask`",
+            "`effort`",
+            "570000 ms",
+            "`Commit`",
+            "git log -1 --stat",
+            "Lynx runs no lint",
+        ] {
+            assert!(text.contains(topic), "the skill teaches {topic}");
+        }
+    }
+
+    #[test]
+    fn every_tool_the_skill_names_exists() {
+        let names: Vec<String> = tool_catalog::list()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        for word in WORKFLOW
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .filter(|word| word.starts_with("lynx_"))
+        {
+            assert!(names.iter().any(|name| name == word), "{word} is a tool");
+        }
     }
 }

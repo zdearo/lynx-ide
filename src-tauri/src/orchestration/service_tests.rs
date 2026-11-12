@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::agents::activity::AgentStatus;
 use crate::agents::harness::HarnessId;
-use crate::config::app_config::OrchestrationConfig;
+use crate::config::app_config::{AgentEffort, OrchestrationConfig};
 use crate::persistence::AppDatabase;
 use crate::team::team_error::TeamError;
 use crate::team::team_model::{
@@ -14,21 +14,29 @@ use crate::team::team_model::{
 };
 use crate::team::team_service::TeamService;
 
-use super::service::{Assignment, Orchestration, OrchestrationError, WorkerHost, WorkerWorktree};
+use super::agent_wake::free_to_type;
+use super::service::{
+    Assignment, LaunchSetup, NewMember, Orchestration, OrchestrationError, WorkerHost,
+    WorkerWorktree,
+};
 
 /// The terminals and worktrees of a test: what it started, stopped and was asked to type.
 #[derive(Default)]
 pub struct FakeHost {
     /// Whether orchestration asks for a worker's reports to close the worker, as the setting says.
     pub release: bool,
+    /// Whether orchestration is off in Lynx's settings.
+    pub off: bool,
     running: Mutex<Vec<String>>,
     statuses: Mutex<HashMap<String, AgentStatus>>,
+    drafts: Mutex<Vec<String>>,
     started: Mutex<Vec<(String, String)>>,
     stopped: Mutex<Vec<String>>,
     notified: Mutex<Vec<String>>,
     sent: Mutex<Vec<(String, String)>>,
     prompts: Mutex<Vec<String>>,
     landed: Mutex<Vec<(String, String)>>,
+    efforts: Mutex<Vec<Option<AgentEffort>>>,
 }
 
 impl FakeHost {
@@ -41,6 +49,33 @@ impl FakeHost {
             release: true,
             ..Self::default()
         }
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            off: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether the person has text in the session's input, which holds back a question.
+    pub fn set_draft(&self, session: &str, draft: bool) {
+        let mut drafts = self
+            .drafts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        drafts.retain(|other| other != session);
+        if draft {
+            drafts.push(session.to_owned());
+        }
+    }
+
+    /// The effort each launch line was built with, in order.
+    pub fn efforts(&self) -> Vec<Option<AgentEffort>> {
+        self.efforts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
 
     /// The worker's process ended on its own, as an agent does when it exits.
@@ -106,7 +141,7 @@ impl FakeHost {
 impl WorkerHost for FakeHost {
     fn settings(&self) -> OrchestrationConfig {
         OrchestrationConfig {
-            enabled: true,
+            enabled: !self.off,
             release_finished_workers: self.release,
         }
     }
@@ -123,8 +158,27 @@ impl WorkerHost for FakeHost {
         Ok("/prompts/task.md".to_owned())
     }
 
-    fn launch_line(&self, harness: HarnessId, _unattended: bool) -> String {
+    fn launch_line(
+        &self,
+        harness: HarnessId,
+        _unattended: bool,
+        effort: Option<AgentEffort>,
+    ) -> String {
+        self.efforts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(effort);
         format!("agent-{}", crate::agents::harness::harness_name(harness))
+    }
+
+    fn ready_for_input(&self, session: &str) -> bool {
+        let drafted = self
+            .drafts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .any(|other| other == session);
+        free_to_type(self.status(session), drafted)
     }
 
     fn start(&self, worktree: &str, command: &str) -> Result<String, String> {
@@ -191,6 +245,10 @@ impl WorkerHost for FakeHost {
             .push((session.to_owned(), text.to_owned()));
         Ok(())
     }
+
+    fn send_pasted(&self, session: &str, text: &str) -> Result<(), String> {
+        self.send(session, text)
+    }
 }
 
 /// A team with one orchestrator agent, `lead`, in `/repo/app`, and an orchestration over it.
@@ -203,7 +261,16 @@ pub struct Fixture {
 }
 
 pub const LEAD_SESSION: &str = "lead-session";
-pub const WORKTREE: &str = "/repo/app";
+pub const WORKTREE: &str = if cfg!(windows) {
+    r"C:\repo\app"
+} else {
+    "/repo/app"
+};
+pub const OTHER_WORKTREE: &str = if cfg!(windows) {
+    r"C:\repo\docs"
+} else {
+    "/repo/docs"
+};
 
 pub fn fixture_with(host: FakeHost) -> Fixture {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -223,6 +290,8 @@ pub fn fixture_with(host: FakeHost) -> Fixture {
             depends_on: Vec::new(),
             worktree: WORKTREE.to_owned(),
             session_id: Some(LEAD_SESSION.to_owned()),
+            key: None,
+            start_when_released: false,
         })
         .expect("the lead joins the team");
     Fixture {
@@ -303,6 +372,8 @@ fn a_member_is_only_added_by_an_orchestrator_with_a_task() {
             depends_on: Vec::new(),
             worktree: WORKTREE.to_owned(),
             session_id: Some("plain-session".to_owned()),
+            key: None,
+            start_when_released: false,
         })
         .expect("a plain member");
     assert!(!plain.orchestrator);
@@ -335,6 +406,8 @@ fn an_orchestrator_only_manages_its_own_members() {
             depends_on: Vec::new(),
             worktree: WORKTREE.to_owned(),
             session_id: Some("other-session".to_owned()),
+            key: None,
+            start_when_released: false,
         })
         .expect("another orchestrator");
     let theirs = fixture
@@ -348,7 +421,7 @@ fn an_orchestrator_only_manages_its_own_members() {
             &theirs.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None
+            LaunchSetup::default()
         ),
         Err(OrchestrationError::UnknownMember(_))
     ));
@@ -377,7 +450,7 @@ fn a_worker_starts_for_its_member_and_its_report_reaches_the_lead() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
 
@@ -437,7 +510,7 @@ fn a_task_waits_for_the_tasks_it_depends_on() {
     assert!(matches!(
         fixture
             .orchestration
-            .start_worker(LEAD_SESSION, &tests.id, HarnessId::Claude, WorkerWorktree::Current, None),
+            .start_worker(LEAD_SESSION, &tests.id, HarnessId::Claude, WorkerWorktree::Current, LaunchSetup::default()),
         Err(OrchestrationError::WaitingFor(names)) if names == "Researcher"
     ));
 
@@ -448,7 +521,7 @@ fn a_task_waits_for_the_tasks_it_depends_on() {
             &research.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the first starts");
     fixture
@@ -463,7 +536,7 @@ fn a_task_waits_for_the_tasks_it_depends_on() {
             &tests.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the second starts once the first is done");
 }
@@ -480,7 +553,7 @@ fn a_worker_in_a_new_worktree_keeps_its_place_under_the_lead() {
             &writer.id,
             HarnessId::Codex,
             WorkerWorktree::New,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts in a worktree of its own");
 
@@ -511,7 +584,7 @@ fn a_worker_cannot_coordinate_or_report_for_another_member() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
 
@@ -540,7 +613,7 @@ fn a_member_with_a_running_worker_cannot_leave_the_team() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
 
@@ -581,7 +654,7 @@ fn a_stopped_worker_cancels_its_task_and_cannot_report() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
 
@@ -613,7 +686,7 @@ fn a_worker_that_ends_without_a_report_fails_its_task_and_says_so() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
     fixture.host.end(&started.session_id);
@@ -646,7 +719,7 @@ fn a_worker_that_waits_for_an_answer_is_said_once_and_can_be_answered() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
     fixture
@@ -693,7 +766,7 @@ fn a_turn_that_ends_without_a_report_is_said_once_and_the_worker_keeps_running()
             &asker.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
     fixture
@@ -736,7 +809,7 @@ fn a_finished_worker_closes_when_the_setting_says_so() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
     fixture
@@ -788,7 +861,7 @@ fn a_bot_orchestrates_its_members_and_its_workers_wake_the_chat_that_started_the
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the bot starts a worker");
     fixture
@@ -822,7 +895,12 @@ fn nothing_works_while_orchestration_is_off() {
         fn prompt_file(&self, _text: &str) -> Result<String, String> {
             Err("off".to_owned())
         }
-        fn launch_line(&self, _harness: HarnessId, _unattended: bool) -> String {
+        fn launch_line(
+            &self,
+            _harness: HarnessId,
+            _unattended: bool,
+            _effort: Option<AgentEffort>,
+        ) -> String {
             String::new()
         }
         fn start(&self, _worktree: &str, _command: &str) -> Result<String, String> {
@@ -847,7 +925,7 @@ fn nothing_works_while_orchestration_is_off() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None
+            LaunchSetup::default()
         ),
         Err(OrchestrationError::Disabled)
     );
@@ -888,8 +966,10 @@ fn dependencies_cannot_loop_and_cannot_cross_worktrees() {
             task: String::new(),
             acceptance: String::new(),
             depends_on: Vec::new(),
-            worktree: "/repo/docs".to_owned(),
+            worktree: OTHER_WORKTREE.to_owned(),
             session_id: None,
+            key: None,
+            start_when_released: false,
         })
         .expect("a member of another worktree");
     assert!(
@@ -912,7 +992,7 @@ fn finished_worker(fixture: &Fixture, member: &TeamMember) -> String {
             &member.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
     fixture
@@ -958,7 +1038,7 @@ fn a_member_still_working_is_not_given_another_task() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
 
@@ -996,7 +1076,7 @@ fn a_task_for_a_member_whose_worker_is_gone_waits_to_be_started() {
             &writer.id,
             HarnessId::Codex,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("a worker starts for the new task");
 }
@@ -1040,7 +1120,7 @@ fn a_batch_of_follow_ups_reaches_each_running_worker() {
                 &member.id,
                 HarnessId::Claude,
                 WorkerWorktree::Current,
-                None,
+                LaunchSetup::default(),
             )
             .expect("the worker starts")
             .session_id
@@ -1073,13 +1153,18 @@ fn replacing_the_agent_keeps_the_worktree_and_the_task() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::New,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts in a worktree of its own");
 
     let second = fixture
         .orchestration
-        .replace_worker(LEAD_SESSION, "writer", HarnessId::Codex, None)
+        .replace_worker(
+            LEAD_SESSION,
+            "writer",
+            HarnessId::Codex,
+            LaunchSetup::default(),
+        )
         .expect("the agent is replaced");
 
     assert_eq!(fixture.host.stopped(), vec![first.session_id.clone()]);
@@ -1106,7 +1191,7 @@ fn a_replacement_that_is_refused_leaves_the_old_worker_running() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
 
@@ -1115,7 +1200,10 @@ fn a_replacement_that_is_refused_leaves_the_old_worker_running() {
             LEAD_SESSION,
             &writer.id,
             HarnessId::Opencode,
-            Some("gpt-5")
+            LaunchSetup {
+                model: Some("gpt-5".to_owned()),
+                effort: None,
+            }
         ),
         Err(OrchestrationError::ModelNotSupported)
     );
@@ -1141,7 +1229,7 @@ fn a_worker_reads_the_prompt_of_its_saved_role() {
             &reviewer.id,
             HarnessId::Claude,
             WorkerWorktree::Current,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
 
@@ -1215,7 +1303,7 @@ fn only_a_stopped_worker_with_a_worktree_of_its_own_is_landed() {
             &writer.id,
             HarnessId::Claude,
             WorkerWorktree::New,
-            None,
+            LaunchSetup::default(),
         )
         .expect("the worker starts");
 
@@ -1245,5 +1333,539 @@ fn only_a_stopped_worker_with_a_worktree_of_its_own_is_landed() {
             .land_worker(LEAD_SESSION, &shared.id)
             .is_err(),
         "a worker in the team's own worktree has nothing to land"
+    );
+}
+
+/// A worker started under the lead, with the session the host gave it.
+fn started_worker(fixture: &Fixture, role: &str, task: &str) -> (TeamMember, String) {
+    let member = fixture.add(role, task, Vec::new());
+    let started = fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &member.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            LaunchSetup::default(),
+        )
+        .expect("the worker starts");
+    (fixture.member(&member.id), started.session_id)
+}
+
+/// Waits, for up to five seconds, until `condition` holds: the other side of a test has to reach its step.
+fn wait_for(condition: impl Fn() -> bool) {
+    let until = Instant::now() + Duration::from_secs(5);
+    while !condition() {
+        assert!(Instant::now() < until, "the step did not come in time");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A member of a batch, named by `key`, that waits for the keys in `depends_on` and starts now when `start`.
+fn batch_member(key: &str, role: &str, depends_on: &[&str], start: bool) -> NewMember {
+    NewMember {
+        key: Some(key.to_owned()),
+        role: role.to_owned(),
+        task: format!("Faça {role}"),
+        acceptance: String::new(),
+        depends_on: depends_on.iter().map(|key| (*key).to_owned()).collect(),
+        start,
+        agent: start.then_some(HarnessId::Claude),
+    }
+}
+
+#[test]
+fn a_question_is_typed_into_an_idle_worker_and_its_report_is_the_answer() {
+    let fixture = fixture();
+    let (writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture.host.set_status(&session, AgentStatus::Idle);
+
+    std::thread::scope(|scope| {
+        let asking = scope.spawn(|| {
+            fixture.orchestration.ask_worker(
+                LEAD_SESSION,
+                &writer.id,
+                "Qual o título?",
+                Duration::from_secs(5),
+            )
+        });
+        wait_for(|| !fixture.host.sent().is_empty());
+        fixture
+            .orchestration
+            .report(&session, Outcome::Done, "O título é Guia.")
+            .expect("the worker reports");
+        let answer = asking
+            .join()
+            .expect("the ask does not panic")
+            .expect("the worker answers");
+
+        assert_eq!(answer.report.as_deref(), Some("O título é Guia."));
+        assert_eq!(answer.output, format!("the screen of {session}"));
+        assert!(answer.running);
+    });
+    assert_eq!(
+        fixture.host.sent(),
+        vec![(session.clone(), "Qual o título?".to_owned())]
+    );
+    let exchanges = fixture
+        .team
+        .exchanges_of(&fixture.lead.id)
+        .expect("the exchanges");
+    assert!(exchanges.iter().any(|exchange| {
+        exchange.kind == MessageKind::Question
+            && exchange.from_member_id == fixture.lead.id
+            && exchange.to_member_id == writer.id
+            && exchange.body == "Qual o título?"
+    }));
+    assert!(exchanges.iter().any(|exchange| {
+        exchange.kind == MessageKind::Answer
+            && exchange.from_member_id == writer.id
+            && exchange.to_member_id == fixture.lead.id
+    }));
+}
+
+#[test]
+fn a_question_waits_until_a_busy_worker_is_idle() {
+    let fixture = fixture();
+    let (writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture.host.set_status(&session, AgentStatus::Working);
+
+    std::thread::scope(|scope| {
+        let asking = scope.spawn(|| {
+            fixture.orchestration.ask_worker(
+                LEAD_SESSION,
+                &writer.id,
+                "Pode revisar?",
+                Duration::from_secs(5),
+            )
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            fixture.host.sent().is_empty(),
+            "nothing is typed into a worker that is busy"
+        );
+        fixture.host.set_status(&session, AgentStatus::Idle);
+        wait_for(|| !fixture.host.sent().is_empty());
+        fixture
+            .orchestration
+            .report(&session, Outcome::Done, "Revisado.")
+            .expect("the worker reports");
+        let answer = asking
+            .join()
+            .expect("the ask does not panic")
+            .expect("the worker answers");
+        assert_eq!(answer.report.as_deref(), Some("Revisado."));
+    });
+}
+
+#[test]
+fn a_draft_in_the_worker_input_holds_the_question_back() {
+    let fixture = fixture();
+    let (writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture.host.set_status(&session, AgentStatus::Idle);
+    fixture.host.set_draft(&session, true);
+
+    assert_eq!(
+        fixture.orchestration.ask_worker(
+            LEAD_SESSION,
+            &writer.id,
+            "Oi?",
+            Duration::from_millis(300)
+        ),
+        Err(OrchestrationError::AskNotTyped)
+    );
+    assert!(
+        fixture.host.sent().is_empty(),
+        "the question is not mixed into the person's draft"
+    );
+}
+
+#[test]
+fn a_worker_that_does_not_answer_in_time_is_reported_as_such() {
+    let fixture = fixture();
+    let (writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture.host.set_status(&session, AgentStatus::Idle);
+
+    assert_eq!(
+        fixture.orchestration.ask_worker(
+            LEAD_SESSION,
+            &writer.id,
+            "Oi?",
+            Duration::from_millis(300)
+        ),
+        Err(OrchestrationError::AskNoAnswer)
+    );
+    assert_eq!(
+        fixture.host.sent().len(),
+        1,
+        "the question was typed before the wait ran out"
+    );
+}
+
+#[test]
+fn a_question_to_a_stopped_worker_is_refused_before_anything_is_typed() {
+    let fixture = fixture();
+    let (writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture.host.stop(&session);
+
+    assert!(matches!(
+        fixture
+            .orchestration
+            .ask_worker(LEAD_SESSION, &writer.id, "Oi?", Duration::from_secs(1)),
+        Err(OrchestrationError::Host(_))
+    ));
+    assert!(fixture.host.sent().is_empty());
+}
+
+#[test]
+fn a_refused_question_does_not_end_the_wait_of_the_one_in_progress() {
+    let fixture = fixture();
+    let (writer, writer_session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    let (reviewer, reviewer_session) = started_worker(&fixture, "Reviewer", "Revise o guia");
+    fixture
+        .host
+        .set_status(&reviewer_session, AgentStatus::Idle);
+
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            fixture.orchestration.member_ask(
+                &writer_session,
+                &reviewer.id,
+                "Está pronto?",
+                Duration::from_secs(5),
+            )
+        });
+        wait_for(|| !fixture.host.sent().is_empty());
+        assert_eq!(
+            fixture.orchestration.member_ask(
+                &writer_session,
+                &reviewer.id,
+                "Está pronto?",
+                Duration::from_millis(300)
+            ),
+            Err(OrchestrationError::AskNotTyped),
+            "the second question waits behind the first"
+        );
+        // The reviewer may not ask the writer back while the writer still waits for it.
+        assert_eq!(
+            fixture.orchestration.member_ask(
+                &reviewer_session,
+                &writer.id,
+                "E você?",
+                Duration::from_millis(300)
+            ),
+            Err(OrchestrationError::AskCycle)
+        );
+        fixture
+            .orchestration
+            .report(&reviewer_session, Outcome::Done, "Pronto.")
+            .expect("the reviewer reports");
+        first
+            .join()
+            .expect("the ask does not panic")
+            .expect("the first question is answered");
+    });
+}
+
+#[test]
+fn a_member_asks_a_teammate_by_role_and_the_exchange_stays_for_the_orchestrator() {
+    let fixture = fixture();
+    let (writer, writer_session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    let (reviewer, reviewer_session) = started_worker(&fixture, "Reviewer", "Revise o guia");
+    fixture
+        .host
+        .set_status(&reviewer_session, AgentStatus::Idle);
+
+    std::thread::scope(|scope| {
+        let asking = scope.spawn(|| {
+            fixture.orchestration.member_ask(
+                &writer_session,
+                "reviewer",
+                "Posso fechar?",
+                Duration::from_secs(5),
+            )
+        });
+        wait_for(|| !fixture.host.sent().is_empty());
+        fixture
+            .orchestration
+            .report(&reviewer_session, Outcome::Done, "Pode fechar.")
+            .expect("the reviewer reports");
+        let answer = asking
+            .join()
+            .expect("the ask does not panic")
+            .expect("the reviewer answers");
+        assert_eq!(answer.report.as_deref(), Some("Pode fechar."));
+    });
+    assert_eq!(
+        fixture.host.sent(),
+        vec![(reviewer_session.clone(), "Posso fechar?".to_owned())]
+    );
+
+    let exchanges = fixture
+        .team
+        .exchanges_of(&writer.id)
+        .expect("the exchanges");
+    assert!(exchanges.iter().any(|exchange| {
+        exchange.kind == MessageKind::Question
+            && exchange.from_member_id == writer.id
+            && exchange.to_member_id == reviewer.id
+    }));
+    assert!(exchanges.iter().any(|exchange| {
+        exchange.kind == MessageKind::Answer
+            && exchange.from_member_id == reviewer.id
+            && exchange.to_member_id == writer.id
+    }));
+
+    let check = fixture
+        .orchestration
+        .check(LEAD_SESSION, Duration::ZERO)
+        .expect("the lead checks");
+    assert!(
+        check.messages.iter().any(|message| {
+            message.kind == MessageKind::Question && message.member_id == writer.id
+        }),
+        "the lead's check shows who asked"
+    );
+}
+
+#[test]
+fn a_member_asks_only_its_teammates_and_never_itself() {
+    let fixture = fixture();
+    let (writer, writer_session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    let other = fixture
+        .team
+        .add_member(NewTeamMember::Agent {
+            role: "Other".to_owned(),
+            harness: None,
+            parent_id: None,
+            orchestrator: false,
+            task: "Outra tarefa".to_owned(),
+            acceptance: String::new(),
+            depends_on: Vec::new(),
+            worktree: OTHER_WORKTREE.to_owned(),
+            session_id: None,
+            key: None,
+            start_when_released: false,
+        })
+        .expect("a member of another team");
+
+    assert_eq!(
+        fixture.orchestration.member_ask(
+            &writer_session,
+            &other.id,
+            "Oi?",
+            Duration::from_millis(100)
+        ),
+        Err(OrchestrationError::NotInYourTeam(other.id.clone()))
+    );
+    assert_eq!(
+        fixture.orchestration.member_ask(
+            &writer_session,
+            &writer.id,
+            "Oi?",
+            Duration::from_millis(100)
+        ),
+        Err(OrchestrationError::AskSelf)
+    );
+    assert!(fixture.host.sent().is_empty());
+}
+
+#[test]
+fn a_member_cannot_ask_while_orchestration_is_off() {
+    let fixture = fixture_with(FakeHost::disabled());
+
+    assert_eq!(
+        fixture.orchestration.member_ask(
+            "session-1",
+            &fixture.lead.id,
+            "Oi?",
+            Duration::from_millis(100)
+        ),
+        Err(OrchestrationError::Disabled)
+    );
+}
+
+#[test]
+fn a_batch_is_written_whole_or_not_at_all() {
+    let fixture = fixture();
+
+    assert_eq!(
+        fixture
+            .orchestration
+            .add_members(LEAD_SESSION, None, Vec::new())
+            .map(|_| ()),
+        Err(OrchestrationError::InvalidText(
+            "a member list needs at least one member".to_owned()
+        ))
+    );
+    assert!(matches!(
+        fixture.orchestration.add_members(
+            LEAD_SESSION,
+            None,
+            vec![
+                batch_member("a", "Writer", &[], false),
+                NewMember {
+                    task: "  ".to_owned(),
+                    ..batch_member("b", "Reviewer", &[], false)
+                },
+            ],
+        ),
+        Err(OrchestrationError::InvalidText(_))
+    ));
+    assert!(
+        fixture
+            .orchestration
+            .add_members(
+                LEAD_SESSION,
+                None,
+                vec![
+                    batch_member("a", "Writer", &[], false),
+                    batch_member("a", "Reviewer", &[], false),
+                ],
+            )
+            .is_err(),
+        "a key may name one member only"
+    );
+    assert!(matches!(
+        fixture.orchestration.add_members(
+            LEAD_SESSION,
+            None,
+            vec![NewMember {
+                start: true,
+                agent: None,
+                ..batch_member("a", "Writer", &[], false)
+            }],
+        ),
+        Err(OrchestrationError::InvalidText(_))
+    ));
+    assert_eq!(
+        fixture.team.members().expect("members").len(),
+        1,
+        "only the lead is in the team"
+    );
+}
+
+#[test]
+fn a_batch_member_waits_for_the_key_it_names_and_starts_when_that_member_reports() {
+    let fixture = fixture();
+    let added = fixture
+        .orchestration
+        .add_members(
+            LEAD_SESSION,
+            None,
+            vec![
+                batch_member("writer", "Writer", &[], true),
+                batch_member("reviewer", "Reviewer", &["writer"], true),
+            ],
+        )
+        .expect("the batch is added");
+    let [writer, reviewer] = added.as_slice() else {
+        panic!("the batch has two members");
+    };
+
+    assert_eq!(
+        reviewer.member.depends_on,
+        vec![writer.member.id.clone()],
+        "the key is read as the member's id"
+    );
+    assert!(reviewer.member.start_when_released);
+    assert!(
+        matches!(writer.started, Some(Ok(_))),
+        "a member with nothing to wait for starts now"
+    );
+    assert_eq!(
+        reviewer.started, None,
+        "a member that waits does not start yet"
+    );
+    assert_eq!(fixture.host.started().len(), 1);
+
+    let writer_session = fixture
+        .member(&writer.member.id)
+        .session_id
+        .expect("the writer has a session");
+    fixture
+        .orchestration
+        .report(&writer_session, Outcome::Done, "Escrito.")
+        .expect("the writer reports");
+    assert_eq!(
+        fixture.host.started().len(),
+        2,
+        "the reviewer starts once the writer reports"
+    );
+    assert!(fixture.member(&reviewer.member.id).session_id.is_some());
+}
+
+#[test]
+fn the_effort_a_start_names_reaches_the_agent_it_launches() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva o guia", Vec::new());
+
+    fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            LaunchSetup {
+                model: None,
+                effort: Some(AgentEffort::High),
+            },
+        )
+        .expect("the worker starts");
+
+    assert_eq!(fixture.host.efforts(), vec![Some(AgentEffort::High)]);
+}
+
+#[test]
+fn the_effort_a_replacement_names_reaches_the_agent_it_launches() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva o guia", Vec::new());
+    fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            LaunchSetup::default(),
+        )
+        .expect("the worker starts");
+
+    fixture
+        .orchestration
+        .replace_worker(
+            LEAD_SESSION,
+            "writer",
+            HarnessId::Codex,
+            LaunchSetup {
+                model: None,
+                effort: Some(AgentEffort::Max),
+            },
+        )
+        .expect("the agent is replaced");
+
+    assert_eq!(fixture.host.efforts(), vec![None, Some(AgentEffort::Max)]);
+}
+
+#[test]
+fn a_worker_is_told_to_ask_its_teammates_with_the_member_ask_tool() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva o guia", Vec::new());
+    fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            LaunchSetup::default(),
+        )
+        .expect("the worker starts");
+
+    let prompt = fixture.host.prompts().pop().expect("the prompt is written");
+    assert!(
+        prompt.contains("lynx_member_ask"),
+        "a worker learns how to ask a teammate"
     );
 }

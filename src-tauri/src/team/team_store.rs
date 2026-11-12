@@ -10,10 +10,11 @@ use crate::agents::harness::{harness_name, harness_named};
 use crate::persistence::{AppDatabase, DatabaseError};
 
 use super::team_model::{
-    DispatchState, MessageKind, TaskState, TeamMember, TeamMemberKind, TeamMessage, TeamPair,
+    DispatchState, MessageKind, TaskState, TeamExchange, TeamLastMessage, TeamMember,
+    TeamMemberKind, TeamMessage, TeamPair,
 };
 
-const MEMBER_COLUMNS: &str = "id, worktree, kind, role, harness, bot_id, parent_id, orchestrator, task, acceptance, session_id, expanded, task_state, dispatch_state, execution_worktree";
+const MEMBER_COLUMNS: &str = "id, worktree, kind, role, harness, bot_id, parent_id, orchestrator, task, acceptance, session_id, expanded, task_state, dispatch_state, execution_worktree, start_when_released";
 
 /// A stored value the model cannot read. The table's checks keep this from happening.
 fn unreadable(index: usize) -> rusqlite::Error {
@@ -49,6 +50,8 @@ fn member_from(row: &Row<'_>) -> rusqlite::Result<TeamMember> {
         session_id: row.get(10)?,
         expanded: row.get(11)?,
         worker_state: None,
+        last_message: None,
+        start_when_released: row.get(15)?,
     })
 }
 
@@ -60,6 +63,20 @@ fn message_from(row: &Row<'_>) -> rusqlite::Result<TeamMessage> {
         kind: MessageKind::parse(&kind).ok_or_else(|| unreadable(2))?,
         body: row.get(3)?,
         created_at: row.get(4)?,
+    })
+}
+
+/// Reads id, kind, body, created_at, from_member_id, to_member_id, in that order.
+#[cfg(test)]
+fn exchange_from(row: &Row<'_>) -> rusqlite::Result<TeamExchange> {
+    let kind: String = row.get(1)?;
+    Ok(TeamExchange {
+        id: row.get(0)?,
+        kind: MessageKind::parse(&kind).ok_or_else(|| unreadable(1))?,
+        body: row.get(2)?,
+        created_at: row.get(3)?,
+        from_member_id: row.get(4)?,
+        to_member_id: row.get(5)?,
     })
 }
 
@@ -127,6 +144,42 @@ impl AppDatabase {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// The newest message kept for each member that has one, as the screen shows it.
+    pub fn last_messages(&self) -> Result<HashMap<String, TeamLastMessage>, DatabaseError> {
+        let connection = self.lock();
+        let mut statement = connection.prepare(
+            "SELECT member_id, kind, body, created_at FROM (
+                 SELECT member_id, kind, body, created_at,
+                        ROW_NUMBER() OVER (PARTITION BY member_id ORDER BY created_at DESC, rowid DESC) AS newest
+                 FROM team_messages
+             ) WHERE newest = 1",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                TeamLastMessage {
+                    kind: row.get(1)?,
+                    body: row.get(2)?,
+                    created_at: row.get(3)?,
+                },
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
+    }
+
+    /// The questions and answers a member sent or received, oldest first. Reading them does not mark them read.
+    /// Only the tests read the lines back: the app shows the asker, through the messages.
+    #[cfg(test)]
+    pub fn exchanges_of(&self, member_id: &str) -> Result<Vec<TeamExchange>, DatabaseError> {
+        let connection = self.lock();
+        let mut statement = connection.prepare(
+            "SELECT id, kind, body, created_at, from_member_id, to_member_id FROM team_messages
+             WHERE from_member_id = ?1 OR to_member_id = ?1 ORDER BY created_at, rowid",
+        )?;
+        let rows = statement.query_map([member_id], exchange_from)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Runs `change` inside one transaction: its writes all land, or, when it fails, none does.
     pub fn team_transaction<T>(
         &self,
@@ -147,7 +200,7 @@ pub(super) fn insert_member(
 ) -> Result<(), DatabaseError> {
     connection.execute(
         &format!(
-            "INSERT INTO team_members ({MEMBER_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
+            "INSERT INTO team_members ({MEMBER_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
         ),
         params![
             member.id,
@@ -165,6 +218,7 @@ pub(super) fn insert_member(
             member.task_state.map(TaskState::as_str),
             member.dispatch_state.map(DispatchState::as_str),
             member.execution_worktree,
+            member.start_when_released,
         ],
     )?;
     Ok(())
@@ -300,6 +354,45 @@ pub(super) fn insert_message(
             message.body,
             message.created_at
         ],
+    )?;
+    Ok(())
+}
+
+/// Keeps a question or an answer, and carries both members. It is filed under the asker, who sent the question and
+/// receives its answer, so the asker's orchestrator hears both at its next check, whoever answered.
+pub(super) fn insert_exchange(
+    connection: &Connection,
+    exchange: &TeamExchange,
+) -> Result<(), DatabaseError> {
+    let asker = if exchange.kind == MessageKind::Answer {
+        &exchange.to_member_id
+    } else {
+        &exchange.from_member_id
+    };
+    connection.execute(
+        "INSERT INTO team_messages (id, member_id, kind, body, unread, created_at, from_member_id, to_member_id)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7)",
+        params![
+            exchange.id,
+            asker,
+            exchange.kind.as_str(),
+            exchange.body,
+            exchange.created_at,
+            exchange.from_member_id,
+            exchange.to_member_id
+        ],
+    )?;
+    Ok(())
+}
+
+/// Marks one message read, so the next check does not say it again.
+pub(super) fn mark_message_read(
+    connection: &Connection,
+    message_id: &str,
+) -> Result<(), DatabaseError> {
+    connection.execute(
+        "UPDATE team_messages SET unread = 0 WHERE id = ?1",
+        [message_id],
     )?;
     Ok(())
 }

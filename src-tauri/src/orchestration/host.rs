@@ -13,18 +13,18 @@ use crate::agents::agent_prompt_file;
 use crate::agents::harness::HarnessId;
 use crate::agents::hook_install::HookInstallState;
 use crate::agents::hook_targets::HookTargets;
-use crate::agents::launch_line::launch_line;
+use crate::agents::launch_line::launch_line_with_effort;
 use crate::bots::bot_bridge::{bot_of_session, parse_session};
 use crate::bots::bot_chat::BotChat;
 use crate::config::ConfigStore;
-use crate::config::app_config::{LaunchMode, OrchestrationConfig};
+use crate::config::app_config::{AgentEffort, LaunchMode, OrchestrationConfig};
 use crate::git::git_command::git;
 use crate::team::team_events::TeamChanged;
 use crate::terminal::terminal_manager::TerminalManager;
 use crate::workspace::workspace_events::WorktreeCreated;
 use crate::workspace::workspace_service::WorkspaceService;
 
-use super::agent_wake::AgentWakes;
+use super::agent_wake::{AgentWakes, as_paste, free_to_type, type_and_submit};
 use super::service::WorkerHost;
 
 /// What a bot is told when one of its workers changed: it looks at its team and tells the person.
@@ -126,14 +126,19 @@ impl WorkerHost for AppWorkers {
             .map_err(|error| error.to_string())
     }
 
-    fn launch_line(&self, harness: HarnessId, unattended: bool) -> String {
+    fn launch_line(
+        &self,
+        harness: HarnessId,
+        unattended: bool,
+        effort: Option<AgentEffort>,
+    ) -> String {
         let config = self.config.config();
         let mode = if unattended {
             LaunchMode::Yolo
         } else {
             config.agents.launch_mode
         };
-        launch_line(harness, mode, &config.agents.launch_arguments)
+        launch_line_with_effort(harness, mode, &config.agents.launch_arguments, effort)
     }
 
     fn agent_on(&self, harness: HarnessId) -> bool {
@@ -163,7 +168,19 @@ impl WorkerHost for AppWorkers {
     }
 
     fn send(&self, session: &str, text: &str) -> Result<(), String> {
-        super::agent_wake::type_and_submit(&self.terminals(), session, text)
+        type_and_submit(&self.terminals(), session, text).map_err(|error| error.to_string())
+    }
+
+    fn ready_for_input(&self, session: &str) -> bool {
+        let draft = self
+            .app
+            .try_state::<Arc<AgentWakes>>()
+            .is_some_and(|wakes| wakes.has_draft(session));
+        free_to_type(self.status(session), draft)
+    }
+
+    fn send_pasted(&self, session: &str, text: &str) -> Result<(), String> {
+        type_and_submit(&self.terminals(), session, &as_paste(text))
             .map_err(|error| error.to_string())
     }
 

@@ -7,7 +7,10 @@ use crate::agents::harness::HarnessId;
 use crate::persistence::AppDatabase;
 
 use super::team_error::TeamError;
-use super::team_model::{NewTeamMember, TeamMember, TeamMemberKind, TeamPair};
+use super::team_model::{
+    MessageKind, NewTeamMember, TeamLastMessage, TeamMember, TeamMemberKind, TeamMessage, TeamNote,
+    TeamPair,
+};
 use super::team_service::TeamService;
 
 fn service() -> (TeamService, tempfile::TempDir) {
@@ -23,8 +26,16 @@ fn service_with_bots(bot_exists: fn(&str) -> bool) -> (TeamService, tempfile::Te
     )
 }
 
-const WORKTREE: &str = "/home/dev/repo-worktrees/auth";
-const OTHER_WORKTREE: &str = "/home/dev/repo-worktrees/docs";
+const WORKTREE: &str = if cfg!(windows) {
+    r"C:\home\dev\repo-worktrees\auth"
+} else {
+    "/home/dev/repo-worktrees/auth"
+};
+const OTHER_WORKTREE: &str = if cfg!(windows) {
+    r"C:\home\dev\repo-worktrees\docs"
+} else {
+    "/home/dev/repo-worktrees/docs"
+};
 const SESSION: &str = "3f2a9c1e-7b4d-4e8a-9c0f-1a2b3c4d5e6f";
 const RESTORED: &str = "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a";
 
@@ -39,6 +50,8 @@ fn agent_in(worktree: &str, role: &str, parent: Option<&str>, orchestrator: bool
         depends_on: Vec::new(),
         worktree: worktree.to_owned(),
         session_id: None,
+        key: None,
+        start_when_released: false,
     }
 }
 
@@ -57,6 +70,8 @@ fn placed_agent(role: &str, worktree: &str, session_id: Option<&str>) -> NewTeam
         depends_on: Vec::new(),
         worktree: worktree.to_owned(),
         session_id: session_id.map(str::to_owned),
+        key: None,
+        start_when_released: false,
     }
 }
 
@@ -627,7 +642,12 @@ fn an_agent_may_run_with_or_without_a_session_in_its_worktree() {
 fn a_worktree_is_an_absolute_path_with_no_parent_steps() {
     let (service, _dir) = service();
 
-    for worktree in ["", "relative/worktree", "/repo/../elsewhere"] {
+    let parent_step = if cfg!(windows) {
+        r"C:\repo\..\elsewhere"
+    } else {
+        "/repo/../elsewhere"
+    };
+    for worktree in ["", "relative/worktree", parent_step] {
         assert!(
             matches!(
                 service.add_member(placed_agent("Builder", worktree, Some(SESSION))),
@@ -879,4 +899,134 @@ fn startup_leaves_existing_bots_and_every_agent_as_they_were() {
 
     assert_eq!(removed, 0);
     assert_eq!(service.snapshot().expect("snapshot"), before);
+}
+
+/// A member of the lead's team, named by `key`, that waits for the keys in `depends_on`.
+fn keyed(key: &str, role: &str, parent: &str, depends_on: &[&str]) -> NewTeamMember {
+    NewTeamMember::Agent {
+        role: role.to_owned(),
+        harness: Some(HarnessId::Codex),
+        parent_id: Some(parent.to_owned()),
+        orchestrator: false,
+        task: format!("Faça {role}"),
+        acceptance: String::new(),
+        depends_on: depends_on.iter().map(|key| (*key).to_owned()).collect(),
+        worktree: WORKTREE.to_owned(),
+        session_id: None,
+        key: Some(key.to_owned()),
+        start_when_released: false,
+    }
+}
+
+fn service_with_database() -> (TeamService, Arc<AppDatabase>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = Arc::new(AppDatabase::open(&dir.path().join("app.db")).expect("open"));
+    let service = TeamService::new(Arc::clone(&database), Box::new(|_| true));
+    (service, database, dir)
+}
+
+#[test]
+fn a_batch_is_one_change_and_a_key_names_the_member_another_waits_for() {
+    let (service, _dir) = service();
+    let lead = add(&service, agent("Lead", None, true));
+
+    let written = service
+        .add_members(vec![
+            keyed("reviewer", "Reviewer", &lead.id, &["writer"]),
+            keyed("writer", "Writer", &lead.id, &[]),
+        ])
+        .expect("the batch is added");
+
+    let (reviewer, writer) = (&written[0], &written[1]);
+    assert_eq!(reviewer.depends_on, vec![writer.id.clone()]);
+    assert_eq!(
+        get(&service, &reviewer.id).depends_on,
+        vec![writer.id.clone()],
+        "the line is kept with the member, the key being read as its id"
+    );
+    assert_eq!(members_of(&service, WORKTREE).len(), 3);
+}
+
+#[test]
+fn a_batch_with_a_bad_key_or_a_cycle_writes_nothing() {
+    let (service, _dir) = service();
+    let lead = add(&service, agent("Lead", None, true));
+
+    assert!(matches!(
+        service.add_members(vec![
+            keyed("a", "Writer", &lead.id, &[]),
+            keyed("a", "Reviewer", &lead.id, &[]),
+        ]),
+        Err(TeamError::DuplicateKey)
+    ));
+    assert!(matches!(
+        service.add_members(vec![keyed("  ", "Writer", &lead.id, &[])]),
+        Err(TeamError::InvalidKey)
+    ));
+    assert!(matches!(
+        service.add_members(vec![keyed("a", "Writer", &lead.id, &["ghost"])]),
+        Err(TeamError::MemberNotFound(_))
+    ));
+    assert!(matches!(
+        service.add_members(vec![keyed("a", "Writer", &lead.id, &["a"])]),
+        Err(TeamError::DependencyCycle)
+    ));
+    assert!(matches!(
+        service.add_members(vec![
+            keyed("a", "Writer", &lead.id, &["b"]),
+            keyed("b", "Reviewer", &lead.id, &["a"]),
+        ]),
+        Err(TeamError::DependencyCycle)
+    ));
+    assert_eq!(
+        members_of(&service, WORKTREE).len(),
+        1,
+        "a refused batch leaves the team as it was"
+    );
+}
+
+#[test]
+fn the_snapshot_shows_each_members_newest_message_and_the_team_notes() {
+    let (service, database, _dir) = service_with_database();
+    let lead = add(&service, agent("Lead", None, true));
+    let writer = add(&service, agent("Writer", Some(&lead.id), false));
+    assert_eq!(get(&service, &writer.id).last_message, None);
+
+    for (id, body, created_at) in [("first", "Primeira", 10), ("second", "Segunda", 20)] {
+        service
+            .add_message(&TeamMessage {
+                id: id.to_owned(),
+                member_id: writer.id.clone(),
+                kind: MessageKind::Done,
+                body: body.to_owned(),
+                created_at,
+            })
+            .expect("the message is kept");
+    }
+    database
+        .save_team_note(WORKTREE, "plano", "Use o guia")
+        .expect("the note is saved");
+
+    let snapshot = service.snapshot().expect("snapshot");
+    let shown = snapshot
+        .members
+        .iter()
+        .find(|member| member.id == writer.id)
+        .expect("the writer");
+    assert_eq!(
+        shown.last_message,
+        Some(TeamLastMessage {
+            kind: "done".to_owned(),
+            body: "Segunda".to_owned(),
+            created_at: 20,
+        })
+    );
+    assert_eq!(
+        snapshot.notes,
+        vec![TeamNote {
+            worktree: WORKTREE.to_owned(),
+            name: "plano".to_owned(),
+            body: "Use o guia".to_owned(),
+        }]
+    );
 }

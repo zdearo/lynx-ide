@@ -6,11 +6,45 @@ use std::path::{Component, Path};
 use crate::bots::bot_folder::valid_id;
 
 use super::team_error::TeamError;
-use super::team_model::{TaskState, TeamMember, TeamMemberKind, TeamPair};
+use super::team_model::{
+    MessageKind, TaskState, TeamExchange, TeamMember, TeamMemberKind, TeamPair,
+};
 
 pub const MAX_ROLE_CHARS: usize = 40;
 pub const MAX_TEXT_CHARS: usize = 2000;
 pub const MAX_SESSION_ID_CHARS: usize = 128;
+pub const MAX_KEY_CHARS: usize = 60;
+pub const MAX_EXCHANGE_CHARS: usize = 8000;
+
+/// A batch key, trimmed. It names a member of the batch for the others to wait for, so it must not be empty.
+pub fn clean_key(key: &str) -> Result<String, TeamError> {
+    let key = key.trim();
+    if key.is_empty() || key.chars().count() > MAX_KEY_CHARS {
+        return Err(TeamError::InvalidKey);
+    }
+    Ok(key.to_owned())
+}
+
+/// Whether a question or an answer may go from its sender to its receiver: one of the two kinds, a text of
+/// 1 to 8000 characters, two different members of one worktree's team.
+pub fn check_exchange(members: &[TeamMember], exchange: &TeamExchange) -> Result<(), TeamError> {
+    if !matches!(exchange.kind, MessageKind::Question | MessageKind::Answer) {
+        return Err(TeamError::NotAnExchange);
+    }
+    let length = exchange.body.trim().chars().count();
+    if length == 0 || length > MAX_EXCHANGE_CHARS {
+        return Err(TeamError::InvalidExchange);
+    }
+    let from = member_of(members, &exchange.from_member_id)?;
+    let to = member_of(members, &exchange.to_member_id)?;
+    if from.id == to.id {
+        return Err(TeamError::SameMember);
+    }
+    if from.worktree != to.worktree {
+        return Err(TeamError::OtherWorktree);
+    }
+    Ok(())
+}
 
 /// A role, trimmed. It must not be empty.
 pub fn clean_role(role: &str) -> Result<String, TeamError> {
@@ -295,6 +329,8 @@ mod tests {
             session_id: None,
             expanded: false,
             worker_state: None,
+            last_message: None,
+            start_when_released: false,
             task_state: None,
             depends_on: Vec::new(),
             dispatch_state: None,

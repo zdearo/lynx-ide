@@ -252,6 +252,33 @@ const MIGRATIONS: &[&str] = &[
          content  TEXT NOT NULL,
          PRIMARY KEY (worktree, name)
      );",
+    // Questions and answers between members. A line keeps who sent it and who receives it; reports and notices
+    // have neither. SQLite cannot change a CHECK in place, so the lines are copied into a new table and renamed.
+    "CREATE TABLE team_messages_next (
+         id             TEXT PRIMARY KEY,
+         member_id      TEXT NOT NULL REFERENCES team_members (id) ON DELETE CASCADE,
+         kind           TEXT NOT NULL CHECK (
+             kind IN ('done', 'failed', 'noReport', 'needsYou', 'question', 'answer')
+         ),
+         body           TEXT NOT NULL,
+         unread         INTEGER NOT NULL DEFAULT 1 CHECK (unread IN (0, 1)),
+         created_at     INTEGER NOT NULL,
+         from_member_id TEXT REFERENCES team_members (id) ON DELETE CASCADE,
+         to_member_id   TEXT REFERENCES team_members (id) ON DELETE CASCADE,
+         CHECK (kind IN ('question', 'answer') OR (from_member_id IS NULL AND to_member_id IS NULL)),
+         CHECK (
+             kind NOT IN ('question', 'answer')
+             OR (from_member_id IS NOT NULL AND to_member_id IS NOT NULL)
+         )
+     );
+     INSERT INTO team_messages_next (id, member_id, kind, body, unread, created_at)
+     SELECT id, member_id, kind, body, unread, created_at FROM team_messages ORDER BY rowid;
+     DROP TABLE team_messages;
+     ALTER TABLE team_messages_next RENAME TO team_messages;
+     CREATE INDEX team_messages_member ON team_messages (member_id, unread);
+     -- 1 when the member's worker starts only once its team is released; 0, as before, when it starts at once.
+     ALTER TABLE team_members ADD COLUMN start_when_released INTEGER NOT NULL DEFAULT 0
+         CHECK (start_when_released IN (0, 1));",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -482,5 +509,138 @@ mod tests {
             "INSERT INTO team_members (id, worktree, kind, role, harness, session_id)
              VALUES ('blank', '/repo', 'agent', 'Tester', 'claude', '')"
         ));
+    }
+
+    #[test]
+    fn the_old_lines_survive_the_rebuild_and_questions_keep_both_members() {
+        // Before the rebuild the lines are reports and notices, with no one on the other end.
+        let rebuild = MIGRATIONS
+            .iter()
+            .position(|sql| sql.contains("CREATE TABLE team_messages_next"))
+            .expect("a migration rebuilds the messages");
+        let mut connection = Connection::open_in_memory().expect("open");
+        for (index, sql) in MIGRATIONS.iter().enumerate().take(rebuild) {
+            apply(&mut connection, index as u32 + 1, sql).expect("apply");
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO team_members (id, worktree, kind, role, harness, orchestrator)
+                 VALUES ('lead', '/repo', 'agent', 'Lead', 'claude', 1),
+                        ('writer', '/repo', 'agent', 'Writer', 'codex', 0);
+                 INSERT INTO team_messages (id, member_id, kind, body, unread, created_at)
+                 VALUES ('m1', 'writer', 'done', 'Pronto', 1, 10),
+                        ('m2', 'writer', 'failed', 'Quebrou', 0, 20),
+                        ('m3', 'writer', 'noReport', 'Sem relatório', 1, 30),
+                        ('m4', 'lead', 'needsYou', 'Precisa de você', 1, 40);",
+            )
+            .expect("the lines before the rebuild");
+
+        migrate(&mut connection).expect("migrate");
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .expect("foreign keys");
+
+        let lines: Vec<(String, String, String, i64, i64)> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, kind, body, unread, created_at FROM team_messages ORDER BY created_at",
+                )
+                .expect("prepare");
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                })
+                .expect("query")
+                .collect::<Result<_, _>>()
+                .expect("rows")
+        };
+        let expected = [
+            ("m1", "done", "Pronto", 1, 10),
+            ("m2", "failed", "Quebrou", 0, 20),
+            ("m3", "noReport", "Sem relatório", 1, 30),
+            ("m4", "needsYou", "Precisa de você", 1, 40),
+        ];
+        assert_eq!(
+            lines,
+            expected.map(|(id, kind, body, unread, at)| (
+                id.to_string(),
+                kind.to_string(),
+                body.to_string(),
+                unread,
+                at
+            )),
+            "the old lines keep their kind, text, read flag and time"
+        );
+        let without_ends: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM team_messages WHERE from_member_id IS NULL AND to_member_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(without_ends, 4, "the old lines have no sender or receiver");
+        let index: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'team_messages_member'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(index, 1, "the index is rebuilt on the new table");
+        let at_once: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM team_members WHERE start_when_released = 0",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(at_once, 2, "members from before start their worker at once");
+
+        connection
+            .execute_batch(
+                "INSERT INTO team_messages (id, member_id, kind, body, unread, created_at, from_member_id, to_member_id)
+                 VALUES ('q1', 'writer', 'question', 'Qual porta?', 1, 50, 'writer', 'lead'),
+                        ('a1', 'writer', 'answer', 'Porta 8080', 1, 60, 'lead', 'writer');",
+            )
+            .expect("a question and its answer");
+        let refused = |sql: &str| connection.execute(sql, []).is_err();
+        assert!(
+            refused(
+                "INSERT INTO team_messages (id, member_id, kind, body, unread, created_at)
+                 VALUES ('q2', 'writer', 'question', 'Sem de/para', 1, 70)"
+            ),
+            "a question needs a sender and a receiver"
+        );
+        assert!(
+            refused(
+                "INSERT INTO team_messages (id, member_id, kind, body, unread, created_at, from_member_id)
+                 VALUES ('q3', 'writer', 'question', 'Sem para', 1, 70, 'writer')"
+            ),
+            "a question needs a receiver too"
+        );
+        assert!(
+            refused(
+                "INSERT INTO team_messages (id, member_id, kind, body, unread, created_at, from_member_id, to_member_id)
+                 VALUES ('d2', 'writer', 'done', 'Com de/para', 1, 70, 'writer', 'lead')"
+            ),
+            "a report carries no sender or receiver"
+        );
+        assert!(
+            refused(
+                "INSERT INTO team_messages (id, member_id, kind, body, unread, created_at, from_member_id, to_member_id)
+                 VALUES ('q4', 'writer', 'question', 'Ninguém', 1, 70, 'ghost', 'lead')"
+            ),
+            "the sender must be a member"
+        );
+        assert!(
+            refused("UPDATE team_members SET start_when_released = 2 WHERE id = 'lead'"),
+            "the flag is 0 or 1"
+        );
     }
 }

@@ -131,6 +131,10 @@ pub enum MessageKind {
     NoReport,
     /// The worker is waiting for an answer; the user gives it in the worker's terminal.
     NeedsYou,
+    /// A question one member asks another. It is kept with its sender and receiver, see `TeamExchange`.
+    Question,
+    /// The answer to a question, kept with its sender and receiver, see `TeamExchange`.
+    Answer,
 }
 
 impl MessageKind {
@@ -140,6 +144,8 @@ impl MessageKind {
             Self::Failed => "failed",
             Self::NoReport => "noReport",
             Self::NeedsYou => "needsYou",
+            Self::Question => "question",
+            Self::Answer => "answer",
         }
     }
 
@@ -149,6 +155,8 @@ impl MessageKind {
             "failed" => Some(Self::Failed),
             "noReport" => Some(Self::NoReport),
             "needsYou" => Some(Self::NeedsYou),
+            "question" => Some(Self::Question),
+            "answer" => Some(Self::Answer),
             _ => None,
         }
     }
@@ -162,6 +170,29 @@ pub struct TeamMessage {
     pub kind: MessageKind,
     pub body: String,
     pub created_at: i64,
+}
+
+/// A question one member asks another, or the answer to it. Both members are kept, so the line says who asked
+/// whom. It is filed under the asker, so the asker's orchestrator hears both at its next check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamExchange {
+    pub id: String,
+    /// `Question` or `Answer`; any other kind is refused when the line is kept.
+    pub kind: MessageKind,
+    pub from_member_id: String,
+    pub to_member_id: String,
+    pub body: String,
+    pub created_at: i64,
+}
+
+/// The newest message kept for a member, as the screen shows it. The kind is the stored text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamLastMessage {
+    pub kind: String,
+    pub body: String,
+    /// When the message was kept, in seconds since the Unix epoch. A u32: the contract has no 64-bit integers.
+    pub created_at: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -201,6 +232,11 @@ pub struct TeamMember {
     /// The state of the worker this member is, when a worker of it has started. Not stored; the
     /// orchestration fills it from the member's reports and its process.
     pub worker_state: Option<String>,
+    /// The newest message kept for this member. Only the snapshot fills it.
+    pub last_message: Option<TeamLastMessage>,
+    /// Whether the member's worker starts only once its team is released. Kept in the model; not sent to the screen.
+    #[serde(skip)]
+    pub start_when_released: bool,
 }
 
 /// A permission for two members to talk. Stored once, with the lower id first.
@@ -227,12 +263,23 @@ impl TeamPair {
     }
 }
 
-/// Every worktree's members and lines, in the order they were made. The screen filters by worktree.
+/// A note a team shares, as `team_notes` keeps it: its worktree, its name and its text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamNote {
+    /// The worktree whose team the note belongs to.
+    pub worktree: String,
+    pub name: String,
+    pub body: String,
+}
+
+/// Every worktree's members, lines and notes, in the order they were made. The screen filters by worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TeamSnapshot {
     pub members: Vec<TeamMember>,
     pub pairs: Vec<TeamPair>,
+    pub notes: Vec<TeamNote>,
 }
 
 /// A member to add, in the worktree it joins. An agent may start under an orchestrator of that worktree;
@@ -258,6 +305,13 @@ pub enum NewTeamMember {
         worktree: String,
         /// The terminal session the screen opened for the agent in `worktree`.
         session_id: Option<String>,
+        /// A name for this member within one `add_members` batch, so another member of the batch can wait for it.
+        /// Not sent to the screen.
+        #[serde(skip)]
+        key: Option<String>,
+        /// Whether the worker starts only once the team is released. Not sent to the screen.
+        #[serde(skip)]
+        start_when_released: bool,
     },
     Bot {
         bot_id: String,

@@ -6,10 +6,16 @@ export type TeamStatus = AgentStatus | "closed" | "failed";
 /** A worker's state as the orchestration gives it. */
 export type WorkerState = "running" | "done" | "failed" | "stopped";
 
+/** What a member's last message says: a report, a failure, a question to the user, or any kind Lynx does not know yet. */
+export type TeamActionKind =
+  "done" | "failed" | "noReport" | "needsYou" | "question" | "answer" | "other";
+
 export interface TeamActivity {
   text: string;
   /** Epoch seconds. */
   at: number;
+  /** The kind of the message the text comes from. Absent for a text that is not a message. */
+  kind?: TeamActionKind;
 }
 
 /** What every member has, whether it is an agent or a bot. */

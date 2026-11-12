@@ -864,7 +864,10 @@ mod tests {
         NewTeamMember::Bot {
             bot_id: "docs".to_owned(),
             role: "Docs".to_owned(),
-            worktree: "/repo".to_owned(),
+            worktree: std::env::temp_dir()
+                .join("repo")
+                .to_string_lossy()
+                .into_owned(),
         }
     }
 
@@ -949,7 +952,10 @@ mod tests {
                 task: "Audite".to_owned(),
                 acceptance: String::new(),
                 depends_on: Vec::new(),
-                worktree: "/repo".to_owned(),
+                worktree: std::env::temp_dir()
+                    .join("repo")
+                    .to_string_lossy()
+                    .into_owned(),
                 session_id: None,
             })
             .expect("a member under the bot");

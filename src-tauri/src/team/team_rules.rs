@@ -280,7 +280,10 @@ mod tests {
     fn agent(id: &str, parent: Option<&str>, orchestrator: bool) -> TeamMember {
         TeamMember {
             id: id.to_owned(),
-            worktree: "/repo".to_owned(),
+            worktree: std::env::temp_dir()
+                .join("repo")
+                .to_string_lossy()
+                .into_owned(),
             kind: TeamMemberKind::Agent,
             role: id.to_owned(),
             harness: Some(HarnessId::Claude),

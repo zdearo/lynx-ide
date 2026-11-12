@@ -319,7 +319,7 @@ impl BotChat {
         let (folder, _turn) = self.begin(id, thread)?;
         let dir = bot_thread::dir(folder.dir(), thread)?;
         let settings = folder.settings()?;
-        let recalled = bot_recall::recall(folder.dir(), thread, text);
+        let recalled = bot_recall::recall(folder.dir(), text);
         let prompt = {
             let _guard = self.lock();
             let history = bot_conversation::read(&dir)?;

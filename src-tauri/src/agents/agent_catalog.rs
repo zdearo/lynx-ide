@@ -61,18 +61,19 @@ fn is_executable(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    metadata.is_file() && has_execute_bit(&metadata)
+}
+
+#[cfg(unix)]
+fn has_execute_bit(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+// Windows has no execute bit: a file that is there is runnable.
+#[cfg(not(unix))]
+fn has_execute_bit(_metadata: &fs::Metadata) -> bool {
+    true
 }
 
 #[cfg(all(test, unix))]

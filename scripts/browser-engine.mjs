@@ -40,6 +40,9 @@ const tauriDir = join(root, "src-tauri");
 const lynxHome = process.env.LYNX_HOME ?? join(homedir(), ".lynx");
 const engineRoot = join(lynxHome, "engine");
 const index = "https://cef-builds.spotifycdn.com/index.json";
+// The build of the host itself. Bump it when the host changes but the CEF build and the protocol do
+// not: the package gets a new name, so the app reinstalls it. The protocol stays as it is.
+const engineRevision = 2;
 const windows = platform() === "win32";
 const hostName = windows ? "lynx-browser-host.exe" : "lynx-browser-host";
 // The platform as the CEF index and the manifest name it.
@@ -101,6 +104,10 @@ async function exists(path) {
     () => true,
     () => false,
   );
+}
+
+function engineId(version, protocol) {
+  return `${version}-p${protocol}-r${engineRevision}`;
 }
 
 async function download(version) {
@@ -215,7 +222,7 @@ async function assemble(cefDir, host, version, protocol) {
     join(partial, "engine.json"),
     JSON.stringify(
       {
-        version: `${version}-p${protocol}`,
+        version: engineId(version, protocol),
         protocol,
         cef: version,
         platform: enginePlatform,
@@ -269,7 +276,7 @@ async function bundle(cefDir, host, version, protocol) {
       });
     }
   }
-  const id = `${version}-p${protocol}`;
+  const id = engineId(version, protocol);
   await writeFile(
     join(stage, "engine.json"),
     JSON.stringify(

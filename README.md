@@ -118,3 +118,4 @@ Lynx não é afiliado à Anthropic, à OpenAI nem aos projetos cujas logos apare
 - [PRODUCT.md](./PRODUCT.md): produto e público.
 - [TODO.md](./TODO.md): fases e tarefas.
 - [NOTICE](./NOTICE): copyright, atribuição e licenças de terceiros.
+- [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md): licença de cada dependência npm e Cargo, gerada.

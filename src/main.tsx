@@ -22,8 +22,8 @@ async function installDevBackend() {
 void installDevBackend().then(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
-      {/* The 18 px the icons were drawn at; a size class on an icon still wins. */}
-      <IconContext.Provider value={{ size: 18 }}>
+      {/* The 18 px and the filled weight the icons are drawn with; a prop on an icon still wins. */}
+      <IconContext.Provider value={{ size: 18, weight: "fill" }}>
         {isBrowserWindow() ? <DetachedBrowserApp /> : <App />}
       </IconContext.Provider>
     </React.StrictMode>,

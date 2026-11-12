@@ -82,6 +82,9 @@ export const workspaceCopy = {
     filterAll: "All",
     filterActive: "Active",
     activeEmpty: "No project has a running terminal.",
+    search: "Search projects and branches",
+    searchPlaceholder: "Search",
+    noMatches: "No project or branch matches.",
   },
 
   addProject: {
@@ -140,7 +143,6 @@ export const workspaceCopy = {
     creating: (name: string) => `Creating ${name}…`,
     missingDirectory: "Folder is missing",
     locked: "Locked",
-    newTerminal: "New terminal",
     actions: (name: string) => `Actions for ${name}`,
     remove: "Remove worktree…",
     runningTerminals: (count: number) =>

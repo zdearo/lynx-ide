@@ -1,4 +1,11 @@
-import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import {
+  Handle,
+  Position,
+  useUpdateNodeInternals,
+  type Node,
+  type NodeProps,
+} from "@xyflow/react";
+import { useEffect } from "react";
 
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
@@ -34,10 +41,16 @@ const HANDLE =
  * only there with orchestrator mode on, gives one (it orchestrates the other). The side handles make pairs.
  * Right-click (or the menu key) opens the member's actions; the rest is in the sheet.
  */
-export function TeamNodeCard({ data, selected }: NodeProps<TeamCardNode>) {
+export function TeamNodeCard({ id, data, selected }: NodeProps<TeamCardNode>) {
   const { member, hasChildren, expanded, dimmed } = data;
   const status = copy.team.status[member.status];
   const bots = useBotsStore((state) => state.bots);
+  // React Flow measures a card's handles once, when it mounts: a handle that appears later (the bottom one, when
+  // the member becomes an orchestrator) is unknown to it until the card is measured again.
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, member.kind, member.orchestrator, updateNodeInternals]);
   const bot = botOf(member, bots);
 
   return (

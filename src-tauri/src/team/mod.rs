@@ -4,6 +4,7 @@
 pub mod team_commands;
 pub mod team_error;
 pub mod team_events;
+pub mod team_knowledge;
 pub mod team_model;
 pub mod team_rules;
 pub mod team_service;

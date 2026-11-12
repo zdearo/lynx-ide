@@ -56,6 +56,14 @@ pub enum TeamError {
     DependencyOtherWorktree,
     #[error("the task already started, so what it waits for cannot change")]
     TaskStarted,
+    #[error("a role prompt needs 1 to 4000 characters")]
+    InvalidRolePrompt,
+    #[error("a note name needs 1 to 60 characters and its text up to 20000")]
+    InvalidNote,
+    #[error("no note named {0} in this team")]
+    NoNote(String),
+    #[error("the text to replace must appear exactly once in the note")]
+    EditNotUnique,
     #[error(transparent)]
     Database(#[from] DatabaseError),
 }

@@ -86,18 +86,18 @@ A Equipe é ligada ao backend (`src-tauri/src/team/`) e é a própria orquestra�
 ### Em aberto
 
 - A orquestração nova (Equipe como worker) só foi testada com regras em memória (`service_tests.rs`, `team_service_tests.rs`) e com a interface simulada. Falta rodar um coordenador real no app, com Claude e com os demais agentes.
-- As dependências são editadas só na ficha do membro (um interruptor por membro). Não há arrastar para criar uma espera.
+- As dependências são definidas pelo orquestrador ao adicionar o membro (`lynx_member_add`). A ficha não as edita mais, e não há ferramenta para mudá-las depois. Não há arrastar para criar uma espera.
+- A ficha e o menu do cartão não editam mais a tarefa, o papel nem as ligações: isso fica com o orquestrador e com o canvas. Mas o IPC ainda aceita `team_set_task`, `team_set_role` e `team_set_dependencies` (a interface não os chama mais). Para a regra valer no backend, remover esses comandos e os métodos do `TeamService`, e ajustar os testes de orquestração que usam `set_dependencies`.
 - Teste ao vivo com Claude coordenador (sandbox, Lead) e com o bot Ana: adicionar, dependência, worktree nova, pergunta e resposta, dispensa recusada, parar, orquestração desligada, reinício com Resume, bot criando membro e worker e acordando depois do aviso. Não testado: pedido de permissão do worker (`needsYou`, pelo hook) e dispensar pela interface um membro com worker rodando (a interface não recusa; a ferramenta do coordenador recusa).
 - O mapa não desenha as esperas entre membros; elas aparecem só na ficha ("Depende de").
 - O Resume de um agente cuja conversa não existe mostra o erro do Claude e um shell, sem oferecer "Start again".
 - "Talks to" na ficha do coordenador lista também os membros da árvore, não só os pares.
 - Além de tarefa e critério de pronto, o orquestrador daria o veredito de pronto e poderia trocar o papel e parar o filho. Proposto, ainda não confirmado.
-- Mensagem entre pares: o formulário do sheet escreve no terminal do par, com o prefixo do remetente. A mensagem não fica guardada no time, e não há histórico nem limite de mensagens.
 - Backend do Team em Rust (`src-tauri/src/team/`): regras, SQLite e comandos feitos e testados (`rust:test`), e o frontend lê e grava por eles (`team-backend.ts`). Falta rodar contra o app real (não foi aberto com `tauri dev`).
 - A aba Team aparece no app real.
 - Checagens do Team passam no e2e completo (580 PASS, 0 FAIL na última rodada).
 - Checagens do Team no e2e passam nas últimas rodadas. Falhas que sobram variam de rodada para rodada e não são do Team (tab bar, rodapé de planos, confirmação ao fechar aba, toolbar do Browser).
-- Não verificado: arrastar um cartão com filhos para mudar de pai, e a seção "Answers to" do painel flutuante.
+- Não verificado: arrastar um cartão com filhos para mudar de pai.
 - Processo do agente que termina sozinho: a aba fica "Ended" e o cartão continua até a aba ser fechada. Confirmar se é isso.
 - App real testado sob Xvfb, com dados isolados: adicionar agente, fechar aba, reinício com agente vivo e "Start again" passaram com um shim de CLI. O Claude real parou no prompt de confiança da pasta de teste; o status com o Claude de verdade ainda não foi visto.
 - "Resume" depende dos hooks do agente (eles dão o id da conversa). Com os hooks desligados, o cartão só oferece "Start again". Ligar os hooks escreve em `~/.claude/settings.json`.

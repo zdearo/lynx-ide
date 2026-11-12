@@ -16,16 +16,24 @@ pub const NAME: &str = "lynx";
 pub fn agent_skill(executable: &Path) -> String {
     render(
         executable,
+        AGENT_PURPOSE,
         &tool_catalog::list(),
         &tool_catalog::instructions(),
     )
 }
 
+/// What an agent uses the skill for, in the description the harness shows.
+pub const AGENT_PURPOSE: &str =
+    "to start and follow the workers of your team, and to drive the Lynx browser";
+
+/// What a bot uses the skill for. A bot has no browser, so the description does not name one.
+pub const BOT_PURPOSE: &str = "to ask the person for permissions, run the commands they allowed, keep your memory, and start and follow the workers of your team";
+
 /// The skill text for `tools`. The description is one line, which the harnesses require.
-pub fn render(executable: &Path, tools: &[Value], instructions: &str) -> String {
+pub fn render(executable: &Path, purpose: &str, tools: &[Value], instructions: &str) -> String {
     let exe = executable.display();
     let mut text = format!(
-        "---\nname: {NAME}\ndescription: Use the Lynx tools from your shell to start and follow the workers of your team, and to drive the Lynx browser. Run \"{exe}\" --cli list to see them.\n---\n\n# Lynx\n\nCall a tool from your shell, with its arguments as JSON:\n\n    \"{exe}\" --cli <tool> '<arguments as JSON>'\n\n- \"{exe}\" --cli list shows the tools you have, with their arguments.\n- Pass - as the arguments to read them from stdin, when they have many quotes.\n- A screenshot is saved to a file and its path is printed: open it with your file tools.\n- A failing call says why on stderr and exits with 1. Read the reason and adjust before you try again.\n\n{instructions}\n\n## Tools\n"
+        "---\nname: {NAME}\ndescription: Use the Lynx tools from your shell {purpose}. Run \"{exe}\" --cli list to see them.\n---\n\n# Lynx\n\nCall a tool from your shell, with its arguments as JSON:\n\n    \"{exe}\" --cli <tool> '<arguments as JSON>'\n\n- \"{exe}\" --cli list shows the tools you have, with their arguments.\n- Pass - as the arguments to read them from stdin, when they have many quotes.\n- A screenshot is saved to a file and its path is printed: open it with your file tools.\n- A failing call says why on stderr and exits with 1. Read the reason and adjust before you try again.\n\n{instructions}\n\n## Tools\n"
     );
     for tool in tools {
         let name = tool.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -117,7 +125,12 @@ mod tests {
 
     #[test]
     fn the_skill_names_the_command_and_every_tool_with_its_arguments() {
-        let text = render(&PathBuf::from("/opt/lynx/lynx-ide"), &tools(), "");
+        let text = render(
+            &PathBuf::from("/opt/lynx/lynx-ide"),
+            AGENT_PURPOSE,
+            &tools(),
+            "",
+        );
         assert!(text.starts_with("---\nname: lynx\n"));
         assert!(text.contains("\"/opt/lynx/lynx-ide\" --cli <tool>"));
         assert!(text.contains("### lynx_worker_start"));
@@ -126,7 +139,7 @@ mod tests {
 
     #[test]
     fn the_description_is_one_line() {
-        let text = render(&PathBuf::from("/opt/lynx/lynx-ide"), &[], "");
+        let text = render(&PathBuf::from("/opt/lynx/lynx-ide"), AGENT_PURPOSE, &[], "");
         let description = text
             .lines()
             .find(|line| line.starts_with("description:"))
@@ -138,6 +151,7 @@ mod tests {
     fn a_tool_without_arguments_says_none() {
         let text = render(
             &PathBuf::from("/x"),
+            AGENT_PURPOSE,
             &[
                 json!({ "name": "lynx_check", "description": "d", "inputSchema": { "type": "object", "properties": {} } }),
             ],

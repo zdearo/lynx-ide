@@ -49,23 +49,3 @@ export function isValidConnection(
   }
   return find(source)?.parentId !== target && find(target)?.parentId !== source;
 }
-
-/** Every other member, with whether it is paired with this one and whether it can be. */
-export function linkOptionsOf(
-  id: string,
-  members: readonly TeamMember[],
-  pairs: readonly TeamPair[],
-) {
-  return members
-    .filter((member) => member.id !== id)
-    .map((member) => {
-      const linked = isLinked(pairs, id, member.id);
-      return {
-        member,
-        linked,
-        enabled:
-          linked ||
-          isValidConnection({ source: id, target: member.id }, members, pairs),
-      };
-    });
-}

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { Folder, Repo, TerminalInfo, WorktreeInfo } from "@/bindings";
-import { activeRepoIds, onlyActive } from "@/workspace/projects/project-filter";
+import {
+  activeRepoIds,
+  onlyActive,
+  searchProjects,
+} from "@/workspace/projects/project-filter";
 import {
   buildProjectTree,
   type ProjectNode,
@@ -99,5 +103,49 @@ describe("onlyActive", () => {
   it("shows nothing when no repo is active", () => {
     const tree = buildProjectTree([folder("f1", "Work")], [repo("a", "f1")]);
     expect(onlyActive(tree, new Set())).toEqual([]);
+  });
+});
+
+describe("searchProjects", () => {
+  const onBranch = (path: string, branch: string): WorktreeInfo => ({
+    ...worktree(path),
+    branch,
+  });
+  const tree = buildProjectTree(
+    [folder("f1", "Work")],
+    [repo("api", "f1"), repo("web")],
+  );
+  const worktrees = {
+    api: [onBranch("/api/main", "main"), onBranch("/api/auth", "feat/auth")],
+    web: [onBranch("/web/main", "main"), onBranch("/web/docs", "docs/readme")],
+  };
+
+  it("keeps the repo and only the worktrees whose branch matches", () => {
+    const found = searchProjects(tree, worktrees, "auth");
+    expect(shape(found.nodes)).toEqual([["Work", "api"]]);
+    expect(found.worktrees.api.map((item) => item.branch)).toEqual([
+      "feat/auth",
+    ]);
+  });
+
+  it("ignores case", () => {
+    const found = searchProjects(tree, worktrees, "AUTH");
+    expect(shape(found.nodes)).toEqual([["Work", "api"]]);
+  });
+
+  it("shows every worktree of a repo whose name matches", () => {
+    const found = searchProjects(tree, worktrees, "web");
+    expect(shape(found.nodes)).toEqual(["web"]);
+    expect(found.worktrees.web).toHaveLength(2);
+  });
+
+  it("returns the tree unchanged for a blank query", () => {
+    const found = searchProjects(tree, worktrees, "   ");
+    expect(shape(found.nodes)).toEqual(shape(tree));
+    expect(found.worktrees).toBe(worktrees);
+  });
+
+  it("shows nothing when no repo or branch matches", () => {
+    expect(searchProjects(tree, worktrees, "nothing").nodes).toEqual([]);
   });
 });

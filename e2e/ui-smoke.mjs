@@ -656,7 +656,7 @@ await session("?mock=full", 1200, 900, async (p) => {
 
   await p.keyboard.press("Escape");
   await settle(p, 300);
-  // Several rows have a "New terminal" button; the one in the tab bar sits at the top of the main area.
+  // The tab bar's new terminal button sits at the top of the main area; the worktree rows have none.
   const launchers = p.getByRole("button", { name: "New terminal" });
   let launcher = null;
   for (let index = 0; index < (await launchers.count()); index += 1) {
@@ -5623,6 +5623,13 @@ await session("?mock=empty", 1400, 800, async (p) => {
 // the run, a member's panel opens over it, and a member's terminal dialog covers the central area.
 const teamEdges = (p) => p.locator(".react-flow__edge").count();
 const teamNodes = (p) => p.locator(".react-flow__node").count();
+// A worktree row's button of the given name: its mode button switches that worktree between terminals and team.
+const worktreeMode = (p, worktree, name) =>
+  p
+    .locator("div.group\\/row", {
+      has: p.getByRole("button", { name: worktree }),
+    })
+    .getByRole("button", { name, exact: true });
 // The transform of a card on the map, in flow pixels.
 const cardAt = (p, id) =>
   p.evaluate((id) => {
@@ -5652,31 +5659,28 @@ const clickEdge = (p, id) =>
       }),
     );
   }, id);
-// Opens a submenu (Radix opens it on click, or on the arrow key from its trigger).
-const openSubmenu = async (p, name) => {
-  const trigger = p.getByRole("menuitem", { name, exact: true });
-  await trigger.click();
-  await settle(p, 300);
-  if ((await p.getByRole("menuitemcheckbox").count()) === 0) {
-    await trigger.focus();
-    await p.keyboard.press("ArrowRight");
-    await settle(p, 300);
-  }
-};
 
 await session("?mock=full", 1400, 860, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await settle(p, 300);
   check(
-    "the sidebar header has the Terminal | Team switch and the All | Active filter",
+    "the sidebar header has only the All | Active filter; each row has its mode button, and main worktrees a primary mark",
     (await p
       .getByRole("group", { name: "Central view", exact: true })
-      .count()) === 1 &&
+      .count()) === 0 &&
       (await p
         .getByRole("group", { name: "Which projects", exact: true })
-        .count()) === 1,
+        .count()) === 1 &&
+      (await worktreeMode(p, /^feat\/auth/, "Switch to team").count()) === 1 &&
+      (await p.getByLabel("primary", { exact: true }).count()) >= 2,
   );
-  await p.getByRole("button", { name: "Team", exact: true }).click();
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
+  await settle(p, 200);
+  check(
+    "the mode button of feat/auth now reads Switch to terminals, and the other worktree keeps its own mode",
+    (await worktreeMode(p, /^feat\/auth/, "Switch to terminals").count()) ===
+      1 && (await worktreeMode(p, /^fix\/pty/, "Switch to team").count()) === 1,
+  );
   // The team view loads on demand: wait for the map, not a fixed time.
   await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
   await settle(p, 600);
@@ -5755,18 +5759,24 @@ await session("?mock=full", 1400, 860, async (p) => {
     JSON.stringify(place),
   );
   check(
-    "the panel shows the task, its done-when line, the latest activity and the diff",
+    "the panel shows the task state, the latest activity and the diff, and not the task text",
     (await builderPanel.getByText("login form", { exact: true }).count()) ===
-      1 &&
-      (await builderPanel
-        .getByText(
-          "The login form submits through the new adapter and its tests pass.",
-          { exact: true },
-        )
-        .count()) === 1 &&
+      0 &&
+      (await builderPanel.getByText("Done when", { exact: true }).count()) ===
+        0 &&
       (await builderPanel.getByText(/^editing LoginForm\.tsx · /).count()) ===
         1 &&
       (await builderPanel.getByText("+120", { exact: true }).count()) === 1,
+  );
+  check(
+    "the panel only shows the member: no task editing, no message form, no waits-for switch",
+    (await builderPanel
+      .getByRole("button", { name: "Edit task", exact: true })
+      .count()) === 0 &&
+      (await builderPanel
+        .getByRole("button", { name: "Send", exact: true })
+        .count()) === 0 &&
+      (await builderPanel.getByRole("switch").count()) === 0,
   );
 
   await builderPanel
@@ -5785,15 +5795,18 @@ await session("?mock=full", 1400, 860, async (p) => {
     .click({ button: "right" });
   await settle(p, 200);
   check(
-    "right-click on a card opens its actions, with Connect to… as a submenu",
+    "right-click on a card offers its terminal, Orchestrator and Dismiss, and no role or answer options",
     (await p
       .getByRole("menuitem", { name: "Open terminal", exact: true })
       .count()) === 1 &&
+      (await p
+        .getByRole("menuitemcheckbox", { name: "Orchestrator", exact: true })
+        .count()) === 1 &&
       (await p.getByRole("menuitem", { name: "Reassign role" }).count()) ===
-        1 &&
+        0 &&
       (await p
         .getByRole("menuitem", { name: "Connect to…", exact: true })
-        .count()) === 1 &&
+        .count()) === 0 &&
       (await p
         .getByRole("menuitem", { name: "Dismiss", exact: true })
         .count()) === 1,
@@ -5885,51 +5898,6 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
   await p.keyboard.press("Escape");
   await settle(p, 200);
-
-  // Connect to…: linking two members draws a new dashed line, and the menu shows it as checked.
-  await p
-    .locator('.react-flow__node[data-id="researcher"]')
-    .click({ button: "right" });
-  await settle(p, 200);
-  await openSubmenu(p, "Connect to…");
-  await p
-    .getByRole("menuitemcheckbox", { name: "Tester · OMP", exact: true })
-    .click();
-  await settle(p, 300);
-  check(
-    "Connect to… draws a new pair line between the two members",
-    (await teamEdges(p)) === 5,
-    `${await teamEdges(p)} edges`,
-  );
-  await p
-    .locator('.react-flow__node[data-id="researcher"]')
-    .click({ button: "right" });
-  await settle(p, 200);
-  await openSubmenu(p, "Connect to…");
-  check(
-    "the submenu marks the linked member as checked",
-    (await p
-      .getByRole("menuitemcheckbox", { name: "Tester · OMP", exact: true })
-      .getAttribute("aria-checked")) === "true",
-  );
-  await p.keyboard.press("Escape");
-  await settle(p, 200);
-
-  // The × on the picked member's panel removes the line again.
-  await p.locator('.react-flow__node[data-id="researcher"]').click();
-  await settle(p, 200);
-  const researcherPanel = p.getByRole("dialog", {
-    name: "Researcher · OpenCode",
-    exact: true,
-  });
-  await researcherPanel
-    .getByRole("button", { name: "Disconnect from Tester", exact: true })
-    .click();
-  await settle(p, 300);
-  check(
-    "the × on the panel removes the pair, and the panel stays open",
-    (await teamEdges(p)) === 4 && (await researcherPanel.count()) === 1,
-  );
 
   // Expanding Builder shows its tester; Alt+Up/Down then moves the card, and its tester with it.
   await p.getByRole("button", { name: "Expand Builder", exact: true }).click();
@@ -6147,11 +6115,77 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
 });
 
+// A member made an orchestrator from its menu, after its card is drawn, gets a bottom handle that starts a line.
+await session("?mock=full", 1400, 860, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 300);
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
+  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
+  await settle(p, 600);
+  await p.locator('[data-team-id="reviewer"]').click({ button: "right" });
+  await settle(p, 200);
+  await p
+    .getByRole("menuitemcheckbox", { name: "Orchestrator", exact: true })
+    .click();
+  await settle(p, 400);
+  const bottom = p.locator('[data-nodeid="reviewer"][data-handleid="bottom"]');
+  check(
+    "the member turned orchestrator shows its bottom handle",
+    (await bottom.count()) === 1,
+  );
+  await p.locator('[data-team-id="reviewer"]').hover();
+  const from = await bottom.boundingBox();
+  const to = await p
+    .locator('[data-nodeid="tester"][data-handleid="top"]')
+    .boundingBox();
+  await p.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 10 });
+  await p.mouse.up();
+  await settle(p, 400);
+  check(
+    "a line from that bottom handle to a top handle puts the member under it, and draws the line",
+    (await p.locator('[data-testid="rf__edge-reviewer-tester"]').count()) === 1,
+  );
+});
+
+// The sidebar search narrows the projects and their worktrees by name and branch; Escape clears it.
+await session("?mock=full", 1400, 860, async (p) => {
+  const search = p.getByRole("searchbox", {
+    name: "Search projects and branches",
+    exact: true,
+  });
+  await search.fill("auth");
+  await settle(p, 200);
+  check(
+    "the search keeps the worktree whose branch matches, and drops the others",
+    (await p.getByRole("button", { name: /^feat\/auth/ }).count()) === 1 &&
+      (await p.getByRole("button", { name: /^fix\/pty/ }).count()) === 0 &&
+      (await p.getByRole("button", { name: /^docs\/readme/ }).count()) === 0,
+  );
+  await search.fill("zzz");
+  await settle(p, 200);
+  check(
+    "a search with no match says so",
+    (await p
+      .getByText("No project or branch matches.", { exact: true })
+      .count()) === 1,
+  );
+  await search.fill("auth");
+  await search.press("Escape");
+  await settle(p, 200);
+  check(
+    "Escape clears the search, and every worktree is back",
+    (await search.inputValue()) === "" &&
+      (await p.getByRole("button", { name: /^fix\/pty/ }).count()) === 1,
+  );
+});
+
 // A narrow window keeps the map: the picked member's panel still opens over it.
 await session("?mock=full", 1000, 860, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await settle(p, 300);
-  await p.getByRole("button", { name: "Team", exact: true }).click();
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
   await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
   await settle(p, 400);
   await p.locator('.react-flow__node[data-id="researcher"]').click();

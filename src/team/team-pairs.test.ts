@@ -7,7 +7,6 @@ import {
 } from "@/team/team-fixtures";
 import {
   isValidConnection,
-  linkOptionsOf,
   pairKey,
   partnersOf,
   type TeamPair,
@@ -46,20 +45,6 @@ describe("pair helpers", () => {
     expect(partnersOf(pairs, "builder")).toEqual(["reviewer"]);
     expect(partnersOf(pairs, "reviewer")).toEqual(["builder"]);
     expect(partnersOf(pairs, "tester")).toEqual([]);
-  });
-
-  it("marks the linked members, and disables the parent and child", () => {
-    const options = linkOptionsOf("builder", TEAM_MEMBERS, pairs);
-    const byId = Object.fromEntries(
-      options.map((option) => [option.member.id, option]),
-    );
-    expect(byId.reviewer).toMatchObject({ linked: true, enabled: true });
-    expect(byId.lead).toMatchObject({ linked: false, enabled: false });
-    expect(byId["login-tests"]).toMatchObject({
-      linked: false,
-      enabled: false,
-    });
-    expect(byId.tester).toMatchObject({ linked: false, enabled: true });
   });
 });
 

@@ -22,6 +22,21 @@ use super::team_store::{
     take_unread_messages, update_expanded, update_member, update_session,
 };
 
+const MAX_ROLE_PROMPT_CHARS: usize = 4_000;
+const MAX_NOTE_NAME_CHARS: usize = 60;
+const MAX_NOTE_CHARS: usize = 20_000;
+
+fn clean_note(name: &str, content: &str) -> Result<String, TeamError> {
+    let name = name.trim();
+    if name.is_empty()
+        || name.chars().count() > MAX_NOTE_NAME_CHARS
+        || content.chars().count() > MAX_NOTE_CHARS
+    {
+        return Err(TeamError::InvalidNote);
+    }
+    Ok(name.to_owned())
+}
+
 pub struct TeamService {
     database: Arc<AppDatabase>,
     /// Whether a bot id names a bot that exists. The app gives it the bots folder check.
@@ -238,6 +253,91 @@ impl TeamService {
         self.database
             .team_transaction(|connection| update_member(connection, &member))?;
         Ok(())
+    }
+
+    /// Gives a member a new task, and sets where it stands. A new task of a worker that is done is how it is reused.
+    pub fn retask(
+        &self,
+        member_id: &str,
+        task: &str,
+        acceptance: &str,
+        state: TaskState,
+    ) -> Result<(), TeamError> {
+        let _turn = self.turn();
+        let mut member = member_of(&self.database.team_members()?, member_id)?.clone();
+        check_has_orchestrator(&member)?;
+        member.task = clean_text(task)?;
+        member.acceptance = clean_text(acceptance)?;
+        member.task_state = Some(state);
+        self.database
+            .team_transaction(|connection| update_member(connection, &member))?;
+        Ok(())
+    }
+
+    /// Every role preset as (name, prompt).
+    pub fn roles(&self) -> Result<Vec<(String, String)>, TeamError> {
+        Ok(self.database.team_roles()?)
+    }
+
+    /// The prompt of a role preset, when `name` is one.
+    pub fn role_prompt(&self, name: &str) -> Result<Option<String>, TeamError> {
+        Ok(self.database.team_role_prompt(name)?)
+    }
+
+    /// Creates a role preset, or replaces the prompt of the one with that name.
+    pub fn save_role(&self, name: &str, prompt: &str) -> Result<(), TeamError> {
+        let name = clean_role(name)?;
+        let prompt = prompt.trim();
+        if prompt.is_empty() || prompt.chars().count() > MAX_ROLE_PROMPT_CHARS {
+            return Err(TeamError::InvalidRolePrompt);
+        }
+        Ok(self.database.save_team_role(&name, prompt)?)
+    }
+
+    pub fn delete_role(&self, name: &str) -> Result<bool, TeamError> {
+        Ok(self.database.delete_team_role(name)?)
+    }
+
+    pub fn note_names(&self, worktree: &str) -> Result<Vec<String>, TeamError> {
+        Ok(self.database.team_note_names(worktree)?)
+    }
+
+    pub fn note(&self, worktree: &str, name: &str) -> Result<String, TeamError> {
+        self.database
+            .team_note(worktree, name)?
+            .ok_or_else(|| TeamError::NoNote(name.to_owned()))
+    }
+
+    /// Creates a note, or replaces its text.
+    pub fn write_note(&self, worktree: &str, name: &str, content: &str) -> Result<(), TeamError> {
+        let name = clean_note(name, content)?;
+        Ok(self.database.save_team_note(worktree, &name, content)?)
+    }
+
+    /// Replaces `old` by `new` in a note, when `old` appears exactly once.
+    pub fn edit_note(
+        &self,
+        worktree: &str,
+        name: &str,
+        old: &str,
+        new: &str,
+    ) -> Result<(), TeamError> {
+        let _turn = self.turn();
+        let content = self.note(worktree, name)?;
+        if old.is_empty() || content.matches(old).count() != 1 {
+            return Err(TeamError::EditNotUnique);
+        }
+        let content = content.replacen(old, new, 1);
+        let name = clean_note(name, &content)?;
+        Ok(self.database.save_team_note(worktree, &name, &content)?)
+    }
+
+    pub fn delete_note(&self, worktree: &str, name: &str) -> Result<(), TeamError> {
+        if self.database.delete_team_note(worktree, name)? {
+            Ok(())
+        } else {
+            Err(TeamError::NoNote(name.to_owned()))
+        }
     }
 
     /// Attaches a terminal session to an agent, or detaches it with None. The worktree stays, so a session

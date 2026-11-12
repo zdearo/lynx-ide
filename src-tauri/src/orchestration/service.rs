@@ -35,6 +35,8 @@ const CHECK_POLL: Duration = Duration::from_millis(500);
 pub enum WorkerWorktree {
     New,
     Current,
+    /// The worktree the member's worker already works in: a replacement agent carries on there.
+    Same,
 }
 
 impl WorkerWorktree {
@@ -42,6 +44,7 @@ impl WorkerWorktree {
         match text {
             "new" => Some(Self::New),
             "current" => Some(Self::Current),
+            // `Same` is not something a caller names: only a replacement uses it.
             _ => None,
         }
     }
@@ -70,6 +73,11 @@ pub trait WorkerHost: Send + Sync + 'static {
     /// Types `text` into the session and presses Enter, to answer an agent that waits.
     fn send(&self, _session: &str, _text: &str) -> Result<(), String> {
         Err("this host cannot type into a terminal".to_owned())
+    }
+    /// Merges the branch of `from` into the branch checked out in `into`, and says what happened. A merge that
+    /// does not go cleanly is undone, so nothing is left half-way.
+    fn land(&self, _from: &str, _into: &str) -> Result<String, String> {
+        Err("this host cannot merge worktrees".to_owned())
     }
     /// Starts a terminal in the worktree, with `command` typed into it. Returns the session.
     fn start(&self, worktree: &str, command: &str) -> Result<String, String>;
@@ -113,6 +121,10 @@ pub enum OrchestrationError {
     NotAWorker,
     #[error("no member {0} under you")]
     UnknownMember(String),
+    #[error("several members are called {0}: use one of their ids: {1}")]
+    AmbiguousMember(String, String),
+    #[error("the member is still working on its task: talk to it with lynx_ask, or stop it first")]
+    StillWorking,
     #[error("you orchestrate in several worktrees, so name the orchestrator with parentId: {0}")]
     ParentChoice(String),
     #[error("this agent takes no model when Lynx starts it, so start it without one")]
@@ -209,6 +221,15 @@ pub struct WorkerStart {
     pub worktree_path: String,
 }
 
+/// What happened to a task given to a member that already had a worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Assignment {
+    /// The worker is still there and was sent the task.
+    Sent,
+    /// The worker is gone: the task waits for `lynx_worker_start`.
+    Pending,
+}
+
 pub struct Orchestration {
     team: Arc<TeamService>,
     host: Arc<dyn WorkerHost>,
@@ -297,13 +318,19 @@ impl Orchestration {
     pub fn start_worker(
         &self,
         caller: &str,
-        member_id: &str,
+        member_ref: &str,
         harness: HarnessId,
         worktree: WorkerWorktree,
         model: Option<&str>,
     ) -> Result<WorkerStart, OrchestrationError> {
         let parents = self.orchestrators(caller)?;
-        let member = self.child_of(&parents, member_id)?;
+        let member = self.child_of(&parents, member_ref)?;
+        self.check_can_start(&member)?;
+        self.launch(caller, &member, harness, worktree, model, false)
+    }
+
+    /// The member's task is pending, has text, and everything it waits for is done.
+    fn check_can_start(&self, member: &TeamMember) -> Result<(), OrchestrationError> {
         match member.task_state {
             Some(TaskState::Pending) => {}
             Some(state) => {
@@ -324,12 +351,23 @@ impl Orchestration {
             .filter(|other| other.task_state != Some(TaskState::Done))
             .map(|other| other.role.clone())
             .collect();
-        if !waiting.is_empty() {
-            return Err(OrchestrationError::WaitingFor(waiting.join(", ")));
+        if waiting.is_empty() {
+            Ok(())
+        } else {
+            Err(OrchestrationError::WaitingFor(waiting.join(", ")))
         }
-        let project = member.worktree.clone();
+    }
+
+    /// What can refuse an agent before anything is changed: the project's permission, the agent's hooks, the model.
+    fn check_can_launch(
+        &self,
+        caller: &str,
+        member: &TeamMember,
+        harness: HarnessId,
+        model: Option<&str>,
+    ) -> Result<(), OrchestrationError> {
         self.host
-            .allow_start(caller, &project)
+            .allow_start(caller, &member.worktree)
             .map_err(OrchestrationError::Host)?;
         // A worker reports through Lynx's tools, which come with the agent's hooks: without them it cannot finish.
         if !self.host.agent_on(harness) {
@@ -340,8 +378,27 @@ impl Orchestration {
         if let Some(model) = model {
             check_model(harness, model)?;
         }
+        Ok(())
+    }
+
+    /// Opens a terminal for the member's worker and records it. `continuing` says another agent began the task.
+    fn launch(
+        &self,
+        caller: &str,
+        member: &TeamMember,
+        harness: HarnessId,
+        worktree: WorkerWorktree,
+        model: Option<&str>,
+        continuing: bool,
+    ) -> Result<WorkerStart, OrchestrationError> {
+        self.check_can_launch(caller, member, harness, model)?;
+        let project = member.worktree.clone();
         let execution = match worktree {
             WorkerWorktree::Current => project.clone(),
+            WorkerWorktree::Same => member
+                .execution_worktree
+                .clone()
+                .ok_or(OrchestrationError::NoWorker)?,
             WorkerWorktree::New => {
                 let name = format!(
                     "lynx-task-{}",
@@ -352,9 +409,11 @@ impl Orchestration {
                     .map_err(OrchestrationError::Host)?
             }
         };
+        let role = self.team.role_prompt(&member.role)?;
+        let task = worker_task(member, continuing);
         let prompt = self
             .host
-            .prompt_file(&worker_prompt(harness, &member.task))
+            .prompt_file(&worker_prompt(harness, role.as_deref(), &task))
             .map_err(OrchestrationError::Host)?;
         // A bot does not watch its workers' terminals, so they never stop to ask for permissions.
         let unattended = bot_of_session(caller).is_some();
@@ -386,11 +445,208 @@ impl Orchestration {
         }
         self.host.changed();
         Ok(WorkerStart {
-            member_id: member.id,
+            member_id: member.id.clone(),
             harness,
             session_id: session,
             worktree_path: execution,
         })
+    }
+
+    /// Gives a member a new task. A worker that is still there takes it in its own session, with what it already
+    /// knows; otherwise the task waits as pending for `lynx_worker_start`.
+    pub fn assign(
+        &self,
+        caller: &str,
+        member_ref: &str,
+        task: &str,
+        acceptance: &str,
+    ) -> Result<Assignment, OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let member = self.child_of(&parents, member_ref)?;
+        if task.trim().is_empty() {
+            return Err(OrchestrationError::InvalidText(
+                "say what the member must do".to_owned(),
+            ));
+        }
+        if self.is_running(&member) && member.task_state == Some(TaskState::Running) {
+            return Err(OrchestrationError::StillWorking);
+        }
+        let alive = self.is_running(&member);
+        let new = TeamMember {
+            task: task.trim().to_owned(),
+            task_state: Some(TaskState::Pending),
+            ..member.clone()
+        };
+        if !alive {
+            self.check_can_start(&new)?;
+            self.team
+                .retask(&member.id, task, acceptance, TaskState::Pending)?;
+            self.host.changed();
+            return Ok(Assignment::Pending);
+        }
+        let (Some(session), Some(harness)) = (member.session_id.as_deref(), member.harness) else {
+            return Err(OrchestrationError::NoWorker);
+        };
+        let task_for_worker = format!(
+            "This is a new task for the same session, so what you learned stays with you.\n\n{}",
+            worker_task(&new, false)
+        );
+        let role = self.team.role_prompt(&member.role)?;
+        let prompt = self
+            .host
+            .prompt_file(&worker_prompt(harness, role.as_deref(), &task_for_worker))
+            .map_err(OrchestrationError::Host)?;
+        self.host
+            .send(session, &read_instruction(&prompt))
+            .map_err(OrchestrationError::Host)?;
+        self.team
+            .retask(&member.id, task, acceptance, TaskState::Running)?;
+        self.team
+            .set_dispatch_state(&member.id, DispatchState::Running)?;
+        self.host.changed();
+        Ok(Assignment::Sent)
+    }
+
+    /// Swaps the agent of a member's worker for another, in the same worktree and with the same task. The old
+    /// agent's conversation does not carry over, so the new one is told to look at what was done.
+    pub fn replace_worker(
+        &self,
+        caller: &str,
+        member_ref: &str,
+        harness: HarnessId,
+        model: Option<&str>,
+    ) -> Result<WorkerStart, OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let member = self.child_of(&parents, member_ref)?;
+        if member.execution_worktree.is_none() {
+            return Err(OrchestrationError::NoWorker);
+        }
+        // Refused before the old agent is touched, so a refusal never leaves the member without a worker.
+        self.check_can_launch(caller, &member, harness, model)?;
+        if let Some(session) = &member.session_id
+            && self.host.running(session)
+        {
+            self.host.stop(session);
+        }
+        self.team
+            .set_dispatch_state(&member.id, DispatchState::Stopped)?;
+        self.team.set_task_state(&member.id, TaskState::Pending)?;
+        self.launch(caller, &member, harness, WorkerWorktree::Same, model, true)
+    }
+
+    /// Brings the work of a member that worked in a worktree of its own into the team's worktree. Only when the
+    /// worker is stopped and both worktrees are clean; the host undoes a merge that does not go cleanly.
+    pub fn land_worker(
+        &self,
+        caller: &str,
+        member_ref: &str,
+    ) -> Result<String, OrchestrationError> {
+        let parents = self.orchestrators(caller)?;
+        let member = self.child_of(&parents, member_ref)?;
+        let from = member
+            .execution_worktree
+            .clone()
+            .ok_or(OrchestrationError::NoWorker)?;
+        if from == member.worktree {
+            return Err(OrchestrationError::Host(
+                "this worker worked in the team's own worktree, so there is nothing to land"
+                    .to_owned(),
+            ));
+        }
+        if self.is_running(&member) {
+            return Err(OrchestrationError::WorkerRunning(member.role));
+        }
+        self.host
+            .land(&from, &member.worktree)
+            .map_err(OrchestrationError::Host)
+    }
+
+    /// The roles an orchestrator can give its members: a name and the prompt a worker of that role reads.
+    pub fn roles(&self, caller: &str) -> Result<Vec<(String, String)>, OrchestrationError> {
+        self.orchestrators(caller)?;
+        Ok(self.team.roles()?)
+    }
+
+    /// Creates a role, or replaces the prompt of the one with that name. A member with that role reads it.
+    pub fn save_role(
+        &self,
+        caller: &str,
+        name: &str,
+        prompt: &str,
+    ) -> Result<(), OrchestrationError> {
+        self.orchestrators(caller)?;
+        Ok(self.team.save_role(name, prompt)?)
+    }
+
+    pub fn delete_role(&self, caller: &str, name: &str) -> Result<bool, OrchestrationError> {
+        self.orchestrators(caller)?;
+        Ok(self.team.delete_role(name)?)
+    }
+
+    /// The worktree whose notes a call is about: the caller's own, or the one it names when it is in several.
+    pub fn notes_worktree(
+        &self,
+        caller: &str,
+        named: Option<&str>,
+    ) -> Result<String, OrchestrationError> {
+        self.ensure_enabled()?;
+        let mut trees: Vec<String> = self
+            .caller_members(caller)?
+            .into_iter()
+            .map(|member| member.worktree)
+            .collect();
+        trees.sort();
+        trees.dedup();
+        match (named, trees.as_slice()) {
+            (_, []) => Err(OrchestrationError::NotInTeam),
+            (Some(wanted), _) if trees.iter().any(|tree| tree == wanted) => Ok(wanted.to_owned()),
+            (Some(wanted), _) => Err(OrchestrationError::InvalidText(format!(
+                "you are not in a team of {wanted}"
+            ))),
+            (None, [only]) => Ok(only.clone()),
+            (None, _) => Err(OrchestrationError::InvalidText(format!(
+                "you are in several worktrees, so name one with worktree: {}",
+                trees.join(", ")
+            ))),
+        }
+    }
+
+    pub fn note_names(&self, worktree: &str) -> Result<Vec<String>, OrchestrationError> {
+        Ok(self.team.note_names(worktree)?)
+    }
+
+    pub fn read_note(&self, worktree: &str, name: &str) -> Result<String, OrchestrationError> {
+        Ok(self.team.note(worktree, name)?)
+    }
+
+    pub fn write_note(
+        &self,
+        worktree: &str,
+        name: &str,
+        content: &str,
+    ) -> Result<(), OrchestrationError> {
+        Ok(self.team.write_note(worktree, name, content)?)
+    }
+
+    pub fn edit_note(
+        &self,
+        worktree: &str,
+        name: &str,
+        old: &str,
+        new: &str,
+    ) -> Result<(), OrchestrationError> {
+        Ok(self.team.edit_note(worktree, name, old, new)?)
+    }
+
+    /// Deleting is for an orchestrator: a worker writes notes but never removes the team's.
+    pub fn delete_note(
+        &self,
+        caller: &str,
+        worktree: &str,
+        name: &str,
+    ) -> Result<(), OrchestrationError> {
+        self.orchestrators(caller)?;
+        Ok(self.team.delete_note(worktree, name)?)
     }
 
     /// A worker reports how its task ended, with a summary for its orchestrator.
@@ -482,23 +738,44 @@ impl Orchestration {
             .collect())
     }
 
-    /// The member `member_id`, when it answers to one of the orchestrators. Nothing else is the caller's to manage.
+    /// The member `member_ref` names, by id or by role, when it answers to one of the orchestrators. Nothing else is
+    /// the caller's to manage. A role shared by several members must be told apart by id.
     fn child_of(
         &self,
         parents: &[TeamMember],
-        member_id: &str,
+        member_ref: &str,
     ) -> Result<TeamMember, OrchestrationError> {
-        self.team
+        let children: Vec<TeamMember> = self
+            .team
             .members()?
             .into_iter()
-            .find(|member| {
-                member.id == member_id
-                    && member
-                        .parent_id
-                        .as_ref()
-                        .is_some_and(|parent| parents.iter().any(|mine| &mine.id == parent))
+            .filter(|member| {
+                member
+                    .parent_id
+                    .as_ref()
+                    .is_some_and(|parent| parents.iter().any(|mine| &mine.id == parent))
             })
-            .ok_or_else(|| OrchestrationError::UnknownMember(member_id.to_owned()))
+            .collect();
+        if let Some(member) = children.iter().find(|member| member.id == member_ref) {
+            return Ok(member.clone());
+        }
+        let wanted = member_ref.trim();
+        let named: Vec<&TeamMember> = children
+            .iter()
+            .filter(|member| member.role.eq_ignore_ascii_case(wanted))
+            .collect();
+        match named.as_slice() {
+            [only] => Ok((*only).clone()),
+            [] => Err(OrchestrationError::UnknownMember(member_ref.to_owned())),
+            several => Err(OrchestrationError::AmbiguousMember(
+                wanted.to_owned(),
+                several
+                    .iter()
+                    .map(|member| member.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )),
+        }
     }
 
     /// Whether a member's worker is running now: its dispatch runs and its process is alive.
@@ -919,14 +1196,28 @@ fn agent_status_name(status: AgentStatus) -> String {
     .to_owned()
 }
 
-/// What a worker reads: its task, and for an agent that reports through the tools, how to report.
-fn worker_prompt(harness: HarnessId, task: &str) -> String {
-    if reports_through_tools(harness) {
+/// The task a worker is told. A replacement is told that another agent began it.
+fn worker_task(member: &TeamMember, continuing: bool) -> String {
+    if continuing {
         format!(
-            "{task}\n\nWhen you finish, or if you cannot, report to your orchestrator with lynx_report (outcome \"done\" or \"failed\" and a short summary). lynx_report is a Lynx tool: call it from your shell through the lynx skill, as the skill describes."
+            "Another agent began this task in this worktree and has been replaced by you. Run git status and git diff to see what was done, then carry on.\n\n{}",
+            member.task
         )
     } else {
-        task.to_owned()
+        member.task.clone()
+    }
+}
+
+/// What a worker reads: its role's prompt when the role is a preset, its task, and for an agent that reports through
+/// the tools, how to report and where the team's notes are.
+fn worker_prompt(harness: HarnessId, role: Option<&str>, task: &str) -> String {
+    let role = role.map_or_else(String::new, |prompt| format!("Your role:\n{prompt}\n\n"));
+    if reports_through_tools(harness) {
+        format!(
+            "{role}{task}\n\nThe team shares notes: lynx_note_read lists them and reads one, lynx_note_write and lynx_note_edit change them.\n\nWhen you finish, or if you cannot, report to your orchestrator with lynx_report (outcome \"done\" or \"failed\" and a short summary). lynx_report is a Lynx tool: call it from your shell through the lynx skill, as the skill describes."
+        )
+    } else {
+        format!("{role}{task}")
     }
 }
 

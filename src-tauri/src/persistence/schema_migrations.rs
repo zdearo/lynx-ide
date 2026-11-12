@@ -241,6 +241,17 @@ const MIGRATIONS: &[&str] = &[
      DROP TABLE orchestration_dispatches;
      DROP TABLE orchestration_tasks;
      DROP TABLE orchestration_runs;",
+    // Role presets (a name and the prompt a worker of that role reads) and the notes a team shares, by worktree.
+    "CREATE TABLE team_roles (
+         name   TEXT NOT NULL PRIMARY KEY COLLATE NOCASE,
+         prompt TEXT NOT NULL
+     );
+     CREATE TABLE team_notes (
+         worktree TEXT NOT NULL,
+         name     TEXT NOT NULL COLLATE NOCASE,
+         content  TEXT NOT NULL,
+         PRIMARY KEY (worktree, name)
+     );",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -356,7 +367,10 @@ mod tests {
     #[test]
     fn the_team_keeps_its_members_and_lines_when_the_runs_go() {
         // Before the last migration the team is the one the earlier migrations left, with its runs beside it.
-        let last = MIGRATIONS.len() - 1;
+        let last = MIGRATIONS
+            .iter()
+            .position(|sql| sql.contains("DROP TABLE orchestration_runs"))
+            .expect("a migration drops the runs");
         let mut connection = Connection::open_in_memory().expect("open");
         for (index, sql) in MIGRATIONS.iter().enumerate().take(last) {
             apply(&mut connection, index as u32 + 1, sql).expect("apply");

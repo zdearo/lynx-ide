@@ -89,18 +89,3 @@ export function canOrchestrate(
   }
   return true;
 }
-
-/** The orchestrators a member could answer to, with whether it does now and whether it can. */
-export function orchestratorOptionsOf(
-  id: string,
-  members: readonly TeamMember[],
-) {
-  const parentId = members.find((member) => member.id === id)?.parentId;
-  return members
-    .filter((member) => member.orchestrator && member.id !== id)
-    .map((member) => ({
-      member,
-      current: member.id === parentId,
-      enabled: member.id === parentId || canOrchestrate(members, member.id, id),
-    }));
-}

@@ -6,7 +6,6 @@ import {
   hasTask,
   isDrawn,
   linkOf,
-  orchestratorOptionsOf,
 } from "@/team/team-hierarchy";
 
 describe("linkOf", () => {
@@ -60,17 +59,6 @@ describe("canOrchestrate", () => {
     // Lead is above Builder, so Builder cannot take Lead as its member.
     expect(canOrchestrate(TEAM_MEMBERS, "builder", "lead")).toBe(false);
   });
-
-  it("lists only orchestrators as options", () => {
-    const options = orchestratorOptionsOf("tester", TEAM_MEMBERS);
-    expect(options.map((option) => option.member.id)).toEqual([
-      "lead",
-      "builder",
-    ]);
-    expect(options.find((option) => option.member.id === "lead")?.current).toBe(
-      true,
-    );
-  });
 });
 
 describe("hasTask", () => {
@@ -104,18 +92,6 @@ describe("bots", () => {
   it("orchestrates agents, and so does each bot", () => {
     expect(canOrchestrate(docs, "docs-lead", "writer")).toBe(true);
     expect(canOrchestrate(docs, "atlas", "writer")).toBe(true);
-  });
-
-  it("lists a bot as an orchestrator an agent can answer to", () => {
-    const options = orchestratorOptionsOf("writer", docs);
-    expect(options.find((o) => o.member.id === "docs-lead")).toMatchObject({
-      current: true,
-      enabled: true,
-    });
-    expect(options.find((o) => o.member.id === "atlas")).toMatchObject({
-      current: false,
-      enabled: true,
-    });
   });
 
   it("has a task only under an orchestrator, so the bot has none", () => {

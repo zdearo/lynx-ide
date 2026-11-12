@@ -1,8 +1,9 @@
 export const teamCopy = {
   team: {
     mapLabel: "Team map",
-    modeLabel: "Central view",
-    mode: { terminal: "Terminal", team: "Team" },
+    mode: { terminal: "Terminal" },
+    switchToTeam: "Switch to team",
+    switchToTerminals: "Switch to terminals",
     summary: {
       working: (count: number) => `${count} working`,
       needsYou: (count: number) => `${count} need you`,
@@ -52,16 +53,9 @@ export const teamCopy = {
     openChat: "Open chat",
     closeTerminal: "Close terminal",
     closeChat: "Close chat",
-    editTask: "Edit task",
-    saveTask: "Save",
     changes: "Changes",
-    reassign: "Reassign role",
     orchestrator: "Orchestrator",
     orchestratorBadge: "orchestrator",
-    answersTo: "Answers to…",
-    answersToNoOne: "No one",
-    connect: "Connect to…",
-    disconnect: (role: string) => `Disconnect from ${role}`,
     dismiss: "Dismiss",
     pairedWith: (role: string) => `↔ ${role}`,
     waitingOn: (role: string) => `Waiting for ${role}`,
@@ -81,10 +75,6 @@ export const teamCopy = {
       cancelled: "Cancelled",
     },
     runsIn: "Runs in",
-    waitsFor: "Waits for",
-    waitsForHint:
-      "Only a task that has not started can change what it waits for.",
-    noOneToWaitFor: "No other member in this worktree yet.",
     talksTo: "Talks to",
     activityLine: (text: string, age: string) => `${text} · ${age}`,
     notes: "Notes",
@@ -98,17 +88,5 @@ export const teamCopy = {
     startAgain: "Start again",
     startAgainHint:
       "There is no conversation to reopen, so a new agent starts in its worktree.",
-    message: {
-      label: "Message",
-      to: "To",
-      placeholder: "Write a message",
-      send: "Send",
-      sent: (role: string) => `Sent to ${role}.`,
-      empty: "Write something before sending.",
-      tooLong: (max: number) => `Keep it to ${max} characters or fewer.`,
-      noRecipient: "No one to message yet",
-      respondsOnly: "Responds only: it does not start conversations.",
-      sendFailed: "The message could not be sent",
-    },
   },
 } as const;

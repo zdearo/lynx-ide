@@ -1,6 +1,8 @@
 import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
 import { LockGlyph18 } from "@/components/icons/LockGlyph18";
 import { SquareTerminalGlyph18 } from "@/components/icons/SquareTerminalGlyph18";
+import { StarGlyph18 } from "@/components/icons/StarGlyph18";
+import { TeamGlyph18 } from "@/components/icons/TeamGlyph18";
 import { TrashGlyph18 } from "@/components/icons/TrashGlyph18";
 import { TriangleWarningGlyph18 } from "@/components/icons/TriangleWarningGlyph18";
 
@@ -20,11 +22,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useDialogStore } from "@/dialog-store";
 import { cn } from "@/lib/utils";
-import { shortcutLabel } from "@/platform-shortcuts";
-import { NewTerminalMenu } from "@/terminal/NewTerminalMenu";
+import { teamModeOf, useTeamStore } from "@/team/team-store";
 import { copy } from "@/ui-copy";
 import { StateDot } from "@/workspace/worktrees/StateDot";
 import { worktreeLabel } from "@/workspace/worktrees/worktree-label";
+import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 interface WorktreeRowProps {
   repoId: string;
@@ -47,6 +49,7 @@ function RemoveWorktreeItem() {
 /**
  * The worktree's own line. It draws no background, selected or hovered: the
  * surrounding `WorktreeGroup` paints one surface for the line and its agents.
+ * Its mode button switches this worktree between its terminals and its team.
  */
 export function WorktreeRow({
   repoId,
@@ -56,17 +59,21 @@ export function WorktreeRow({
   onSelect,
 }: WorktreeRowProps) {
   const askRemoveWorktree = useDialogStore((state) => state.askRemoveWorktree);
+  const mode = useTeamStore((state) =>
+    teamModeOf(state.modeByWorktree, worktree.path),
+  );
   const label = worktreeLabel(worktree);
+  const inTeam = mode === "team";
 
   const row = (
-    <div className="group/row relative">
+    <div className="group/row flex items-center">
       <button
         type="button"
         data-nav-item
         aria-current={selected ? "true" : undefined}
         onClick={onSelect}
         className={cn(
-          "flex h-7 w-full items-center gap-2 rounded-md pr-2 pl-7 text-left text-ui",
+          "flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md pr-1 pl-7 text-left text-ui",
           selected
             ? "text-sidebar-accent-foreground"
             : "text-muted-foreground hover:text-sidebar-foreground",
@@ -75,7 +82,7 @@ export function WorktreeRow({
         <StateDot state={runningCount > 0 ? "running" : "idle"} />
         <span
           className={cn(
-            "min-w-0 flex-1 truncate",
+            "min-w-0 truncate",
             label.detached && "italic",
             selected && "font-medium",
           )}
@@ -83,6 +90,12 @@ export function WorktreeRow({
         >
           {label.text}
         </span>
+        {worktree.isMain && (
+          <StarGlyph18
+            className="size-3 shrink-0 text-muted-foreground"
+            aria-label={copy.worktree.primary}
+          />
+        )}
         <span className="sr-only">
           {runningCount > 0
             ? copy.worktree.runningTerminals(runningCount)
@@ -100,31 +113,17 @@ export function WorktreeRow({
             aria-label={copy.worktree.locked}
           />
         )}
-        {worktree.isMain && (
-          <span className="shrink-0 text-meta text-muted-foreground group-focus-within/row:invisible group-hover/row:invisible">
-            {copy.worktree.primary}
-          </span>
-        )}
       </button>
 
-      <div
-        className={cn(
-          "absolute top-0.5 right-1 flex items-center gap-0.5 rounded-md bg-sidebar-accent opacity-0 transition-opacity",
-          "group-focus-within/row:opacity-100 group-hover/row:opacity-100",
-        )}
-      >
-        <NewTerminalMenu worktreePath={worktree.path}>
-          <TooltipIconButton
-            label={copy.worktree.newTerminal}
-            shortcut={selected ? shortcutLabel("newTerminal") : undefined}
-          >
-            <SquareTerminalGlyph18 />
-          </TooltipIconButton>
-        </NewTerminalMenu>
+      <div className="flex shrink-0 items-center">
+        {/* Before the mode button, so that button sits in the same column on every row. */}
         {!worktree.isMain && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <TooltipIconButton label={copy.worktree.actions(label.text)}>
+              <TooltipIconButton
+                label={copy.worktree.actions(label.text)}
+                className="opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
+              >
                 <DotsGlyph18 />
               </TooltipIconButton>
             </DropdownMenuTrigger>
@@ -138,6 +137,18 @@ export function WorktreeRow({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+        <TooltipIconButton
+          label={inTeam ? copy.team.switchToTerminals : copy.team.switchToTeam}
+          onClick={() => {
+            useTeamStore
+              .getState()
+              .setMode(worktree.path, inTeam ? "terminal" : "team");
+            // The mode is the view of the selected worktree: the one switched comes to the front.
+            useWorkspaceStore.getState().selectWorktree(worktree.path);
+          }}
+        >
+          {inTeam ? <TeamGlyph18 /> : <SquareTerminalGlyph18 />}
+        </TooltipIconButton>
       </div>
     </div>
   );

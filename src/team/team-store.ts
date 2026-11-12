@@ -127,7 +127,6 @@ interface TeamState {
   /** Opens or closes a member's branch in the backend. Shows nothing until the team is read again. */
   toggle: (id: string) => Promise<void>;
   /** The changes below change the backend and show nothing until its event brings the team again. A refused one changes nothing. */
-  setRole: (id: string, role: string) => Promise<void>;
   dismiss: (id: string) => Promise<void>;
   setLinked: (from: string, to: string, linked: boolean) => Promise<void>;
   setOrchestrator: (id: string, on: boolean) => Promise<void>;
@@ -136,10 +135,6 @@ interface TeamState {
   setExtraRows: (id: string, rows: number) => void;
   setSiblingOrder: (order: SiblingOrder) => void;
   setAddOpen: (open: boolean) => void;
-  /** Changes a member's task and done-when. False when the backend refused it, and the sheet keeps what was typed. */
-  setTask: (id: string, task: string, acceptance: string) => Promise<boolean>;
-  /** Sets what a member waits for. False when the team refused it, for example when the task has started. */
-  setDependencies: (id: string, dependsOn: string[]) => Promise<boolean>;
   /** Adds a member to the worktree on the sidebar and picks it. False when it was refused, and the dialog keeps what was typed. */
   addMember: (input: MemberDraft) => Promise<boolean>;
   /**
@@ -565,9 +560,6 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       }
     }
   },
-  setRole: async (id, role) => {
-    await change(() => teamBackend.setRole(id, role));
-  },
   setOrchestrator: async (id, on) => {
     await change(() => teamBackend.setOrchestrator(id, on));
   },
@@ -608,10 +600,6 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     })),
   setSiblingOrder: (siblingOrder) => set({ siblingOrder }),
   setAddOpen: (addOpen) => set({ addOpen }),
-  setTask: async (id, task, acceptance) =>
-    (await change(() => teamBackend.setTask(id, task, acceptance))) !== null,
-  setDependencies: async (id, dependsOn) =>
-    (await change(() => teamBackend.setDependencies(id, dependsOn))) !== null,
   addMember: async (draft) => {
     const worktree = useWorkspaceStore.getState().selectedWorktreePath;
     if (!worktree) {

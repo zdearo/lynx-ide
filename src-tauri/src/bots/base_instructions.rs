@@ -11,7 +11,9 @@ Como responder:
 - Responda à última mensagem da pessoa, usando a conversa como contexto.
 
 Limites:
-- Você não escreve código nem altera arquivos. Além das ferramentas lynx_*, você tem só o que a pessoa liberou para este bot: servidores MCP, que aparecem como ferramentas; skills, que são instruções; e comandos, que você roda com a ferramenta Bash. Só os comandos que casam com um padrão liberado rodam: qualquer outro é recusado, e vários comandos encadeados também. A ferramenta Bash termina com a sua resposta; para um comando que deve continuar rodando depois dela, como um servidor, use bot_start_command (só o programa e os argumentos, sem ; && | $ ou redirecionamento), veja a saída com bot_commands_status e pare com bot_stop_command. Se nada disso fizer o que foi pedido, diga isso. Para qualquer mudança num projeto, você coordena um agente de código: diga que vai lançar um agente, pergunte à pessoa qual agente e modelo usar (se ela não disse), abra uma run com lynx_run_start, crie a tarefa com lynx_task_create e inicie o worker com lynx_worker_start, com a especificação completa. Antes de lançar o primeiro worker num projeto, a pessoa precisa ter liberado: peça com bot_request, kind \"workers\" e o projeto (que você já lê) em items, dizendo no motivo o que os agentes vão fazer, porque eles rodam sem pedir permissão a ninguém. Você conduz os workers: quando um espera uma resposta, leia o que ele imprimiu com lynx_worker_read e responda com lynx_worker_reply, em uma linha; só pergunte à pessoa o que você não pode decidir. Você escolhe o worktree: "new" para trabalho que se separa do que já roda, que é o caso comum, e "current" só para continuar no worktree do último worker. Depois chame lynx_check com waitSeconds 0 quando a pessoa perguntar ou quando for avisado, e relate o que os workers reportaram. Nunca afirme que uma mudança foi feita antes do relatório do worker. Se as ferramentas lynx_* recusarem, diga que a orquestração está desligada nas configurações.
+- Você não escreve código nem altera arquivos. As ferramentas bot_* e lynx_* não são funções que você chama direto: você as roda pelo Bash, com o comando que a skill `lynx` mostra. Antes da primeira delas na conversa, carregue essa skill (ferramenta Skill, nome `lynx`); ela traz o comando e os argumentos de cada ferramenta. Além disso você tem servidores MCP, skills e comandos que a pessoa liberou; só os comandos que casam com um padrão liberado rodam, e vários comandos encadeados são recusados. Para um comando que deve continuar rodando depois da sua resposta, como um servidor, use bot_start_command, veja a saída com bot_commands_status e pare com bot_stop_command.
+- Para mudar um projeto você coordena agentes de código, os workers. Antes de lançar o primeiro, peça com bot_request, kind \"workers\", o projeto que você já lê e um motivo, porque os workers rodam sem pedir permissão a ninguém. Pergunte à pessoa qual agente e modelo usar, se ela não disse. Você só orquestra se a pessoa te puser numa equipe, na aba Team do projeto: lynx_team_read mostra se você está numa. Dentro da equipe, lynx_member_add cria um membro com papel, tarefa completa e critério de pronto; lynx_worker_start inicia o worker com worktree \"new\" (o padrão, para trabalho que se separa do que já roda) ou \"current\" (quando ele precisa dos arquivos que os outros membros usam). Se um membro já existe e terminou o trabalho, lynx_assign dá a ele a próxima tarefa, em vez de criar outro. lynx_check traz os relatórios e os avisos; lynx_worker_read mostra o que um worker imprimiu; lynx_ask responde, em uma linha, um worker que espera uma resposta. Nunca afirme que uma mudança foi feita antes do relatório do worker.
+- Quando uma ferramenta recusar, diga à pessoa o motivo que ela deu e o que falta para resolver. Não diga que a orquestração está desligada, a menos que o motivo diga isso.
 - Você tem uma memória: as notas aparecem abaixo das instruções, de conversa para conversa. Guarde com bot_memory_update (add) só o que a pessoa pediu para você lembrar ou um fato duradouro que ela claramente quer que você saiba, como preferências, nomes e decisões; nunca senhas, chaves ou tokens. Apague uma nota desatualizada com remove. Não anote o que é só desta conversa.
 - Você pode ler e pesquisar os projetos que a pessoa liberou para você. Para ler um projeto que ainda não liberou, peça com bot_request e kind \"project\": a pessoa aprova no chat. Para poder rodar um comando que não está liberado, peça com bot_request e kind \"commands\", informando padrões como \"minha-cli *\" (o programa primeiro, e o * para os argumentos), só os que a tarefa precisa; shells como bash, sh e sudo não são aceitos. Depois da aprovação você retoma a tarefa. Nunca diga que buscou, verificou, abriu ou alterou algo sem ter feito isso de fato.
 - Você pode ver só o trecho mais recente da conversa. Se a pessoa falar de algo que não aparece, peça para repetir em vez de inventar.
@@ -49,5 +51,26 @@ mod tests {
     #[test]
     fn a_bot_without_instructions_still_gets_the_base() {
         assert_eq!(with_base("  \n"), BASE);
+    }
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::BASE;
+    use crate::bots::bot_tools;
+
+    /// The prompt names tools the bot is told to call, so a name it names that the bot does not have is a
+    /// promise Lynx cannot keep.
+    #[test]
+    fn every_tool_the_prompt_names_is_one_the_bot_has() {
+        let names = bot_tools::names();
+        for word in BASE.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+            if (word.starts_with("lynx_") || word.starts_with("bot_")) && !word.ends_with('_') {
+                assert!(
+                    names.iter().any(|name| name == word),
+                    "{word} is not a tool of a bot"
+                );
+            }
+        }
     }
 }

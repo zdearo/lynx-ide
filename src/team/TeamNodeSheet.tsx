@@ -1,30 +1,23 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 import { DotsGlyph18 } from "@/components/icons/DotsGlyph18";
-import { XmarkGlyph18 } from "@/components/icons/XmarkGlyph18";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { DOCK_RIGHT_QUERY } from "@/hooks/layout-queries";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useRightPanelStore } from "@/right-panel/right-panel-store";
 import { formatAge } from "@/terminal/relative-time";
 import type { TeamMember } from "@/team/team-fixtures";
 import { focusMemberCard } from "@/team/team-focus";
-import { hasTask } from "@/team/team-hierarchy";
-import { isLinked } from "@/team/team-pairs";
-import { talksToOf } from "@/team/team-message";
+import { talksToOf } from "@/team/team-talks";
 import { TeamMemberMenu } from "@/team/TeamMemberMenu";
-import { TeamMessageForm } from "@/team/TeamMessageForm";
 import { TeamStatusIcon } from "@/team/TeamStatus";
 import {
   botOf,
@@ -37,7 +30,8 @@ import { copy } from "@/ui-copy";
 
 /**
  * The picked member, in a panel over the team. It is not modal: the team stays in front of it and
- * another member can be picked from it. Escape clears the pick (see TeamView).
+ * another member can be picked from it. Escape clears the pick (see TeamView). It only shows the member:
+ * its task and its lines are changed by the orchestrator and on the map, not here.
  */
 export function TeamNodeSheet({
   member,
@@ -56,24 +50,6 @@ export function TeamNodeSheet({
   const changed = member.added > 0 || member.removed > 0;
   // Ages are read when the panel opens; it is remounted for each member picked.
   const [openedAt] = useState(() => Date.now());
-  const fieldId = useId();
-  // The task while it is being edited. A refused save keeps it, so the text can be fixed.
-  const [draft, setDraft] = useState<{
-    task: string;
-    acceptance: string;
-  } | null>(null);
-
-  async function saveTask(event: FormEvent) {
-    event.preventDefault();
-    if (!draft) return;
-    if (
-      await useTeamStore
-        .getState()
-        .setTask(member.id, draft.task, draft.acceptance)
-    ) {
-      setDraft(null);
-    }
-  }
 
   // Focus goes into the panel when it opens, and back to the member's card when it closes.
   useEffect(() => {
@@ -111,69 +87,6 @@ export function TeamNodeSheet({
         <TeamStatusIcon status={member.status} />
         {copy.team.status[member.status]}
       </p>
-
-      {draft ? (
-        <form
-          onSubmit={saveTask}
-          className="grid gap-3"
-          onKeyDown={(event) => {
-            // Escape leaves the edit with its text dropped, and does not clear the picked member as it does elsewhere.
-            if (event.key !== "Escape") return;
-            event.stopPropagation();
-            setDraft(null);
-          }}
-        >
-          <div className="grid gap-1.5">
-            <Label htmlFor={`${fieldId}-task`}>{copy.team.task}</Label>
-            <Input
-              id={`${fieldId}-task`}
-              value={draft.task}
-              autoFocus
-              onChange={(event) =>
-                setDraft({ ...draft, task: event.target.value })
-              }
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor={`${fieldId}-acceptance`}>
-              {copy.team.acceptance}
-            </Label>
-            <Input
-              id={`${fieldId}-acceptance`}
-              value={draft.acceptance}
-              onChange={(event) =>
-                setDraft({ ...draft, acceptance: event.target.value })
-              }
-            />
-          </div>
-          <div className="flex justify-end gap-1.5">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setDraft(null)}
-            >
-              {copy.team.add.cancel}
-            </Button>
-            <Button type="submit" size="sm">
-              {copy.team.saveTask}
-            </Button>
-          </div>
-        </form>
-      ) : hasTask(member) ? (
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2">
-          <dt className="text-muted-foreground">{copy.team.task}</dt>
-          <dd className="min-w-0">{member.task}</dd>
-          <dt className="text-muted-foreground">{copy.team.acceptance}</dt>
-          <dd className="min-w-0">{member.acceptance}</dd>
-        </dl>
-      ) : (
-        <p className="text-nested text-muted-foreground">{copy.team.noTask}</p>
-      )}
-
-      {hasTask(member) && member.taskState === "pending" && (
-        <WaitsForEditor member={member} members={members} />
-      )}
 
       {member.question && (
         <p className="truncate text-nested text-attention">{member.question}</p>
@@ -217,32 +130,14 @@ export function TeamNodeSheet({
             <dt className="text-muted-foreground">{copy.team.talksTo}</dt>
             <dd className="flex min-w-0 flex-col gap-1">
               {talksTo.map((other) => (
-                <span
+                <button
                   key={other.id}
-                  className="flex min-w-0 items-center gap-1"
+                  type="button"
+                  className="min-w-0 truncate text-left underline-offset-3 hover:underline"
+                  onClick={() => useTeamStore.getState().select(other.id)}
                 >
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 truncate text-left underline-offset-3 hover:underline"
-                    onClick={() => useTeamStore.getState().select(other.id)}
-                  >
-                    {other.role}
-                  </button>
-                  {/* Only a pair can be taken apart: the orchestrator and the members under it are the tree. */}
-                  {isLinked(pairs, member.id, other.id) && (
-                    <TooltipIconButton
-                      label={copy.team.disconnect(other.role)}
-                      className="shrink-0"
-                      onClick={() =>
-                        useTeamStore
-                          .getState()
-                          .setLinked(member.id, other.id, false)
-                      }
-                    >
-                      <XmarkGlyph18 />
-                    </TooltipIconButton>
-                  )}
-                </span>
+                  {other.role}
+                </button>
               ))}
             </dd>
           </>
@@ -282,8 +177,6 @@ export function TeamNodeSheet({
         </p>
       )}
 
-      <TeamMessageForm member={member} members={members} pairs={pairs} />
-
       <div className="flex items-center gap-1.5">
         <Button size="sm" onClick={() => openMember(member.id)}>
           {member.kind === "bot" ? copy.team.openChat : copy.team.openTerminal}
@@ -300,18 +193,6 @@ export function TeamNodeSheet({
             {copy.team.changes}
           </Button>
         )}
-        {/* Only a member with an orchestrator above it has a task to change. */}
-        {hasTask(member) && draft === null && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() =>
-              setDraft({ task: member.task, acceptance: member.acceptance })
-            }
-          >
-            {copy.team.editTask}
-          </Button>
-        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <TooltipIconButton
@@ -325,51 +206,5 @@ export function TeamNodeSheet({
         </DropdownMenu>
       </div>
     </div>
-  );
-}
-
-/** Which members of the worktree this one waits for. Only a task that has not started can change it. */
-function WaitsForEditor({
-  member,
-  members,
-}: {
-  member: TeamMember;
-  members: readonly TeamMember[];
-}) {
-  const others = members.filter(
-    (other) => other.id !== member.id && other.worktree === member.worktree,
-  );
-  function toggle(id: string, on: boolean) {
-    const next = on
-      ? [...member.dependsOn, id]
-      : member.dependsOn.filter((waitedFor) => waitedFor !== id);
-    void useTeamStore.getState().setDependencies(member.id, next);
-  }
-  return (
-    <fieldset className="grid gap-2">
-      <legend className="text-muted-foreground">{copy.team.waitsFor}</legend>
-      <p className="text-nested text-muted-foreground">
-        {copy.team.waitsForHint}
-      </p>
-      {others.length === 0 && (
-        <p className="text-nested text-muted-foreground">
-          {copy.team.noOneToWaitFor}
-        </p>
-      )}
-      {others.map((other) => (
-        <label
-          key={other.id}
-          className="flex min-w-0 items-center justify-between gap-3"
-        >
-          <span className="min-w-0 truncate text-nested">{other.role}</span>
-          <Switch
-            size="sm"
-            checked={member.dependsOn.includes(other.id)}
-            onCheckedChange={(on) => toggle(other.id, on)}
-            aria-label={other.role}
-          />
-        </label>
-      ))}
-    </fieldset>
   );
 }

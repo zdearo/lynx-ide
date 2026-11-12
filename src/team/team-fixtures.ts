@@ -17,7 +17,7 @@ export interface TeamMemberBase {
   id: string;
   /** The absolute path of the worktree whose team the member is in. */
   worktree: string;
-  /** What the member does in its team. "Reassign role" changes it. */
+  /** What the member does in its team. */
   role: string;
   status: TeamStatus;
   /** The state of the worker this member is, when a coordinator started it; null for every other member. */

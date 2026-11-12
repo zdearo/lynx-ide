@@ -16,7 +16,8 @@ use serde_json::{Map, Value, json};
 use specta::Type;
 
 use crate::agents::skill_file;
-use crate::agents::tool_catalog::{instructions, list_for};
+use crate::agents::tool_catalog::list_for;
+use crate::orchestration::tools as orchestration_tools;
 
 use super::base_instructions;
 use super::bot_bridge::{BOT_SESSION_PREFIX, BotBridge, session_of};
@@ -24,6 +25,7 @@ use super::bot_folder::{BotError, BotFolder};
 use super::bot_mcp;
 use super::bot_memory;
 use super::bot_skills;
+use super::bot_tools;
 use super::bot_topics;
 use super::command_permissions;
 use crate::private_file;
@@ -276,7 +278,12 @@ impl ClaudeCli {
             // The lynx skill says how to call the CLI with the tools this bot has.
             skill_file::write(
                 &dir.join(".claude").join("skills"),
-                &skill_file::render(cli, &list_for(Some(BOT_SESSION_PREFIX)), &instructions()),
+                &skill_file::render(
+                    cli,
+                    skill_file::BOT_PURPOSE,
+                    &list_for(Some(BOT_SESSION_PREFIX)),
+                    &bot_instructions(),
+                ),
             )?;
         }
 
@@ -366,6 +373,16 @@ impl Drop for Registered<'_> {
             .unwrap_or_else(PoisonError::into_inner)
             .remove(self.session);
     }
+}
+
+/// What the bot's skill says about its tools: how they are called and how a coordinator works with its
+/// workers. A bot has no browser, so the browser's instructions stay out.
+fn bot_instructions() -> String {
+    format!(
+        "{} {}",
+        bot_tools::INSTRUCTIONS,
+        orchestration_tools::INSTRUCTIONS
+    )
 }
 
 /// The bot's system prompt: the base, its instructions, and what it remembers.

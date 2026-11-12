@@ -1,6 +1,7 @@
 //! The app's side of the orchestration: its terminals, worktrees, prompt files and settings, read
 //! from the managed services when a call needs them.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,6 +18,7 @@ use crate::bots::bot_bridge::{bot_of_session, parse_session};
 use crate::bots::bot_chat::BotChat;
 use crate::config::ConfigStore;
 use crate::config::app_config::{LaunchMode, OrchestrationConfig};
+use crate::git::git_command::git;
 use crate::team::team_events::TeamChanged;
 use crate::terminal::terminal_manager::TerminalManager;
 use crate::workspace::workspace_events::WorktreeCreated;
@@ -165,6 +167,10 @@ impl WorkerHost for AppWorkers {
             .map_err(|error| error.to_string())
     }
 
+    fn land(&self, from: &str, into: &str) -> Result<String, String> {
+        land_branch(Path::new(from), Path::new(into))
+    }
+
     fn start(&self, worktree: &str, command: &str) -> Result<String, String> {
         self.terminals()
             .create(worktree, Some(command), 120, 32)
@@ -195,6 +201,48 @@ impl WorkerHost for AppWorkers {
     fn stop(&self, session: &str) {
         // Closed, not only ended: the session leaves the list and the screen drops its tab.
         let _ = self.terminals().close_and_announce(session);
+    }
+}
+
+/// Merges the branch checked out in `from` into the one in `into`. Both worktrees must be clean, so no work is lost
+/// or mixed in, and a merge that stops is aborted so `into` is left as it was.
+fn land_branch(from: &Path, into: &Path) -> Result<String, String> {
+    let ensure_clean = |path: &Path, who: &str| -> Result<(), String> {
+        let status = git(path)
+            .args(["status", "--porcelain"])
+            .run()
+            .map_err(|error| error.to_string())?;
+        if status.trim().is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "{who} has uncommitted changes: they must be committed before landing"
+            ))
+        }
+    };
+    ensure_clean(from, "the worker's worktree")?;
+    ensure_clean(into, "the team's worktree")?;
+    let branch = git(from)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .run()
+        .map_err(|error| error.to_string())?;
+    let branch = branch.trim();
+    if branch == "HEAD" {
+        return Err(
+            "the worker's worktree is not on a branch, so there is nothing to merge".to_owned(),
+        );
+    }
+    match git(into)
+        .args(["merge", "--no-ff", "--no-edit", branch])
+        .run()
+    {
+        Ok(_) => Ok(format!("merged {branch}")),
+        Err(error) => {
+            let _ = git(into).args(["merge", "--abort"]).run();
+            Err(format!(
+                "merging {branch} did not go cleanly and was undone: {error}"
+            ))
+        }
     }
 }
 
@@ -246,7 +294,8 @@ pub fn drawn_twice(screen: &str, text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{drawn_twice, visible_text};
+    use super::{drawn_twice, land_branch, visible_text};
+    use crate::git::test_repository::{TestRepository, commit_file_in};
 
     #[test]
     fn escape_sequences_are_dropped_and_the_text_kept() {
@@ -268,6 +317,42 @@ mod tests {
         assert!(
             drawn_twice(&drawn, text),
             "a line break in the input does not hide it"
+        );
+    }
+
+    #[test]
+    fn landing_merges_a_clean_branch_and_undoes_one_that_conflicts() {
+        let repo = TestRepository::new();
+        let side = repo.path.with_file_name("side");
+        repo.git(&[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "task",
+            &side.to_string_lossy(),
+        ]);
+
+        commit_file_in(&side, "new.txt", "from the worker\n", "worker work");
+        std::fs::write(side.join("dirty.txt"), "x").expect("write");
+        assert!(
+            land_branch(&side, &repo.path)
+                .expect_err("uncommitted work blocks landing")
+                .contains("uncommitted"),
+        );
+        std::fs::remove_file(side.join("dirty.txt")).expect("remove");
+
+        let said = land_branch(&side, &repo.path).expect("a clean branch lands");
+        assert_eq!(said, "merged task");
+        assert!(repo.path.join("new.txt").exists());
+
+        commit_file_in(&side, "README.md", "worker\n", "worker edit");
+        commit_file_in(&repo.path, "README.md", "lead\n", "lead edit");
+        let error = land_branch(&side, &repo.path).expect_err("a conflict is refused");
+        assert!(error.contains("undone"), "{error}");
+        assert!(
+            repo.git(&["status", "--porcelain"]).trim().is_empty(),
+            "the team's worktree is left as it was"
         );
     }
 }

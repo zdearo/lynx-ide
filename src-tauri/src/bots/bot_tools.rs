@@ -25,6 +25,9 @@ pub const COMMANDS_STATUS: &str = "bot_commands_status";
 pub const STOP_COMMAND: &str = "bot_stop_command";
 pub const MEMORY: &str = "bot_memory_update";
 pub const MEMORY_TOPIC: &str = "bot_memory_topic";
+
+/// What a bot's skill says about its own tools: how they are called, and what a refusal means.
+pub const INSTRUCTIONS: &str = "Chame as ferramentas bot_* e lynx_* pelo Bash, com o comando desta skill. bot_request pede uma permissão à pessoa: ela aprova no chat e você retoma sozinho depois; os tipos são project (ler um projeto), workers (lançar agentes num projeto que você já lê) e commands (padrões de comando). Quando uma ferramenta recusar, o erro diz o motivo: repita à pessoa esse motivo, sem trocar por outro.";
 /// The most items one request may carry.
 const MAX_ITEMS: usize = 20;
 /// The longest reason a bot may give, in characters.

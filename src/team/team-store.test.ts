@@ -28,8 +28,6 @@ vi.mock("@/team/team-backend", () => ({
     addMember: vi.fn(),
     setParent: vi.fn(),
     setOrchestrator: vi.fn(),
-    setRole: vi.fn(),
-    setTask: vi.fn(),
     setSession: vi.fn(),
     dismissMember: vi.fn(),
     setLinked: vi.fn(),
@@ -331,16 +329,6 @@ describe("team changes", () => {
     terminal.create.mockResolvedValue({ id: "s1" });
   });
 
-  it("sends a role change to the backend, and shows nothing until the team is read again", async () => {
-    api.setRole.mockResolvedValue(null);
-
-    await store().setRole("builder", "Tester");
-
-    expect(api.setRole).toHaveBeenCalledWith("builder", "Tester");
-    expect(member("builder")?.role).toBe("Builder");
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-
   it("shows the backend's message for a refused change, and changes nothing", async () => {
     api.setParent.mockRejectedValue(
       refused("an orchestrator cannot answer to one of its own members"),
@@ -450,27 +438,6 @@ describe("team changes", () => {
       description: "only an orchestrator can have members under it",
     });
     expect(store().selectedId).toBeNull();
-  });
-
-  it("changes a member's task through the backend, and says so when it refuses the change", async () => {
-    api.setTask.mockResolvedValue(null);
-
-    expect(
-      await store().setTask("builder", "login form", "The form submits."),
-    ).toBe(true);
-    expect(api.setTask).toHaveBeenCalledWith(
-      "builder",
-      "login form",
-      "The form submits.",
-    );
-
-    api.setTask.mockRejectedValue(
-      refused("a member with no orchestrator has no task"),
-    );
-    expect(await store().setTask("reviewer", "review", "approved")).toBe(false);
-    expect(toast.error).toHaveBeenCalledWith(copy.team.changeRefused, {
-      description: "a member with no orchestrator has no task",
-    });
   });
 });
 

@@ -213,11 +213,11 @@ export function FolderSection({
 
       {expanded &&
         (empty ? (
-          <p className="ml-7 py-0.5 text-meta text-muted-foreground">
+          <p className="ml-3 py-0.5 pl-1.5 text-meta text-muted-foreground">
             {copy.folders.empty}
           </p>
         ) : (
-          <ul className="ml-3">{children}</ul>
+          <ul>{children}</ul>
         ))}
     </li>
   );

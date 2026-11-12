@@ -56,12 +56,15 @@ pub fn repo_refs(repo: &Path) -> Result<RepoRefs, GitError> {
     })
 }
 
+/// The branch a new worktree starts from. `origin/HEAD` can outlive the branch it named (a remote that renamed
+/// its default), so it is used only while that branch still exists.
 fn default_base_ref(repo: &Path) -> String {
     let remote_default = git(repo)
         .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
         .run();
     if let Ok(name) = remote_default
         && !name.is_empty()
+        && commit_exists(repo, &name)
     {
         return name;
     }
@@ -70,6 +73,14 @@ fn default_base_ref(repo: &Path) -> String {
         Ok(name) if !name.is_empty() => name,
         _ => "HEAD".to_owned(),
     }
+}
+
+fn commit_exists(repo: &Path, name: &str) -> bool {
+    git(repo)
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("{name}^{{commit}}"))
+        .run()
+        .is_ok()
 }
 
 /// Best effort: being offline must not block creating a worktree from the
@@ -163,5 +174,26 @@ pub fn delete_branch(repo: &Path, branch: &str) -> Result<BranchDeletion, GitErr
         Ok(_) => Ok(BranchDeletion::Deleted),
         Err(error) if error.stderr_contains("not fully merged") => Ok(BranchDeletion::KeptUnmerged),
         Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git::test_repository::TestRepository;
+
+    #[test]
+    fn a_stale_remote_default_falls_back_to_the_current_branch() {
+        let repo = TestRepository::new().with_origin();
+        assert_eq!(default_base_ref(&repo.path), "origin/main");
+
+        // The remote renamed its default; the local origin/HEAD still names the old one.
+        repo.git(&[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/master",
+        ]);
+
+        assert_eq!(default_base_ref(&repo.path), "main");
     }
 }

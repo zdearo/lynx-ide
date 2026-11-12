@@ -14,7 +14,7 @@ use crate::team::team_model::{
 };
 use crate::team::team_service::TeamService;
 
-use super::service::{Orchestration, OrchestrationError, WorkerHost, WorkerWorktree};
+use super::service::{Assignment, Orchestration, OrchestrationError, WorkerHost, WorkerWorktree};
 
 /// The terminals and worktrees of a test: what it started, stopped and was asked to type.
 #[derive(Default)]
@@ -27,6 +27,8 @@ pub struct FakeHost {
     stopped: Mutex<Vec<String>>,
     notified: Mutex<Vec<String>>,
     sent: Mutex<Vec<(String, String)>>,
+    prompts: Mutex<Vec<String>>,
+    landed: Mutex<Vec<(String, String)>>,
 }
 
 impl FakeHost {
@@ -78,6 +80,21 @@ impl FakeHost {
             .clone()
     }
 
+    /// The text of every prompt file written, in order.
+    pub fn prompts(&self) -> Vec<String> {
+        self.prompts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    pub fn landed(&self) -> Vec<(String, String)> {
+        self.landed
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
     pub fn sent(&self) -> Vec<(String, String)> {
         self.sent
             .lock()
@@ -98,7 +115,11 @@ impl WorkerHost for FakeHost {
         Ok(format!("{from}/{name}"))
     }
 
-    fn prompt_file(&self, _text: &str) -> Result<String, String> {
+    fn prompt_file(&self, text: &str) -> Result<String, String> {
+        self.prompts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(text.to_owned());
         Ok("/prompts/task.md".to_owned())
     }
 
@@ -153,6 +174,14 @@ impl WorkerHost for FakeHost {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .push(session.to_owned());
+    }
+
+    fn land(&self, from: &str, into: &str) -> Result<String, String> {
+        self.landed
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push((from.to_owned(), into.to_owned()));
+        Ok("merged".to_owned())
     }
 
     fn send(&self, session: &str, text: &str) -> Result<(), String> {
@@ -871,5 +900,350 @@ fn dependencies_cannot_loop_and_cannot_cross_worktrees() {
             Err(TeamError::DependencyOtherWorktree)
         ),
         "a task waits only for tasks of its own worktree"
+    );
+}
+
+/// Starts the worker of `member` in the team's own worktree and lets it report `done`.
+fn finished_worker(fixture: &Fixture, member: &TeamMember) -> String {
+    let started = fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &member.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            None,
+        )
+        .expect("the worker starts");
+    fixture
+        .orchestration
+        .report(&started.session_id, Outcome::Done, "pronto")
+        .expect("the worker reports");
+    started.session_id
+}
+
+#[test]
+fn a_finished_worker_takes_its_next_task_in_the_same_session() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva o guia", Vec::new());
+    let session = finished_worker(&fixture, &writer);
+
+    let given = fixture
+        .orchestration
+        .assign(LEAD_SESSION, "writer", "Revise o guia", "sem erros")
+        .expect("the task is given by role");
+
+    assert_eq!(given, Assignment::Sent);
+    assert_eq!(fixture.host.started().len(), 1, "no second terminal");
+    assert_eq!(fixture.host.sent().len(), 1);
+    assert_eq!(fixture.host.sent()[0].0, session);
+    assert!(
+        fixture.host.prompts()[1].contains("Revise o guia"),
+        "the new task is in the file the worker reads"
+    );
+    let writer = fixture.member(&writer.id);
+    assert_eq!(writer.task, "Revise o guia");
+    assert_eq!(writer.task_state, Some(TaskState::Running));
+    assert_eq!(writer.session_id.as_deref(), Some(session.as_str()));
+}
+
+#[test]
+fn a_member_still_working_is_not_given_another_task() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva", Vec::new());
+    fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            None,
+        )
+        .expect("the worker starts");
+
+    assert_eq!(
+        fixture
+            .orchestration
+            .assign(LEAD_SESSION, &writer.id, "Outra", ""),
+        Err(OrchestrationError::StillWorking)
+    );
+    assert_eq!(fixture.member(&writer.id).task, "Escreva");
+}
+
+#[test]
+fn a_task_for_a_member_whose_worker_is_gone_waits_to_be_started() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva", Vec::new());
+    let session = finished_worker(&fixture, &writer);
+    fixture.host.end(&session);
+
+    let given = fixture
+        .orchestration
+        .assign(LEAD_SESSION, &writer.id, "Revise", "")
+        .expect("the task is given");
+
+    assert_eq!(given, Assignment::Pending);
+    assert!(fixture.host.sent().is_empty());
+    assert_eq!(
+        fixture.member(&writer.id).task_state,
+        Some(TaskState::Pending)
+    );
+    fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Codex,
+            WorkerWorktree::Current,
+            None,
+        )
+        .expect("a worker starts for the new task");
+}
+
+#[test]
+fn a_member_is_named_by_id_or_by_role_and_a_shared_role_must_be_told_apart() {
+    let fixture = fixture();
+    let first = fixture.add("Tester", "Teste A", Vec::new());
+    assert_eq!(
+        fixture
+            .orchestration
+            .assign(LEAD_SESSION, "TESTER", "Teste B", "")
+            .expect("one member has that role"),
+        Assignment::Pending
+    );
+    assert_eq!(fixture.member(&first.id).task, "Teste B");
+
+    let second = fixture.add("Tester", "Teste C", Vec::new());
+    assert!(matches!(
+        fixture
+            .orchestration
+            .assign(LEAD_SESSION, "tester", "Teste D", ""),
+        Err(OrchestrationError::AmbiguousMember(_, _))
+    ));
+    fixture
+        .orchestration
+        .assign(LEAD_SESSION, &second.id, "Teste D", "")
+        .expect("the id tells them apart");
+}
+
+#[test]
+fn a_batch_of_follow_ups_reaches_each_running_worker() {
+    let fixture = fixture();
+    let a = fixture.add("A", "Tarefa A", Vec::new());
+    let b = fixture.add("B", "Tarefa B", Vec::new());
+    let start = |member: &TeamMember| {
+        fixture
+            .orchestration
+            .start_worker(
+                LEAD_SESSION,
+                &member.id,
+                HarnessId::Claude,
+                WorkerWorktree::Current,
+                None,
+            )
+            .expect("the worker starts")
+            .session_id
+    };
+    let (sa, sb) = (start(&a), start(&b));
+
+    fixture
+        .orchestration
+        .reply_worker(LEAD_SESSION, "a", "um")
+        .expect("by role");
+    fixture
+        .orchestration
+        .reply_worker(LEAD_SESSION, &b.id, "dois")
+        .expect("by id");
+
+    assert_eq!(
+        fixture.host.sent(),
+        vec![(sa, "um".to_owned()), (sb, "dois".to_owned())]
+    );
+}
+
+#[test]
+fn replacing_the_agent_keeps_the_worktree_and_the_task() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva o guia", Vec::new());
+    let first = fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Claude,
+            WorkerWorktree::New,
+            None,
+        )
+        .expect("the worker starts in a worktree of its own");
+
+    let second = fixture
+        .orchestration
+        .replace_worker(LEAD_SESSION, "writer", HarnessId::Codex, None)
+        .expect("the agent is replaced");
+
+    assert_eq!(fixture.host.stopped(), vec![first.session_id.clone()]);
+    assert_eq!(second.worktree_path, first.worktree_path);
+    assert_ne!(second.session_id, first.session_id);
+    assert!(
+        fixture.host.prompts()[1].contains("Another agent began this task"),
+        "the new agent is told what happened"
+    );
+    let writer = fixture.member(&writer.id);
+    assert_eq!(writer.harness, Some(HarnessId::Codex));
+    assert_eq!(writer.task_state, Some(TaskState::Running));
+    assert_eq!(writer.dispatch_state, Some(DispatchState::Running));
+}
+
+#[test]
+fn a_replacement_that_is_refused_leaves_the_old_worker_running() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva", Vec::new());
+    fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            None,
+        )
+        .expect("the worker starts");
+
+    assert_eq!(
+        fixture.orchestration.replace_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Opencode,
+            Some("gpt-5")
+        ),
+        Err(OrchestrationError::ModelNotSupported)
+    );
+    assert!(fixture.host.stopped().is_empty());
+    assert_eq!(
+        fixture.member(&writer.id).dispatch_state,
+        Some(DispatchState::Running)
+    );
+}
+
+#[test]
+fn a_worker_reads_the_prompt_of_its_saved_role() {
+    let fixture = fixture();
+    fixture
+        .orchestration
+        .save_role(LEAD_SESSION, "Reviewer", "Review only. Never edit files.")
+        .expect("the role is saved");
+    let reviewer = fixture.add("reviewer", "Revise o PR", Vec::new());
+    fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &reviewer.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            None,
+        )
+        .expect("the worker starts");
+
+    let prompt = fixture.host.prompts().remove(0);
+    assert!(prompt.starts_with("Your role:\nReview only. Never edit files."));
+    assert!(prompt.contains("Revise o PR"));
+
+    fixture
+        .orchestration
+        .save_role(LEAD_SESSION, "REVIEWER", "Review and approve.")
+        .expect("the same name replaces the prompt");
+    let roles = fixture.orchestration.roles(LEAD_SESSION).expect("roles");
+    assert_eq!(roles.len(), 1);
+    assert_eq!(roles[0].1, "Review and approve.");
+    assert!(
+        fixture
+            .orchestration
+            .delete_role(LEAD_SESSION, "reviewer")
+            .expect("deleted")
+    );
+}
+
+#[test]
+fn the_team_shares_notes_that_a_worker_writes_but_only_the_orchestrator_removes() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva", Vec::new());
+    let session = finished_worker(&fixture, &writer);
+    let orchestration = &fixture.orchestration;
+
+    let tree = orchestration
+        .notes_worktree(&session, None)
+        .expect("a worker is in the team's worktree");
+    assert_eq!(tree, WORKTREE);
+    orchestration
+        .write_note(&tree, "plano", "passo 1\npasso 2")
+        .expect("a worker writes");
+    orchestration
+        .edit_note(&tree, "PLANO", "passo 2", "passo dois")
+        .expect("the name ignores case");
+
+    assert_eq!(
+        orchestration.read_note(&tree, "plano").expect("read"),
+        "passo 1\npasso dois"
+    );
+    assert_eq!(orchestration.note_names(&tree).expect("names"), ["plano"]);
+    assert!(
+        orchestration
+            .edit_note(&tree, "plano", "inexistente", "x")
+            .is_err(),
+        "the text to replace must be there"
+    );
+    assert_eq!(
+        orchestration.delete_note(&session, &tree, "plano"),
+        Err(OrchestrationError::WorkerCannotCoordinate)
+    );
+    orchestration
+        .delete_note(LEAD_SESSION, &tree, "plano")
+        .expect("the orchestrator removes it");
+    assert!(orchestration.read_note(&tree, "plano").is_err());
+    assert!(orchestration.notes_worktree("stranger", None).is_err());
+}
+
+#[test]
+fn only_a_stopped_worker_with_a_worktree_of_its_own_is_landed() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva", Vec::new());
+    let started = fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Claude,
+            WorkerWorktree::New,
+            None,
+        )
+        .expect("the worker starts");
+
+    assert!(matches!(
+        fixture.orchestration.land_worker(LEAD_SESSION, &writer.id),
+        Err(OrchestrationError::WorkerRunning(_))
+    ));
+    fixture
+        .orchestration
+        .stop_worker(LEAD_SESSION, &writer.id)
+        .expect("stopped");
+
+    fixture
+        .orchestration
+        .land_worker(LEAD_SESSION, &writer.id)
+        .expect("landed");
+    assert_eq!(
+        fixture.host.landed(),
+        vec![(started.worktree_path, WORKTREE.to_owned())]
+    );
+
+    let shared = fixture.add("Shared", "Trabalhe aqui", Vec::new());
+    finished_worker(&fixture, &shared);
+    assert!(
+        fixture
+            .orchestration
+            .land_worker(LEAD_SESSION, &shared.id)
+            .is_err(),
+        "a worker in the team's own worktree has nothing to land"
     );
 }

@@ -1,15 +1,16 @@
-import { useMemo, type KeyboardEvent } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 import { Folder2Glyph18 } from "@/components/icons/Folder2Glyph18";
 import { FolderPlusGlyph18 } from "@/components/icons/FolderPlusGlyph18";
+import { InputSearchGlyph18 } from "@/components/icons/InputSearchGlyph18";
 
 import {
   SegmentedControl,
   type SegmentOption,
 } from "@/components/SegmentedControl";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useDialogStore } from "@/dialog-store";
-import { TeamModeSwitch } from "@/team/TeamModeSwitch";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
 import { agentsByWorktree } from "@/workspace/projects/collapsed-summary";
@@ -17,6 +18,7 @@ import {
   activeRepoIds,
   onlyActive,
   type ProjectFilter,
+  searchProjects,
 } from "@/workspace/projects/project-filter";
 import { useProjectFilterStore } from "@/workspace/projects/project-filter-store";
 import { buildProjectTree } from "@/workspace/projects/project-tree";
@@ -61,6 +63,11 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
       ? onlyActive(nodes, activeRepoIds(repos, worktrees, sessions))
       : nodes;
   }, [folders, repos, worktrees, sessions, filter]);
+  const [query, setQuery] = useState("");
+  const searched = useMemo(
+    () => searchProjects(shown, worktrees, query),
+    [shown, worktrees, query],
+  );
 
   const empty = repos.length === 0 && folders.length === 0;
 
@@ -86,8 +93,24 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
       {!empty && (
-        <div className="flex items-center justify-between gap-2 px-2 pb-2">
-          <TeamModeSwitch path={selectedPath} />
+        <div className="flex flex-col items-start gap-2 px-2 pb-2">
+          <div className="relative w-full">
+            <InputSearchGlyph18
+              aria-hidden
+              className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              type="search"
+              value={query}
+              aria-label={copy.sidebar.search}
+              placeholder={copy.sidebar.searchPlaceholder}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setQuery("");
+              }}
+              className="h-7 border-transparent bg-muted/40 pl-7 text-nested shadow-none focus-visible:bg-muted/60"
+            />
+          </div>
           <SegmentedControl
             label={copy.sidebar.filterLabel}
             options={FILTER_OPTIONS}
@@ -108,19 +131,19 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void }) {
             {copy.sidebar.emptyBody}
           </p>
         </div>
-      ) : shown.length === 0 ? (
+      ) : searched.nodes.length === 0 ? (
         <ScrollArea className="min-h-0 flex-1">
           <p className="px-3 text-ui text-muted-foreground">
-            {copy.sidebar.activeEmpty}
+            {query.trim() ? copy.sidebar.noMatches : copy.sidebar.activeEmpty}
           </p>
         </ScrollArea>
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <ul className="px-2 pb-2" onKeyDown={moveFocus}>
             <ProjectTree
-              nodes={shown}
+              nodes={searched.nodes}
               context={{
-                worktrees,
+                worktrees: searched.worktrees,
                 pending,
                 collapsedRepoIds,
                 agents,

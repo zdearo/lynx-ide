@@ -111,7 +111,8 @@ function RepoSectionView({
   }, [sessions]);
 
   return (
-    <li>
+    // Every repo sits one step in from the folder rows, inside a folder or not.
+    <li className="ml-3">
       <div className="group/repo relative">
         <button
           type="button"

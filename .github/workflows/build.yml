@@ -31,23 +31,17 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify ${{ matrix.name }}
+    name: Verify
     # Pushes to main and tags are already verified by the pull request they came from.
     if: github.event_name != 'push'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux
-            os: ubuntu-22.04
-          - name: Windows
-            os: windows-latest
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-22.04
+    env:
+      # Test binaries do not need debug info; on Windows, linking the PDB is most of the time.
+      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux libraries
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
@@ -67,6 +61,7 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # The frontend does not depend on the platform, so only Linux checks it.
       - name: Check the frontend
         run: bun run check
 
@@ -75,6 +70,36 @@ jobs:
 
       # A step's result on Windows is its last command's, so a failed check could hide behind
       # a passing test run. The test step still runs after a failed check, to show both.
+      - name: Test the backend
+        if: always()
+        run: bun run rust:test
+
+  verify-windows:
+    name: Verify Windows
+    needs: changes
+    # Only the Rust code can fail on Windows alone, so only a change to it runs this job.
+    if: github.event_name != 'push' && needs.changes.outputs.rust == 'true'
+    runs-on: windows-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: verify
+          cache-on-failure: true
+
+      - run: bun install --frozen-lockfile
+
+      - name: Check the backend
+        run: bun run rust:check
+
       - name: Test the backend
         if: always()
         run: bun run rust:test
@@ -173,6 +198,7 @@ jobs:
     outputs:
       engine: ${{ steps.paths.outputs.engine }}
       release: ${{ steps.release.outputs.release }}
+      rust: ${{ steps.rust.outputs.rust }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -224,6 +250,20 @@ jobs:
           esac
           echo "release=$release" >> "$GITHUB_OUTPUT"
           echo "this run releases the app: $release"
+
+      - name: Check whether the Rust code changed
+        id: rust
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          rust=true
+          # A pull request that leaves the Rust code, its toolchain and CI alone cannot break the Windows Rust checks.
+          if [ "$EVENT" = pull_request ] && ! git diff --name-only "$BASE" "$GITHUB_SHA" -- src-tauri rust-toolchain.toml .github | grep -q .; then
+            rust=false
+          fi
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "the Rust checks run: $rust"
 
   # Builds and publishes the browser engine before the app, when its inputs changed. So the app
   # released after it finds an engine that speaks its protocol.

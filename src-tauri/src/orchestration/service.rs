@@ -357,6 +357,8 @@ pub struct Orchestration {
     noticing: Mutex<()>,
     /// How long a turn that looks finished must stay so before it is noticed (`DONE_SETTLES`).
     pub(super) done_settle: Duration,
+    /// The workers whose turn ended without a report was already said. A new turn (`Working`) clears its worker.
+    ended_turns: Mutex<HashSet<String>>,
 }
 
 impl Orchestration {
@@ -370,6 +372,7 @@ impl Orchestration {
             ready_wait: ASSIGN_READY_WAIT,
             noticing: Mutex::new(()),
             done_settle: DONE_SETTLES,
+            ended_turns: Mutex::new(HashSet::new()),
         }
     }
 
@@ -1623,14 +1626,21 @@ impl Orchestration {
         }
     }
 
-    /// Says what a running worker shows, once for each thing: it waits for an answer, it ended, or its turn ended
-    /// without a report.
+    /// Says what a running worker shows: it waits for an answer, it ended, or its turn ended without a report. A wait
+    /// is said once per wait; a turn that ends without a report is said once per turn.
     fn notice_worker(&self, worker: &TeamMember) -> Result<(), OrchestrationError> {
         let Some(session) = worker.session_id.as_deref() else {
             return Ok(());
         };
-        let waiting =
-            self.host.running(session) && self.host.status(session) == Some(AgentStatus::NeedsYou);
+        let status = self.host.status(session);
+        if status == Some(AgentStatus::Working) {
+            // A new turn: if it ends without a report, that is said again.
+            self.ended_turns
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&worker.id);
+        }
+        let waiting = self.host.running(session) && status == Some(AgentStatus::NeedsYou);
         let was_waiting = self
             .waiting
             .lock()
@@ -1651,24 +1661,30 @@ impl Orchestration {
             self.note(
                 worker,
                 MessageKind::NoReport,
-                "The worker ended without a report. Read its output to see how far it got.",
+                "The worker's process ended without a report, so nothing more comes from it. Read its output to see how far it got.",
             )?;
-        } else if self.host.status(session) == Some(AgentStatus::Done)
-            && !self
-                .team
-                .messages_of(&worker.id)?
-                .iter()
-                .any(|message| message.kind == MessageKind::NoReport)
-        {
-            // The turn ended while the task still runs and no report came: the orchestrator hears it once. The
-            // worker keeps running, and it may be waiting for an answer.
+        } else if status == Some(AgentStatus::Done) && !self.said_turn_ended(&worker.id) {
+            // The turn ended while the task still runs and no report came. The worker may still have work in the
+            // background and may report later, so the orchestrator waits for that report before it counts a failure.
             self.note(
                 worker,
                 MessageKind::NoReport,
-                "The worker finished its turn without a report. Read its output to see what it did, or whether it waits for an answer.",
+                "The worker's turn ended without a report. It may still have work running in the background, and it may report later. Wait for its next report, and count it as failed only if none comes. Read its output to see what it did.",
             )?;
+            self.ended_turns
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(worker.id.clone());
         }
         Ok(())
+    }
+
+    /// Whether the turn that `worker_id` ended without a report was already said.
+    fn said_turn_ended(&self, worker_id: &str) -> bool {
+        self.ended_turns
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(worker_id)
     }
 
     /// Closes the workers whose reports the orchestrator has just heard, when Settings say so. The report stays with

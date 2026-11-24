@@ -2203,8 +2203,15 @@ fn a_turn_that_ends_without_a_report_reaches_the_coordinator_without_a_check() {
     assert_eq!(reports.messages.len(), 1);
     assert_eq!(reports.messages[0].kind, MessageKind::NoReport);
     assert!(
+        reports
+            .text
+            .contains("may still have work running in the background"),
+        "the coordinator is told the worker may report later: {}",
+        reports.text
+    );
+    assert!(
         reports.text.starts_with(&format!(
-            "Relatório do worker {} (papel Writer, terminou sem relatório).",
+            "Relatório do worker {} (papel Writer, o turno terminou sem relatório).",
             writer.id
         )),
         "{}",
@@ -2250,7 +2257,7 @@ fn a_worker_that_reported_before_its_turn_ended_gets_no_missing_report_notice() 
 }
 
 #[test]
-fn a_second_end_of_turn_without_a_report_is_not_said_again() {
+fn a_second_end_without_a_report_in_the_same_turn_is_not_said_again() {
     let fixture = fixture();
     let (_writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
     fixture.host.set_status(&session, AgentStatus::Done);
@@ -2260,8 +2267,7 @@ fn a_second_end_of_turn_without_a_report_is_not_said_again() {
         .expect("noticed");
     assert!(fixture.orchestration.take(LEAD_SESSION).is_some());
 
-    fixture.host.set_status(&session, AgentStatus::Working);
-    fixture.host.set_status(&session, AgentStatus::Done);
+    // Done again with no Working in between: the same turn, so no second notice.
     fixture
         .orchestration
         .worker_status_changed(&session)
@@ -2269,8 +2275,76 @@ fn a_second_end_of_turn_without_a_report_is_not_said_again() {
 
     assert!(
         fixture.orchestration.take(LEAD_SESSION).is_none(),
-        "the rule says once: the orchestrator heard it already"
+        "one notice per turn"
     );
+}
+
+#[test]
+fn a_turn_that_starts_again_and_ends_without_a_report_is_said_again() {
+    let fixture = fixture();
+    let (writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture.host.set_status(&session, AgentStatus::Done);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("noticed");
+    assert!(fixture.orchestration.take(LEAD_SESSION).is_some());
+
+    // A new turn: it starts, and it ends without a report again, long after the first notice.
+    fixture.host.set_status(&session, AgentStatus::Working);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("the new turn starts");
+    fixture.host.set_status(&session, AgentStatus::Done);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("noticed again");
+
+    let reports = fixture
+        .orchestration
+        .take(LEAD_SESSION)
+        .expect("the second turn's end is handed over");
+    assert_eq!(reports.messages.len(), 1);
+    assert_eq!(reports.messages[0].kind, MessageKind::NoReport);
+    assert!(reports.text.contains(&writer.id), "{}", reports.text);
+}
+
+#[test]
+fn a_reassigned_worker_that_ends_its_new_turn_without_a_report_is_said_again() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva o guia", Vec::new());
+    let session = finished_worker(&fixture, &writer);
+    fixture.host.set_status(&session, AgentStatus::Done);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("the first turn's end is noticed");
+    assert!(fixture.orchestration.take(LEAD_SESSION).is_some());
+
+    // The coordinator gives the same worker a new task: the old notice does not hide its turn's end.
+    fixture.host.set_status(&session, AgentStatus::Done);
+    fixture
+        .orchestration
+        .assign(LEAD_SESSION, "writer", "Revise o guia", "")
+        .expect("the task is given");
+    fixture.host.set_status(&session, AgentStatus::Working);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("the new task's turn starts");
+    fixture.host.set_status(&session, AgentStatus::Done);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("the new turn ends");
+
+    let reports = fixture
+        .orchestration
+        .take(LEAD_SESSION)
+        .expect("the new turn's end is handed over");
+    assert_eq!(reports.messages[0].kind, MessageKind::NoReport);
 }
 
 #[test]

@@ -407,8 +407,8 @@ async function adoptSession(
   }
 }
 
-/** The terminal session the team's dialog shows, or null. The dialog draws it with its own view, and the backend keeps one view per session, so the workspace must not draw it too. */
-export function teamDialogSessionId(
+/** The session of the member the modal shows, or null when no agent's terminal is open. Its view is on the stage. */
+export function modalSessionId(
   state: Pick<TeamState, "members" | "terminalFor" | "terminalOpen">,
   worktree: string | null,
 ): string | null {
@@ -417,6 +417,18 @@ export function teamDialogSessionId(
     (candidate) => candidate.id === state.terminalFor,
   );
   return member?.kind === "agent" ? member.sessionId : null;
+}
+
+/** The sessions of the agents in a worktree's team. Each one's view is kept on the team's stage. */
+export function stageSessionIds(
+  state: Pick<TeamState, "members">,
+  worktree: string | null,
+): string[] {
+  return membersOfWorktree(state.members, worktree).flatMap((member) =>
+    member.kind === "agent" && member.sessionId !== null
+      ? [member.sessionId]
+      : [],
+  );
 }
 
 /** The bot a bot member is, from the Bots list. Undefined while the list is not loaded, or the bot is gone. */
@@ -554,6 +566,14 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       if (sequence !== latestLoad) return;
       const { loaded, members: before } = get();
       set((state) => teamOf(snapshot, state.selectedId, state.members));
+      // A modal whose member left the team has nothing to show.
+      const { terminalOpen, terminalFor, members } = get();
+      if (
+        terminalOpen &&
+        !members.some((member) => member.id === terminalFor)
+      ) {
+        set({ terminalOpen: false });
+      }
       // The first read has no earlier team, so no member can have left it.
       if (loaded) closeVanishedSessions(before, get().members);
       // A read makes the team ready for the sessions that waited for it.
@@ -788,6 +808,17 @@ useTerminalStore.subscribe((state, previous) => {
       .map((session) => session.id),
   );
   if (closed.size === 0) return;
+  // The modal shows the terminal of its member: when that session closes, there is nothing left to show in it.
+  const { terminalOpen, terminalFor, members } = useTeamStore.getState();
+  const shown = members.find((member) => member.id === terminalFor);
+  if (
+    terminalOpen &&
+    shown?.kind === "agent" &&
+    shown.sessionId !== null &&
+    closed.has(shown.sessionId)
+  ) {
+    useTeamStore.setState({ terminalOpen: false });
+  }
   for (const member of useTeamStore.getState().members) {
     if (member.kind !== "agent" || !member.sessionId) continue;
     if (!closed.has(member.sessionId) || dismissedMemberIds.has(member.id)) {

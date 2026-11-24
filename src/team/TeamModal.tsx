@@ -9,15 +9,10 @@ import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
 import { XIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { errorMessage } from "@/lib/error-message";
 import type { TeamAgent, TeamBot, TeamMember } from "@/team/team-fixtures";
 import { focusMemberCard } from "@/team/team-focus";
+import { MODAL_FRAME_CLASS, MODAL_OVERLAY_CLASS } from "@/team/team-stage";
 import { TeamStatusIcon } from "@/team/TeamStatus";
 import {
   agentNameOf,
@@ -27,56 +22,64 @@ import {
   useTeamMembers,
   useTeamStore,
 } from "@/team/team-store";
-import { TerminalView } from "@/terminal/TerminalView";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { useResumableStore } from "@/workspace/resumable-store";
 import { copy } from "@/ui-copy";
 
 /**
- * A member's terminal, or a bot's chat, in a dialog over the central area. An agent's terminal is its real session, the
- * same one the terminal tabs show. The seeded mock members have no session and show their simulated output.
+ * The terminal modal of the team: a title bar over the central area, and a body under it. An agent's terminal is not
+ * drawn here: it is on the team's stage, which the body leaves visible. A bot's chat, and an agent with no session,
+ * are drawn in the body.
  */
-export function TeamTerminalDialog({
-  container,
-}: {
-  container: HTMLElement | null;
-}) {
+export function TeamModal() {
   const members = useTeamMembers();
   const terminalFor = useTeamStore((state) => state.terminalFor);
   const open = useTeamStore((state) => state.terminalOpen);
   const member = members.find((candidate) => candidate.id === terminalFor);
+  // Mounted only while open: the stage keeps its terminals; the modal is only what is drawn over them.
+  if (!open || member === undefined) return null;
+  return <OpenModal member={member} />;
+}
+
+function closeModal() {
+  useTeamStore.getState().closeTerminal();
+}
+
+function OpenModal({ member }: { member: TeamMember }) {
+  // Escape closes it, as it closed the dialog it replaces.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeModal();
+    };
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, []);
+
+  // The modal has no trigger to return focus to, so its member's card gets it once the modal has left. A remount
+  // while the modal is still open (StrictMode) does not count as leaving.
+  useEffect(
+    () => () => {
+      if (useTeamStore.getState().terminalOpen) return;
+      requestAnimationFrame(() => focusMemberCard(member.id));
+    },
+    [member.id],
+  );
 
   return (
-    <Dialog
-      open={open && member !== undefined}
-      onOpenChange={(next) => {
-        if (!next) useTeamStore.getState().closeTerminal();
-      }}
-    >
-      <DialogContent
-        container={container}
-        showCloseButton={false}
-        // The first button would open its tooltip, and then Escape would close only the tooltip.
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          (event.currentTarget as HTMLElement).focus();
-        }}
-        // The dialog has no trigger to return focus to, so the member's card gets it.
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          focusMemberCard(terminalFor);
-        }}
-        // No exit animation: the terminal view must unmount at once, not 100 ms after the dialog closes.
-        className="absolute inset-[5%] flex h-auto w-auto max-w-none translate-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none data-closed:animate-none!"
-      >
-        {member?.kind === "bot" && <BotChatPane member={member} />}
-        {member?.kind === "agent" && <TerminalPane member={member} />}
-      </DialogContent>
-    </Dialog>
+    <>
+      <div className={MODAL_OVERLAY_CLASS} onClick={closeModal} />
+      <div role="dialog" aria-modal="true" className={MODAL_FRAME_CLASS}>
+        {member.kind === "bot" && <BotChatPane member={member} />}
+        {member.kind === "agent" && <TerminalPane member={member} />}
+      </div>
+    </>
   );
 }
 
-/** The title bar of both panes: the member's icon and title, its status, and the close button. */
+/** The title bar of every pane: the member's icon and title, its status, and the close button. */
 function PaneHeader({
   member,
   icon,
@@ -87,11 +90,9 @@ function PaneHeader({
   title: string;
 }) {
   return (
-    <header className="flex min-w-0 items-center gap-2 border-b px-3 py-2 pr-10">
+    <header className="pointer-events-auto flex h-9 min-w-0 shrink-0 items-center gap-2 border-b bg-popover px-3 pr-10">
       {icon}
-      <DialogTitle className="min-w-0 truncate text-ui font-medium">
-        {title}
-      </DialogTitle>
+      <h2 className="min-w-0 truncate text-ui font-medium">{title}</h2>
       <span className="ml-auto flex shrink-0 items-center gap-1.5 text-meta text-muted-foreground">
         <TeamStatusIcon status={member.status} />
         {copy.team.status[member.status]}
@@ -101,7 +102,7 @@ function PaneHeader({
           member.kind === "bot" ? copy.team.closeChat : copy.team.closeTerminal
         }
         className="absolute top-2 right-2"
-        onClick={() => useTeamStore.getState().closeTerminal()}
+        onClick={closeModal}
       >
         <XIcon />
       </TooltipIconButton>
@@ -130,10 +131,10 @@ function TerminalPane({ member }: { member: TeamAgent }) {
     return (
       <>
         {header}
-        <DialogDescription className="border-b px-3 py-1.5 text-meta">
+        <p className="pointer-events-auto border-b bg-background px-3 py-1.5 text-meta text-muted-foreground">
           {copy.team.simulatedTerminal}
-        </DialogDescription>
-        <div className="min-h-0 flex-1 overflow-y-auto bg-background p-3 font-mono text-ui">
+        </p>
+        <div className="pointer-events-auto min-h-0 flex-1 overflow-y-auto bg-background p-3 font-mono text-ui">
           {member.output.map((line, index) => (
             <p key={index} className="break-words">
               {line}
@@ -148,23 +149,20 @@ function TerminalPane({ member }: { member: TeamAgent }) {
     return (
       <>
         {header}
-        <DialogDescription className="border-b px-3 py-1.5 text-meta">
+        <p className="pointer-events-auto border-b bg-background px-3 py-1.5 text-meta text-muted-foreground">
           {copy.team.terminalClosed}
-        </DialogDescription>
+        </p>
         <ClosedAgentPane key={member.id} member={member} />
       </>
     );
   }
 
+  // The terminal is on the stage, under this body: the body only leaves it visible.
   return (
     <>
       {header}
-      <DialogDescription className="sr-only">
-        {copy.team.terminalDescription}
-      </DialogDescription>
-      <div className="flex min-h-0 flex-1 flex-col bg-background">
-        <TerminalView terminalId={session.id} active />
-      </div>
+      <p className="sr-only">{copy.team.terminalDescription}</p>
+      <div className="min-h-0 flex-1" />
     </>
   );
 }
@@ -196,7 +194,7 @@ function ClosedAgentPane({ member }: { member: TeamAgent }) {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-start gap-2 bg-background p-3">
+    <div className="pointer-events-auto flex min-h-0 flex-1 flex-col items-start gap-2 bg-background p-3">
       {listed && (
         <>
           <Button size="sm" disabled={starting} onClick={revive}>
@@ -245,10 +243,8 @@ function BotChatPane({ member }: { member: TeamBot }) {
         }
         title={copy.team.sheetLabel(member.role, engineOf(member, bots))}
       />
-      <DialogDescription className="sr-only">
-        {text.log(bot?.name ?? member.role)}
-      </DialogDescription>
-      <div className="flex min-h-0 flex-1 flex-col bg-background">
+      <p className="sr-only">{text.log(bot?.name ?? member.role)}</p>
+      <div className="pointer-events-auto flex min-h-0 flex-1 flex-col bg-background">
         {bot && thread && (
           <Conversation
             key={thread}

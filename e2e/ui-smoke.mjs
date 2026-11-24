@@ -5813,23 +5813,24 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
   await p.getByRole("menuitem", { name: "Open terminal", exact: true }).click();
   await settle(p, 400);
-  const modal = p.locator('main > [role="dialog"]');
-  // The sheet of the same member is open too, so the modal is found by its title.
+  // The modal is the only dialog that is modal: the sheet of the same member is not, so it is not matched.
+  const modal = p.locator('[role="dialog"][aria-modal="true"]');
   check(
     "Open terminal opens a modal dialog titled with the member",
     (await modal
       .getByRole("heading", { name: "Builder · Codex", exact: true })
       .count()) === 1,
   );
+  // The modal covers the central area below the team's title bar (36 px), inset 5% on each side.
   const size = await p.evaluate(() => {
     const main = document.querySelector("main")?.getBoundingClientRect();
     const dialog = document
-      .querySelector('main > [role="dialog"]')
+      .querySelector('[role="dialog"][aria-modal="true"]')
       ?.getBoundingClientRect();
     return main && dialog
       ? {
           width: dialog.width / main.width,
-          height: dialog.height / main.height,
+          height: dialog.height / (main.height - 36),
         }
       : null;
   });

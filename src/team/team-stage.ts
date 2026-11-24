@@ -48,12 +48,17 @@ export function sessionPlacement(
   return staged ? "stage" : "hidden";
 }
 
-/** The class of one session's wrapper in the central area. The stage keeps its box whether or not it is shown. */
+/**
+ * The class of one session's wrapper in the central area. The stage keeps its box always; while its terminal is not
+ * shown, the box takes no clicks, so the map under it still does.
+ */
 export function sessionWrapperClass(
   placement: SessionPlacement,
   shown: boolean,
 ): string {
-  if (placement === "stage") return STAGE_CLASS;
+  if (placement === "stage") {
+    return shown ? STAGE_CLASS : `${STAGE_CLASS} pointer-events-none`;
+  }
   return shown ? "absolute inset-0" : "absolute inset-0 hidden";
 }
 

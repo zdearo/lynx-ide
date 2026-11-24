@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -169,7 +169,10 @@ function mountTerminal(
 }
 
 /** Shows one backend terminal session. The session outlives the view. */
-export function TerminalView({
+// Its parents redraw on every worktree or team change, so it re-renders only for its own props.
+export const TerminalView = memo(TerminalViewBase);
+
+function TerminalViewBase({
   terminalId,
   active,
   onExit,

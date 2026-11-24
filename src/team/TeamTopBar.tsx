@@ -1,3 +1,4 @@
+import { memo } from "react";
 import {
   ArrowsOutIcon,
   SidebarSimpleIcon,
@@ -13,7 +14,9 @@ import { useSelectedWorktree } from "@/workspace/worktrees/use-selected-worktree
 import { worktreeLabel } from "@/workspace/worktrees/worktree-label";
 
 /** The bar above the team, in place of the terminal tabs: the worktree, its summary and the team's actions. */
-export function TeamTopBar({
+export const TeamTopBar = memo(TeamTopBarBase);
+
+function TeamTopBarBase({
   path,
   sidebarVisible,
   rightPanelOpen,

@@ -239,6 +239,22 @@ function withSessionStatus(
   return changed ? next : members;
 }
 
+/** Each member's object from the last read when its content is the same, and the last list itself when nothing changed. */
+function keepUnchanged(
+  members: TeamMember[],
+  previous: TeamMember[],
+): TeamMember[] {
+  const before = new Map(previous.map((member) => [member.id, member]));
+  const kept = members.map((member) => {
+    const old = before.get(member.id);
+    return old && JSON.stringify(old) === JSON.stringify(member) ? old : member;
+  });
+  const unchanged =
+    kept.length === previous.length &&
+    kept.every((member, index) => member === previous[index]);
+  return unchanged ? previous : kept;
+}
+
 /** Runs a backend change. Its value, or null when the backend refused it: then the message is shown and nothing changes. */
 async function change<T>(run: () => Promise<T>): Promise<{ value: T } | null> {
   try {
@@ -484,15 +500,19 @@ export function teamModeOf(
 function teamOf(
   snapshot: TeamSnapshot,
   selectedId: string | null,
+  previous: TeamMember[],
 ): Partial<TeamState> {
   return {
     expanded: snapshot.members
       .filter((member) => member.expanded)
       .map((member) => member.id),
     loaded: true,
-    members: withSessionStatus(
-      snapshot.members.map(memberOf),
-      useTerminalStore.getState().sessions,
+    members: keepUnchanged(
+      withSessionStatus(
+        snapshot.members.map(memberOf),
+        useTerminalStore.getState().sessions,
+      ),
+      previous,
     ),
     pairs: snapshot.pairs.map(({ a, b }) => ({ from: a, to: b })),
     notes: snapshot.notes,
@@ -533,7 +553,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       const snapshot = await teamBackend.snapshot();
       if (sequence !== latestLoad) return;
       const { loaded, members: before } = get();
-      set((state) => teamOf(snapshot, state.selectedId));
+      set((state) => teamOf(snapshot, state.selectedId, state.members));
       // The first read has no earlier team, so no member can have left it.
       if (loaded) closeVanishedSessions(before, get().members);
       // A read makes the team ready for the sessions that waited for it.

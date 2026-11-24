@@ -221,7 +221,7 @@ export function TeamNodeCard({ id, data, selected }: NodeProps<TeamCardNode>) {
           </div>
         </div>
       </ContextMenuTrigger>
-      <TeamMemberContextMenu member={member} />
+      <TeamMemberContextMenu member={member} hasChildren={hasChildren} />
     </ContextMenu>
   );
 }

@@ -314,8 +314,9 @@ pub fn fixture_with(host: FakeHost) -> Fixture {
     let database = Arc::new(AppDatabase::open(&dir.path().join("app.db")).expect("database"));
     let team = Arc::new(TeamService::new(Arc::clone(&database), Box::new(|_| true)));
     let host = Arc::new(host);
-    let orchestration =
+    let mut orchestration =
         Orchestration::new(Arc::clone(&team), Arc::clone(&host) as Arc<dyn WorkerHost>);
+    orchestration.done_settle = Duration::ZERO;
     let lead = team
         .add_member(NewTeamMember::Agent {
             role: "Lead".to_owned(),
@@ -2374,4 +2375,27 @@ fn a_status_of_a_session_that_runs_no_worker_changes_nothing() {
 
     assert!(fixture.host.notified().is_empty());
     assert!(fixture.orchestration.take(LEAD_SESSION).is_none());
+}
+
+#[test]
+fn a_turn_that_looks_finished_and_works_again_before_it_settles_is_not_reported() {
+    let mut fixture = fixture();
+    fixture.orchestration.done_settle = Duration::from_millis(200);
+    let (_writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture.host.set_status(&session, AgentStatus::Done);
+
+    std::thread::scope(|scope| {
+        let settling = scope.spawn(|| fixture.orchestration.worker_status_changed(&session));
+        std::thread::sleep(Duration::from_millis(50));
+        fixture.host.set_status(&session, AgentStatus::Working);
+        settling
+            .join()
+            .expect("the notice does not panic")
+            .expect("the notice answers");
+    });
+
+    assert!(
+        fixture.orchestration.take(LEAD_SESSION).is_none(),
+        "the title showed rest for a moment: the turn is still going"
+    );
 }

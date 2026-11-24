@@ -46,6 +46,9 @@ const ASK_POLL: Duration = Duration::from_millis(100);
 const IDLE_AFTER_ASK: Duration = Duration::from_secs(2);
 /// How long an assignment waits for its worker to be idle, so the task can be pasted into its input.
 const ASSIGN_READY_WAIT: Duration = Duration::from_secs(30);
+/// How long a turn that looks finished must go on looking finished before it counts. A title can show the prompt
+/// glyph in the middle of a turn, and a hook that says otherwise comes a moment later.
+pub const DONE_SETTLES: Duration = Duration::from_secs(3);
 
 /// Where a worker works: in a worktree of its own, or in the team's worktree, where the orchestrator works.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,6 +355,8 @@ pub struct Orchestration {
     pub(super) ready_wait: Duration,
     /// Held while the state of workers is noticed, so a check and a status change cannot both say the same thing.
     noticing: Mutex<()>,
+    /// How long a turn that looks finished must stay so before it is noticed (`DONE_SETTLES`).
+    pub(super) done_settle: Duration,
 }
 
 impl Orchestration {
@@ -364,6 +369,7 @@ impl Orchestration {
             waits: Mutex::new(Vec::new()),
             ready_wait: ASSIGN_READY_WAIT,
             noticing: Mutex::new(()),
+            done_settle: DONE_SETTLES,
         }
     }
 
@@ -1596,9 +1602,14 @@ impl Orchestration {
     /// The agent of a session changed state: a turn started, ended, or now waits for an answer. The worker it runs is
     /// noticed here, as a check would notice it, so its orchestrator hears a turn that ended without a report, or
     /// an answer it waits for, without waiting for a check. The orchestrator gets it the way every report reaches it.
+    /// A turn that looks finished is noticed only once it has stayed finished for `done_settle`, so this blocks for
+    /// that long: call it off the thread that reads the terminal.
     pub fn worker_status_changed(&self, session: &str) -> Result<(), OrchestrationError> {
         if !self.host.settings().enabled {
             return Ok(());
+        }
+        if self.host.status(session) == Some(AgentStatus::Done) {
+            std::thread::sleep(self.done_settle);
         }
         let _noticing = self.noticing.lock().unwrap_or_else(PoisonError::into_inner);
         let members = self.team.members()?;

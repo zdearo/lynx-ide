@@ -94,7 +94,7 @@ impl AgentActivity {
             }
             TitleSignal::NeedsYou if self.hooks_seen => None,
             TitleSignal::NeedsYou => self.change(AgentStatus::NeedsYou, false),
-            TitleSignal::Rest => self.rest(),
+            TitleSignal::Rest => self.rest_from_title(),
         }
     }
 
@@ -127,6 +127,16 @@ impl AgentActivity {
         } else {
             None
         }
+    }
+
+    /// A rest title. With hooks, the prompt glyph also shows while the agent waits for the user (a question, an
+    /// approval), so it does not end that wait: only a hook does. It still ends a working turn, since an interrupted
+    /// turn sends no Stop hook and its rest title is all there is.
+    fn rest_from_title(&mut self) -> Option<AgentStatus> {
+        if self.hooks_seen && self.status == AgentStatus::NeedsYou {
+            return None;
+        }
+        self.rest()
     }
 
     /// The turn ended or the agent is at its prompt again.
@@ -217,6 +227,61 @@ mod tests {
         activity.on_title(HarnessId::Claude, "⠋ Claude Code", now);
         assert_eq!(
             activity.on_title(HarnessId::Claude, "* Claude Code", now),
+            Some(AgentStatus::Done)
+        );
+    }
+
+    #[test]
+    fn a_rest_title_does_not_end_a_wait_for_the_user_once_hooks_have_spoken() {
+        // The question's rest frames arrive with no Stop hook: the wait is still on.
+        let now = start();
+        let mut activity = AgentActivity::default();
+        activity.on_hook(HookEvent::Working);
+        assert_eq!(
+            activity.on_hook(HookEvent::NeedsYou),
+            Some(AgentStatus::NeedsYou)
+        );
+        assert_eq!(
+            activity.on_title(HarnessId::Claude, "✳ Claude Code", now),
+            None
+        );
+        assert_eq!(activity.status, AgentStatus::NeedsYou);
+        // The hook that ends the wait still does.
+        assert_eq!(
+            activity.on_hook(HookEvent::Finished),
+            Some(AgentStatus::Done)
+        );
+    }
+
+    #[test]
+    fn a_question_seen_through_its_rest_frames_is_one_status_change() {
+        // The sequence of a question: the hook says it waits, rest frames come, the hook says it again.
+        let now = start();
+        let mut activity = AgentActivity::default();
+        let changes = [
+            activity.on_hook(HookEvent::NeedsYou),
+            activity.on_title(HarnessId::Claude, "✳ Claude Code", now),
+            activity.on_hook(HookEvent::NeedsYou),
+            activity.on_title(HarnessId::Claude, "✳ Claude Code", now),
+            activity.on_hook(HookEvent::NeedsYou),
+        ];
+        assert_eq!(
+            changes,
+            [Some(AgentStatus::NeedsYou), None, None, None, None],
+            "no Done in between, so no second wait"
+        );
+    }
+
+    #[test]
+    fn without_hooks_a_rest_title_after_an_action_required_title_is_done_as_before() {
+        let now = start();
+        let mut activity = AgentActivity::default();
+        assert_eq!(
+            activity.on_title(HarnessId::Claude, "Claude Code - action required", now),
+            Some(AgentStatus::NeedsYou)
+        );
+        assert_eq!(
+            activity.on_title(HarnessId::Claude, "✳ Claude Code", now),
             Some(AgentStatus::Done)
         );
     }

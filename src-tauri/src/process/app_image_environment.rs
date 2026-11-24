@@ -95,19 +95,27 @@ pub fn clean_terminal(command: &mut CommandBuilder) {
     current().apply_to_terminal(command);
 }
 
-/// The AppImage file itself: its mount disappears when Lynx closes, and the file runs without the mount's environment.
-pub fn launch_executable(fallback: Option<PathBuf>) -> Option<PathBuf> {
-    launch_executable_from(env::var_os("APPIMAGE"), fallback)
+/// The file hooks and restarts run: the AppImage this process was started from, else the running executable. The
+/// AppImage file survives the mount's end, so it runs without the mount's environment.
+pub fn launch_executable(current: Option<PathBuf>) -> Option<PathBuf> {
+    launch_executable_from(env::var_os("APPIMAGE"), env::var_os("APPDIR"), current)
 }
 
+/// The runtime sets `APPIMAGE` and `APPDIR` for its own process only, so they count while the running executable is
+/// inside that mount; another app's variables are ignored.
 fn launch_executable_from(
     app_image: Option<OsString>,
-    fallback: Option<PathBuf>,
+    app_dir: Option<OsString>,
+    current: Option<PathBuf>,
 ) -> Option<PathBuf> {
+    let inside_mount = match (app_dir.as_deref(), current.as_deref()) {
+        (Some(dir), Some(exe)) => !dir.is_empty() && exe.starts_with(Path::new(dir)),
+        _ => false,
+    };
     app_image
-        .filter(|path| !path.is_empty() && Path::new(path).is_file())
+        .filter(|path| inside_mount && !path.is_empty() && Path::new(path).is_file())
         .map(PathBuf::from)
-        .or(fallback)
+        .or(current)
 }
 
 // AppImage sets these variables and they only exist on Linux, where the paths are `:`-separated.
@@ -245,21 +253,44 @@ mod tests {
     }
 
     #[test]
-    fn launches_the_app_image_file_when_it_exists() {
+    fn the_app_image_is_launched_only_from_its_own_mount() {
         let folder = tempfile::tempdir().unwrap();
-        let file = folder.path().join("lynx.appimage");
-        std::fs::write(&file, b"").unwrap();
-        let fallback = Some(PathBuf::from("/tmp/.mount_lynx.aPdmAME/usr/bin/lynx-ide"));
+        let app_image = folder.path().join("lynx.appimage");
+        std::fs::write(&app_image, b"").unwrap();
+        let mount = folder.path().join(".mount_lynx");
+        let inside = Some(mount.join("usr/bin/lynx-ide"));
+        let image = Some(app_image.clone().into_os_string());
+        let own_mount = Some(mount.into_os_string());
 
+        // Lynx runs from its own mount, so its AppImage is the file to start.
         assert_eq!(
-            launch_executable_from(Some(file.clone().into_os_string()), fallback.clone()),
-            Some(file)
+            launch_executable_from(image.clone(), own_mount.clone(), inside.clone()),
+            Some(app_image.clone())
         );
-        let gone = folder.path().join("gone").into_os_string();
+        // Another app's mount variables do not apply to this process.
+        let other_mount = Some(folder.path().join(".mount_maestri").into_os_string());
         assert_eq!(
-            launch_executable_from(Some(gone), fallback.clone()),
-            fallback
+            launch_executable_from(image.clone(), other_mount, inside.clone()),
+            inside
         );
-        assert_eq!(launch_executable_from(None, fallback.clone()), fallback);
+        // A dev build runs from target/debug, outside any mount: the running executable.
+        let dev = Some(PathBuf::from(
+            "/home/me/Projects/lynx-ide/target/debug/lynx-ide",
+        ));
+        assert_eq!(
+            launch_executable_from(image.clone(), own_mount.clone(), dev.clone()),
+            dev
+        );
+        assert_eq!(launch_executable_from(None, None, dev.clone()), dev);
+        // A file that is gone, or a mount without its AppImage variable: the running executable.
+        let gone = Some(folder.path().join("gone").into_os_string());
+        assert_eq!(
+            launch_executable_from(gone, own_mount.clone(), inside.clone()),
+            inside
+        );
+        assert_eq!(
+            launch_executable_from(None, own_mount, inside.clone()),
+            inside
+        );
     }
 }

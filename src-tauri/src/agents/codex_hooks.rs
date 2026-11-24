@@ -557,6 +557,12 @@ mod tests {
     /// the command, so it keeps the name the app had then; the vectors are not recomputed.
     const VERIFIED_COMMAND: &str = "'/opt/lynx/agent-ade' --agent-hook codex";
 
+    /// The command for `/opt/lynx/lynx-ide`, quoted the way this platform quotes it.
+    fn lynx_command() -> String {
+        let quote = if cfg!(windows) { '"' } else { '\'' };
+        format!("{quote}/opt/lynx/lynx-ide{quote} --agent-hook codex")
+    }
+
     fn event(name: &str) -> &'static HookedEvent {
         HOOKED_EVENTS
             .iter()
@@ -704,7 +710,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let source = dir.path().join("hooks.json").to_string_lossy().into_owned();
         let other = json!({ "hooks": [{ "type": "command", "command": "other tool" }] });
-        let ours = json!({ "hooks": [{ "type": "command", "command": COMMAND }] });
+        let ours = json!({ "hooks": [{ "type": "command", "command": lynx_command() }] });
         fs::write(
             dir.path().join("hooks.json"),
             json!({ "hooks": { "Stop": [ours, other] } }).to_string(),
@@ -793,7 +799,7 @@ mod tests {
     #[test]
     fn another_apps_codex_handler_survives_install_and_remove() {
         const MAESTRI_CODEX: &str = "'/opt/Maestri.AppImage' --agent-hook codex";
-        const LYNX_CODEX: &str = "'/opt/lynx/lynx-ide' --agent-hook codex";
+        let lynx_codex = lynx_command();
         let dir = tempfile::tempdir().expect("temp dir");
         fs::write(
             dir.path().join("hooks.json"),
@@ -808,7 +814,10 @@ mod tests {
         );
 
         target.install(Some([0, 160, 1])).expect("install");
-        assert_eq!(stop_commands(dir.path()), vec![MAESTRI_CODEX, LYNX_CODEX]);
+        assert_eq!(
+            stop_commands(dir.path()),
+            vec![MAESTRI_CODEX, lynx_codex.as_str()]
+        );
 
         target.remove(Some([0, 160, 1])).expect("remove");
         assert_eq!(stop_commands(dir.path()), vec![MAESTRI_CODEX]);
@@ -818,13 +827,13 @@ mod tests {
     #[test]
     fn an_older_handler_of_this_app_is_taken_over_by_its_exact_command() {
         const MAESTRI_CODEX: &str = "'/opt/Maestri.AppImage' --agent-hook codex";
-        const LYNX_CODEX: &str = "'/opt/lynx/lynx-ide' --agent-hook codex";
+        let lynx_codex = lynx_command();
         let dir = tempfile::tempdir().expect("temp dir");
         fs::write(
             dir.path().join("hooks.json"),
             json!({ "hooks": { "Stop": [
                 { "hooks": [{ "type": "command", "command": MAESTRI_CODEX }] },
-                { "hooks": [{ "type": "command", "command": LYNX_CODEX }] }
+                { "hooks": [{ "type": "command", "command": lynx_codex }] }
             ] } })
             .to_string(),
         )
@@ -837,7 +846,10 @@ mod tests {
 
         target.install(Some([0, 160, 1])).expect("install");
 
-        assert_eq!(stop_commands(dir.path()), vec![MAESTRI_CODEX, LYNX_CODEX]);
+        assert_eq!(
+            stop_commands(dir.path()),
+            vec![MAESTRI_CODEX, lynx_codex.as_str()]
+        );
     }
 
     #[test]

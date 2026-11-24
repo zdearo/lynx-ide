@@ -9,6 +9,7 @@ use crate::agents::activity::AgentStatus;
 use crate::agents::harness::HarnessId;
 use crate::browser::BrowserService;
 use crate::orchestration::agent_wake::AgentWakes;
+use crate::orchestration::service::Orchestration;
 
 use super::output_channels::OutputChannels;
 use super::terminal_session::TerminalInfo;
@@ -115,6 +116,21 @@ impl TerminalEventSink for TauriEventSink {
         // A coordinator that finished its turn may now take the note a worker left for it.
         if let Some(wakes) = self.app.try_state::<Arc<AgentWakes>>() {
             wakes.status_changed(id);
+        }
+        // A worker whose turn started, ended or now waits for an answer is noticed here, not only when its
+        // orchestrator checks. On its own thread: the status event comes from a monitor that must not wait.
+        if matches!(
+            status,
+            Some(AgentStatus::Working | AgentStatus::Done | AgentStatus::NeedsYou)
+        ) && let Some(orchestration) = self.app.try_state::<Arc<Orchestration>>()
+        {
+            let orchestration = Arc::clone(&*orchestration);
+            let session = id.to_owned();
+            std::thread::spawn(move || {
+                if let Err(error) = orchestration.worker_status_changed(&session) {
+                    log::error!("could not notice the worker {session}: {error}");
+                }
+            });
         }
         let _ = AgentStatusChanged {
             id: id.to_owned(),

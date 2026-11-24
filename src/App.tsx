@@ -43,6 +43,7 @@ import {
 } from "@/navigation/NavigationSidebar";
 import { useNavigationStore } from "@/navigation/navigation-store";
 import { useQuitGuard } from "@/quit-guard";
+import { TeamInert } from "@/team/TeamModal";
 import { watchTeam } from "@/team/team-store";
 
 const REFRESH_ON_FOCUS_MS = 2000;
@@ -247,7 +248,11 @@ function App() {
         {wide && <NavigationRail wide panelVisible={panelVisible} />}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
-            {wide && panelVisible && <NavigationPanel />}
+            {wide && panelVisible && (
+              <TeamInert>
+                <NavigationPanel />
+              </TeamInert>
+            )}
             <TerminalWorkspace
               sidebarVisible={panelVisible}
               onToggleSidebar={toggleSidebar}
@@ -255,17 +260,21 @@ function App() {
               onToggleRightPanel={toggleRightPanel}
             />
             {canDockRight && rightDocked && (
-              <aside
-                aria-label={copy.rightPanel.label}
-                className="w-72 shrink-0 border-l border-sidebar-border"
-              >
-                <Suspense fallback={null}>
-                  <RightSidebar />
-                </Suspense>
-              </aside>
+              <TeamInert>
+                <aside
+                  aria-label={copy.rightPanel.label}
+                  className="w-72 shrink-0 border-l border-sidebar-border"
+                >
+                  <Suspense fallback={null}>
+                    <RightSidebar />
+                  </Suspense>
+                </aside>
+              </TeamInert>
             )}
           </div>
-          <StatusBar />
+          <TeamInert>
+            <StatusBar />
+          </TeamInert>
         </div>
       </div>
 

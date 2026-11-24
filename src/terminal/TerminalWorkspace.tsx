@@ -23,7 +23,7 @@ import { startPreset } from "@/terminal/terminal-actions";
 import { TerminalTabs } from "@/terminal/TerminalTabs";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalView } from "@/terminal/TerminalView";
-import { TeamModal } from "@/team/TeamModal";
+import { TeamInert, TeamModal } from "@/team/TeamModal";
 import { TeamTopBar } from "@/team/TeamTopBar";
 import {
   modalSessionId,
@@ -124,13 +124,15 @@ export function TerminalWorkspace({
           onToggleRightPanel={onToggleRightPanel}
         />
       ) : teamMode ? (
-        <TeamTopBar
-          path={path}
-          sidebarVisible={sidebarVisible}
-          rightPanelOpen={rightPanelOpen}
-          onToggleSidebar={onToggleSidebar}
-          onToggleRightPanel={onToggleRightPanel}
-        />
+        <TeamInert>
+          <TeamTopBar
+            path={path}
+            sidebarVisible={sidebarVisible}
+            rightPanelOpen={rightPanelOpen}
+            onToggleSidebar={onToggleSidebar}
+            onToggleRightPanel={onToggleRightPanel}
+          />
+        </TeamInert>
       ) : (
         <TerminalTabs
           showLocation={!sidebarVisible}

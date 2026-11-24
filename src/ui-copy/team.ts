@@ -56,6 +56,7 @@ export const teamCopy = {
     openChat: "Open chat",
     closeTerminal: "Close terminal",
     closeChat: "Close chat",
+    closeShortcut: "Shift+Esc",
     changes: "Changes",
     orchestrator: "Orchestrator",
     orchestratorBadge: "orchestrator",

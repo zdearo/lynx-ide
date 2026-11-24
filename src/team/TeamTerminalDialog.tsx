@@ -66,7 +66,8 @@ export function TeamTerminalDialog({
           event.preventDefault();
           focusMemberCard(terminalFor);
         }}
-        className="absolute inset-[5%] flex h-auto w-auto max-w-none translate-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none"
+        // No exit animation: the terminal view must unmount at once, not 100 ms after the dialog closes.
+        className="absolute inset-[5%] flex h-auto w-auto max-w-none translate-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none data-closed:animate-none!"
       >
         {member?.kind === "bot" && <BotChatPane member={member} />}
         {member?.kind === "agent" && <TerminalPane member={member} />}

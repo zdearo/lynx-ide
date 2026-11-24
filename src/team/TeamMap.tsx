@@ -43,6 +43,13 @@ const CARD_SIZE = { width: TEAM_CARD_WIDTH, height: TEAM_CARD_HEIGHT };
 // Defined once: React Flow would remount every card if this object were rebuilt.
 const nodeTypes = { member: TeamNodeCard, ghost: TeamGhostCard };
 const edgeTypes = { team: TeamEdge };
+// Defined once too: React Flow passes these to every node, so a new function would redraw every card.
+const selectNode = (_: unknown, node: { id: string }) =>
+  useTeamStore.getState().select(node.id);
+const openNode = (_: unknown, node: { id: string }) => {
+  useTeamStore.getState().select(node.id);
+  openMember(node.id);
+};
 
 /** The selected member, the members above it, and its partners: what stays in focus. Null with no selection. */
 function focusOf(
@@ -228,11 +235,15 @@ export function TeamMap({
     };
   }, [spot]);
 
-  const nodes: TeamMapNode[] = cards.map((card) => ({
-    ...card,
-    position: drawn.get(card.id) ?? targets.get(card.id) ?? card.position,
-  }));
-  if (ghost) nodes.push(ghost);
+  // React Flow redraws a node whose object is new, so the array is kept while nothing it shows has changed.
+  const nodes = useMemo((): TeamMapNode[] => {
+    const all: TeamMapNode[] = cards.map((card) => ({
+      ...card,
+      position: drawn.get(card.id) ?? targets.get(card.id) ?? card.position,
+    }));
+    if (ghost) all.push(ghost);
+    return all;
+  }, [cards, drawn, targets, ghost]);
 
   // The lines are routed from where the cards are drawn now, so they follow a drag and a glide.
   const edges = useMemo(() => {
@@ -386,11 +397,8 @@ export function TeamMap({
           fitMap: () => void flow.fitView({ padding: 0.2, duration: 200 }),
         })
       }
-      onNodeClick={(_, node) => useTeamStore.getState().select(node.id)}
-      onNodeDoubleClick={(_, node) => {
-        useTeamStore.getState().select(node.id);
-        openMember(node.id);
-      }}
+      onNodeClick={selectNode}
+      onNodeDoubleClick={openNode}
       onPaneClick={() => useTeamStore.getState().select(null)}
     />
   );

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 import { toast } from "sonner";
 
 import { useBotsStore } from "@/bots/bots-store";
@@ -17,7 +17,9 @@ import { useWorkspaceStore } from "@/workspace/workspace-store";
  * The team of the worktree on the sidebar, as an org chart. The picked member opens in a panel over the map; Escape
  * clears the pick. `area` is the element the terminal dialog covers.
  */
-export function TeamView({ area }: { area: HTMLElement | null }) {
+export const TeamView = memo(TeamViewBase);
+
+function TeamViewBase({ area }: { area: HTMLElement | null }) {
   const members = useTeamMembers();
   const worktree = useWorkspaceStore((state) => state.selectedWorktreePath);
   const loaded = useTeamStore((state) => state.loaded);

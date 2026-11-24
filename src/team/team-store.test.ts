@@ -342,6 +342,30 @@ describe("team load", () => {
     handler();
     await vi.waitFor(() => expect(api.snapshot).toHaveBeenCalledTimes(2));
   });
+
+  it("keeps the member objects and the list itself when a read changes nothing", async () => {
+    await loadTeam();
+    const before = store().members;
+    const builder = member("builder");
+
+    await loadTeam();
+
+    expect(store().members).toBe(before);
+    expect(member("builder")).toBe(builder);
+  });
+
+  it("gives a new object only to the member whose content changed", async () => {
+    await loadTeam();
+    const before = store().members;
+    const team = snapshot();
+    team.members[1] = { ...team.members[1], task: "signup form" };
+
+    await loadTeam(team);
+
+    expect(member("builder")).toMatchObject({ task: "signup form" });
+    expect(member("builder")).not.toBe(before[1]);
+    expect(member("lead")).toBe(before[0]);
+  });
 });
 
 describe("team layout", () => {

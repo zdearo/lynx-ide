@@ -48,9 +48,13 @@ export function TeamMemberMenu({ member }: { member: TeamMember }) {
 }
 
 /** The same actions on a map card's right-click menu. Give it to a ContextMenu. */
-export function TeamMemberContextMenu({ member }: { member: TeamMember }) {
-  const members = useTeamMembers();
-  const hasMembers = members.some((other) => other.parentId === member.id);
+export function TeamMemberContextMenu({
+  member,
+  hasChildren,
+}: {
+  member: TeamMember;
+  hasChildren: boolean;
+}) {
   const isBot = member.kind === "bot";
 
   return (
@@ -60,7 +64,7 @@ export function TeamMemberContextMenu({ member }: { member: TeamMember }) {
       </ContextMenuItem>
       <ContextMenuCheckboxItem
         checked={member.orchestrator}
-        disabled={isBot || hasMembers}
+        disabled={isBot || hasChildren}
         onCheckedChange={(next) =>
           useTeamStore.getState().setOrchestrator(member.id, next)
         }

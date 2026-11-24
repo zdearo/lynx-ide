@@ -28,7 +28,7 @@ import {
   teamModeOf,
   useTeamStore,
 } from "@/team/team-store";
-import { cn } from "@/lib/utils";
+import { sessionPlacement, sessionWrapperClass } from "@/team/team-stage";
 import { copy } from "@/ui-copy";
 import {
   useSelectedWorktree,
@@ -137,34 +137,25 @@ export function TerminalWorkspace({
       {!botsView && !teamMode && path && <FileTabs worktreePath={path} />}
       <div className="relative min-h-0 flex-1">
         {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. */}
-        {sessions.map((session) =>
-          session.id === teamSession ? null : (
+        {sessions.map((session) => {
+          if (session.id === teamSession) return null;
+          const placement = sessionPlacement(teamMode, false);
+          const shown =
+            placement === "tabs" &&
+            session.id === activeId &&
+            !openFile &&
+            !browserOpen &&
+            !botsView;
+          return (
             // A hidden session must leave the layout too: its box would still take the clicks meant for the visible one.
             <div
               key={session.id}
-              className={cn(
-                "absolute inset-0",
-                (session.id !== activeId ||
-                  openFile ||
-                  browserOpen ||
-                  teamMode ||
-                  botsView) &&
-                  "hidden",
-              )}
+              className={sessionWrapperClass(placement, shown)}
             >
-              <TerminalView
-                terminalId={session.id}
-                active={
-                  session.id === activeId &&
-                  !openFile &&
-                  !browserOpen &&
-                  !teamMode &&
-                  !botsView
-                }
-              />
+              <TerminalView terminalId={session.id} active={shown} />
             </div>
-          ),
-        )}
+          );
+        })}
         {botsView && <BotArea />}
         {!botsView && loaded && repoCount === 0 && <Welcome />}
         {!botsView && path && openFile && (

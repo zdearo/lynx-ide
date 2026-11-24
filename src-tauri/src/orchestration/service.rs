@@ -350,6 +350,8 @@ pub struct Orchestration {
     waits: Mutex<Vec<(String, String)>>,
     /// How long an assignment waits for its worker to be idle.
     pub(super) ready_wait: Duration,
+    /// Held while the state of workers is noticed, so a check and a status change cannot both say the same thing.
+    noticing: Mutex<()>,
 }
 
 impl Orchestration {
@@ -361,6 +363,7 @@ impl Orchestration {
             asks: Mutex::new(HashMap::new()),
             waits: Mutex::new(Vec::new()),
             ready_wait: ASSIGN_READY_WAIT,
+            noticing: Mutex::new(()),
         }
     }
 
@@ -1576,6 +1579,7 @@ impl Orchestration {
     /// Notices the workers of these orchestrators that ended without a report, and for an agent that cannot report,
     /// the end of its turn. Each notice is written once.
     fn notice_workers(&self, parent_ids: &[String]) -> Result<(), OrchestrationError> {
+        let _noticing = self.noticing.lock().unwrap_or_else(PoisonError::into_inner);
         let members = self.team.members()?;
         for worker in members.iter().filter(|member| {
             member
@@ -1584,48 +1588,74 @@ impl Orchestration {
                 .is_some_and(|parent| parent_ids.contains(parent))
                 && is_active(member)
         }) {
-            let Some(session) = worker.session_id.as_deref() else {
-                continue;
-            };
-            let waiting = self.host.running(session)
-                && self.host.status(session) == Some(AgentStatus::NeedsYou);
-            let was_waiting = self
-                .waiting
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .insert(worker.id.clone(), waiting)
-                .unwrap_or(false);
-            if waiting && !was_waiting {
-                self.note(
-                    worker,
-                    MessageKind::NeedsYou,
-                    "The worker is waiting for an answer. Read its output to see the question; the user gives the answer in the worker's terminal.",
-                )?;
-            }
-            if !self.host.running(session) {
-                self.team
-                    .set_dispatch_state(&worker.id, DispatchState::Stopped)?;
-                self.team.set_task_state(&worker.id, TaskState::Failed)?;
-                self.note(
-                    worker,
-                    MessageKind::NoReport,
-                    "The worker ended without a report. Read its output to see how far it got.",
-                )?;
-            } else if self.host.status(session) == Some(AgentStatus::Done)
-                && !self
-                    .team
-                    .messages_of(&worker.id)?
-                    .iter()
-                    .any(|message| message.kind == MessageKind::NoReport)
-            {
-                // The turn ended while the task still runs and no report came: the orchestrator hears it once. The
-                // worker keeps running, and it may be waiting for an answer.
-                self.note(
-                    worker,
-                    MessageKind::NoReport,
-                    "The worker finished its turn without a report. Read its output to see what it did, or whether it waits for an answer.",
-                )?;
-            }
+            self.notice_worker(worker)?;
+        }
+        Ok(())
+    }
+
+    /// The agent of a session changed state: a turn started, ended, or now waits for an answer. The worker it runs is
+    /// noticed here, as a check would notice it, so its orchestrator hears a turn that ended without a report, or
+    /// an answer it waits for, without waiting for a check. The orchestrator gets it the way every report reaches it.
+    pub fn worker_status_changed(&self, session: &str) -> Result<(), OrchestrationError> {
+        if !self.host.settings().enabled {
+            return Ok(());
+        }
+        let _noticing = self.noticing.lock().unwrap_or_else(PoisonError::into_inner);
+        let members = self.team.members()?;
+        match members.iter().find(|member| {
+            member.session_id.as_deref() == Some(session)
+                && member.parent_id.is_some()
+                && is_active(member)
+        }) {
+            Some(worker) => self.notice_worker(worker),
+            None => Ok(()),
+        }
+    }
+
+    /// Says what a running worker shows, once for each thing: it waits for an answer, it ended, or its turn ended
+    /// without a report.
+    fn notice_worker(&self, worker: &TeamMember) -> Result<(), OrchestrationError> {
+        let Some(session) = worker.session_id.as_deref() else {
+            return Ok(());
+        };
+        let waiting =
+            self.host.running(session) && self.host.status(session) == Some(AgentStatus::NeedsYou);
+        let was_waiting = self
+            .waiting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(worker.id.clone(), waiting)
+            .unwrap_or(false);
+        if waiting && !was_waiting {
+            self.note(
+                worker,
+                MessageKind::NeedsYou,
+                "The worker is waiting for an answer. Read its output to see the question; the user gives the answer in the worker's terminal.",
+            )?;
+        }
+        if !self.host.running(session) {
+            self.team
+                .set_dispatch_state(&worker.id, DispatchState::Stopped)?;
+            self.team.set_task_state(&worker.id, TaskState::Failed)?;
+            self.note(
+                worker,
+                MessageKind::NoReport,
+                "The worker ended without a report. Read its output to see how far it got.",
+            )?;
+        } else if self.host.status(session) == Some(AgentStatus::Done)
+            && !self
+                .team
+                .messages_of(&worker.id)?
+                .iter()
+                .any(|message| message.kind == MessageKind::NoReport)
+        {
+            // The turn ended while the task still runs and no report came: the orchestrator hears it once. The
+            // worker keeps running, and it may be waiting for an answer.
+            self.note(
+                worker,
+                MessageKind::NoReport,
+                "The worker finished its turn without a report. Read its output to see what it did, or whether it waits for an answer.",
+            )?;
         }
         Ok(())
     }

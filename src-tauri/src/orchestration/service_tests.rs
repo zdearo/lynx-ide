@@ -2182,3 +2182,196 @@ fn a_question_without_a_wait_is_typed_at_once_and_waits_for_the_orchestrators_ch
         "the question is unread for the check"
     );
 }
+
+#[test]
+fn a_turn_that_ends_without_a_report_reaches_the_coordinator_without_a_check() {
+    let fixture = fixture();
+    let (writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture.host.set_status(&session, AgentStatus::Working);
+    fixture.host.set_status(&session, AgentStatus::Done);
+
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("the end of the turn is noticed");
+
+    let reports = fixture
+        .orchestration
+        .take(LEAD_SESSION)
+        .expect("the coordinator is handed the missing report");
+    assert_eq!(reports.messages.len(), 1);
+    assert_eq!(reports.messages[0].kind, MessageKind::NoReport);
+    assert!(
+        reports.text.starts_with(&format!(
+            "Relatório do worker {} (papel Writer, terminou sem relatório).",
+            writer.id
+        )),
+        "{}",
+        reports.text
+    );
+    assert_eq!(
+        fixture.member(&writer.id).task_state,
+        Some(TaskState::Running),
+        "the task is still running"
+    );
+    assert!(
+        fixture.host.stopped().is_empty(),
+        "the worker keeps running"
+    );
+    assert!(fixture.host.notified().contains(&LEAD_SESSION.to_owned()));
+}
+
+#[test]
+fn a_worker_that_reported_before_its_turn_ended_gets_no_missing_report_notice() {
+    let fixture = fixture();
+    let (_writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture
+        .orchestration
+        .report(&session, Outcome::Done, "Guia escrito")
+        .expect("the worker reports");
+    fixture.host.set_status(&session, AgentStatus::Done);
+
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("the end of the turn is noticed");
+
+    let reports = fixture
+        .orchestration
+        .take(LEAD_SESSION)
+        .expect("the report waits");
+    assert_eq!(
+        reports.messages.len(),
+        1,
+        "only the report, no missing-report notice"
+    );
+    assert_eq!(reports.messages[0].kind, MessageKind::Done);
+}
+
+#[test]
+fn a_second_end_of_turn_without_a_report_is_not_said_again() {
+    let fixture = fixture();
+    let (_writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture.host.set_status(&session, AgentStatus::Done);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("noticed");
+    assert!(fixture.orchestration.take(LEAD_SESSION).is_some());
+
+    fixture.host.set_status(&session, AgentStatus::Working);
+    fixture.host.set_status(&session, AgentStatus::Done);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("noticed again");
+
+    assert!(
+        fixture.orchestration.take(LEAD_SESSION).is_none(),
+        "the rule says once: the orchestrator heard it already"
+    );
+}
+
+#[test]
+fn a_worker_that_waits_for_an_answer_is_handed_over_once_per_wait() {
+    let fixture = fixture();
+    let (_writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+
+    fixture.host.set_status(&session, AgentStatus::NeedsYou);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("noticed");
+    let first = fixture
+        .orchestration
+        .take(LEAD_SESSION)
+        .expect("the wait is handed over");
+    assert_eq!(first.messages[0].kind, MessageKind::NeedsYou);
+
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("noticed again");
+    assert!(
+        fixture.orchestration.take(LEAD_SESSION).is_none(),
+        "the same wait is not said twice"
+    );
+
+    fixture.host.set_status(&session, AgentStatus::Working);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("the answer went in and the worker works again");
+    fixture.host.set_status(&session, AgentStatus::NeedsYou);
+    fixture
+        .orchestration
+        .worker_status_changed(&session)
+        .expect("a new wait");
+    let second = fixture
+        .orchestration
+        .take(LEAD_SESSION)
+        .expect("a new wait is handed over");
+    assert_eq!(second.messages[0].kind, MessageKind::NeedsYou);
+}
+
+#[test]
+fn a_bot_worker_that_ends_without_a_report_wakes_its_bot_without_a_check() {
+    let fixture = fixture();
+    fixture
+        .team
+        .add_member(NewTeamMember::Bot {
+            bot_id: "docs".to_owned(),
+            role: "Docs".to_owned(),
+            worktree: WORKTREE.to_owned(),
+        })
+        .expect("the bot joins");
+    let bot_session = "bot:docs:thread-1";
+    let writer = fixture
+        .orchestration
+        .add_member(
+            bot_session,
+            None,
+            "Writer",
+            "Escreva a página",
+            "",
+            Vec::new(),
+        )
+        .expect("the bot adds a member");
+    let started = fixture
+        .orchestration
+        .start_worker(
+            bot_session,
+            &writer.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            LaunchSetup::default(),
+        )
+        .expect("the bot starts a worker");
+    fixture
+        .host
+        .set_status(&started.session_id, AgentStatus::Done);
+
+    fixture
+        .orchestration
+        .worker_status_changed(&started.session_id)
+        .expect("noticed");
+
+    assert!(fixture.host.notified().contains(&bot_session.to_owned()));
+    let reports = fixture
+        .orchestration
+        .take(bot_session)
+        .expect("the bot's turn is handed the missing report");
+    assert_eq!(reports.messages[0].kind, MessageKind::NoReport);
+}
+
+#[test]
+fn a_status_of_a_session_that_runs_no_worker_changes_nothing() {
+    let fixture = fixture();
+    fixture
+        .orchestration
+        .worker_status_changed(LEAD_SESSION)
+        .expect("nothing to notice");
+
+    assert!(fixture.host.notified().is_empty());
+    assert!(fixture.orchestration.take(LEAD_SESSION).is_none());
+}

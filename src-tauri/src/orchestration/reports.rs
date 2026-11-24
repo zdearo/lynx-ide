@@ -54,7 +54,7 @@ fn outcome_of(kind: MessageKind) -> &'static str {
     match kind {
         MessageKind::Done => "concluído",
         MessageKind::Failed => "falhou",
-        MessageKind::NoReport => "terminou sem relatório",
+        MessageKind::NoReport => "o turno terminou sem relatório",
         MessageKind::NeedsYou => "precisa de uma resposta",
         MessageKind::Question | MessageKind::Answer => "mensagem",
     }

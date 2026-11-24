@@ -51,9 +51,11 @@ describe("where a session is drawn", () => {
     );
   });
 
-  it("gives the stage its box whether or not its modal is open", () => {
+  it("keeps the stage's box, and takes no clicks while its terminal is not shown", () => {
     expect(sessionWrapperClass("stage", true)).toBe(STAGE_CLASS);
-    expect(sessionWrapperClass("stage", false)).toBe(STAGE_CLASS);
+    expect(sessionWrapperClass("stage", false)).toBe(
+      `${STAGE_CLASS} pointer-events-none`,
+    );
   });
 
   it("names a stage element by its session", () => {

@@ -8,18 +8,17 @@ import { TeamAddDialog } from "@/team/TeamAddDialog";
 import { TeamMap } from "@/team/TeamMap";
 import { TeamNodeSheet } from "@/team/TeamNodeSheet";
 import { TeamNotes } from "@/team/TeamNotes";
-import { TeamTerminalDialog } from "@/team/TeamTerminalDialog";
 import { useTeamMembers, useTeamStore } from "@/team/team-store";
 import { copy } from "@/ui-copy";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 /**
  * The team of the worktree on the sidebar, as an org chart. The picked member opens in a panel over the map; Escape
- * clears the pick. `area` is the element the terminal dialog covers.
+ * clears the pick. The terminal modal is drawn beside this view, not inside it.
  */
 export const TeamView = memo(TeamViewBase);
 
-function TeamViewBase({ area }: { area: HTMLElement | null }) {
+function TeamViewBase() {
   const members = useTeamMembers();
   const worktree = useWorkspaceStore((state) => state.selectedWorktreePath);
   const loaded = useTeamStore((state) => state.loaded);
@@ -79,7 +78,6 @@ function TeamViewBase({ area }: { area: HTMLElement | null }) {
           ))}
       </div>
       {loaded && <TeamNotes />}
-      <TeamTerminalDialog container={area} />
       <TeamAddDialog />
     </div>
   );

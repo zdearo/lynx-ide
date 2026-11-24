@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { FolderSimpleIcon } from "@phosphor-icons/react";
 
@@ -22,13 +23,19 @@ import { startPreset } from "@/terminal/terminal-actions";
 import { TerminalTabs } from "@/terminal/TerminalTabs";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalView } from "@/terminal/TerminalView";
+import { TeamModal } from "@/team/TeamModal";
 import { TeamTopBar } from "@/team/TeamTopBar";
 import {
-  teamDialogSessionId,
+  modalSessionId,
+  stageSessionIds,
   teamModeOf,
   useTeamStore,
 } from "@/team/team-store";
-import { sessionPlacement, sessionWrapperClass } from "@/team/team-stage";
+import {
+  sessionPlacement,
+  sessionWrapperClass,
+  stageIdOf,
+} from "@/team/team-stage";
 import { copy } from "@/ui-copy";
 import {
   useSelectedWorktree,
@@ -72,16 +79,17 @@ export function TerminalWorkspace({
   const browserOpen = useBrowserStore((state) => state.open);
   const teamMode =
     useTeamStore((state) => teamModeOf(state.modeByWorktree, path)) === "team";
-  // The session the team's terminal dialog draws: this element leaves it out, so only one view attaches to it.
-  const teamSession = useTeamStore((state) =>
-    teamMode ? teamDialogSessionId(state, path) : null,
+  // The team's agents keep their terminals mounted on the stage; the modal shows the one of its open member.
+  const stagedIds = useTeamStore(
+    useShallow((state) => (teamMode ? stageSessionIds(state, path) : [])),
+  );
+  const modalId = useTeamStore((state) =>
+    teamMode ? modalSessionId(state, path) : null,
   );
   // In the Bots view the main area is the chat with the picked bot; the terminals stay mounted, hidden.
   const botsView = useNavigationStore((state) => state.activeView === "bots");
   const bot = useBotsStore(selectedBotOf);
   const channel = useBotsStore(selectedChannelOf);
-  // The team's terminal dialog covers this element, so it stays on screen when the team does.
-  const [mainArea, setMainArea] = useState<HTMLElement | null>(null);
 
   // Looking at a finished agent is what clears its "done" mark.
   const activeFinished = sessions.some(
@@ -106,10 +114,7 @@ export function TerminalWorkspace({
   }, [teamMode, path]);
 
   return (
-    <main
-      ref={setMainArea}
-      className="relative flex min-w-0 flex-1 flex-col bg-background"
-    >
+    <main className="relative flex min-w-0 flex-1 flex-col bg-background">
       {botsView ? (
         <BotTopBar
           bot={bot}
@@ -138,8 +143,11 @@ export function TerminalWorkspace({
       <div className="relative min-h-0 flex-1">
         {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. */}
         {sessions.map((session) => {
-          if (session.id === teamSession) return null;
-          const placement = sessionPlacement(teamMode, false);
+          const placement = sessionPlacement(
+            teamMode,
+            stagedIds.includes(session.id),
+          );
+          const onStage = placement === "stage";
           const shown =
             placement === "tabs" &&
             session.id === activeId &&
@@ -150,9 +158,14 @@ export function TerminalWorkspace({
             // A hidden session must leave the layout too: its box would still take the clicks meant for the visible one.
             <div
               key={session.id}
+              id={onStage ? stageIdOf(session.id) : undefined}
               className={sessionWrapperClass(placement, shown)}
             >
-              <TerminalView terminalId={session.id} active={shown} />
+              <TerminalView
+                terminalId={session.id}
+                active={onStage ? session.id === modalId : shown}
+                placement={onStage ? "stage" : "flow"}
+              />
             </div>
           );
         })}
@@ -168,10 +181,11 @@ export function TerminalWorkspace({
         {!botsView && teamMode && (
           <div className="absolute inset-0 bg-background">
             <Suspense fallback={null}>
-              <TeamView area={mainArea} />
+              <TeamView />
             </Suspense>
           </div>
         )}
+        {!botsView && teamMode && <TeamModal />}
         {!botsView &&
           loaded &&
           selected &&

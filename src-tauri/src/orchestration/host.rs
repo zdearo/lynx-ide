@@ -20,15 +20,14 @@ use crate::config::ConfigStore;
 use crate::config::app_config::{AgentEffort, LaunchMode, OrchestrationConfig};
 use crate::git::git_command::git;
 use crate::team::team_events::TeamChanged;
+use crate::terminal::Shell;
+use crate::terminal::pasted_text::as_paste;
 use crate::terminal::terminal_manager::TerminalManager;
 use crate::workspace::workspace_events::WorktreeCreated;
 use crate::workspace::workspace_service::WorkspaceService;
 
-use super::agent_wake::{AgentWakes, as_paste, free_to_type, type_and_submit};
-use super::service::WorkerHost;
-
-/// What a bot is told when one of its workers changed: it looks at its team and tells the person.
-pub(super) const WAKE_NOTE: &str = "Algo mudou nas suas tarefas: um worker terminou, precisa de uma resposta ou parou. Chame lynx_check com waitSeconds 0 para ver o que aconteceu e relate à pessoa.";
+use super::agent_wake::{AgentWakes, free_to_type, type_and_submit};
+use super::service::{FirstPrompt, WorkerHost, quote_for_shell};
 
 /// How often, and how many times, a worker's screen is looked at for its prompt before giving up (30 s).
 const SUBMIT_POLL: Duration = Duration::from_millis(500);
@@ -65,24 +64,20 @@ impl WorkerHost for AppWorkers {
         };
         let chat = Arc::clone(&*self.app.state::<Arc<BotChat>>());
         let (bot, label) = (bot.to_owned(), label.to_owned());
-        chat.wake(&bot, &label, WAKE_NOTE);
+        chat.wake_reports(&bot, &label);
         BotChat::kick(chat, bot, label);
-    }
-
-    fn checked(&self, coordinator: &str) {
-        if let Some(wakes) = self.app.try_state::<Arc<AgentWakes>>() {
-            wakes.cancel(coordinator);
-        }
     }
 
     fn changed(&self) {
         let _ = TeamChanged {}.emit(&self.app);
     }
 
-    fn submit_when_shown(&self, session: &str, text: &str) {
+    fn submit_when_shown(&self, session: &str, text: &str, echoed: bool) {
         let app = self.app.clone();
         let session = session.to_owned();
         let text = text.to_owned();
+        // The typed start line counts once when it carries the text, so the agent's own draw is the second sight.
+        let times = if echoed { 2 } else { 1 };
         std::thread::spawn(move || {
             for _ in 0..SUBMIT_TRIES {
                 std::thread::sleep(SUBMIT_POLL);
@@ -90,7 +85,7 @@ impl WorkerHost for AppWorkers {
                 let Ok(snapshot) = terminals.snapshot(&session) else {
                     return;
                 };
-                if drawn_twice(&visible_text(&snapshot.data), &text) {
+                if drawn_at_least(&visible_text(&snapshot.data), &text, times) {
                     let _ = terminals.write(&session, "\r");
                     return;
                 }
@@ -124,6 +119,11 @@ impl WorkerHost for AppWorkers {
         agent_prompt_file::write(text)
             .map(|path| path.to_string_lossy().into_owned())
             .map_err(|error| error.to_string())
+    }
+
+    fn first_prompt(&self, path: &str, text: &str) -> FirstPrompt {
+        let shell = Shell::from_config(self.config.config().terminal.shell.as_deref());
+        first_prompt_for(&shell.program, path, text, cfg!(windows))
     }
 
     fn launch_line(
@@ -301,17 +301,56 @@ pub fn visible_text(data: &str) -> String {
     out
 }
 
-/// Whether `text` is on screen twice. The shell echoes the command that starts an agent, and the agent
-/// draws the same text in its input once it is ready. Spaces are ignored, since a screen wraps lines.
-pub fn drawn_twice(screen: &str, text: &str) -> bool {
+/// Characters of a prompt that must be on screen for it to count as drawn. A short start of it survives a screen that
+/// wraps or boxes the input, where the whole text would not match.
+const PROBE_CHARS: usize = 200;
+
+/// Whether the start of `text` is on screen at least `times` times. Spaces are ignored, since a screen wraps lines.
+pub fn drawn_at_least(screen: &str, text: &str, times: usize) -> bool {
     let squeezed = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-    let wanted = squeezed(text);
-    !wanted.is_empty() && squeezed(screen).matches(&wanted).count() >= 2
+    let probe: String = squeezed(text).chars().take(PROBE_CHARS).collect();
+    !probe.is_empty() && squeezed(screen).matches(&probe).count() >= times
+}
+
+/// Shells whose command line reads `$(cat file)`, so the file's text is the agent's first message.
+const POSIX_SHELLS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "fish"];
+/// PowerShell reads `$(Get-Content -Raw file)` the same way.
+const POWERSHELLS: &[&str] = &["pwsh", "powershell"];
+
+/// How an agent gets its first prompt, from the shell that types its start line. The shell reads the prompt file
+/// into the agent's first message when it can. Otherwise, as cmd.exe must, the agent is told to read the file.
+/// `shown` is what the agent draws in its input, and `echoed` says the typed line carries it too.
+pub fn first_prompt_for(program: &str, path: &str, text: &str, windows: bool) -> FirstPrompt {
+    let base = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let name = base
+        .strip_suffix(".exe")
+        .unwrap_or(base)
+        .to_ascii_lowercase();
+    if !windows && POSIX_SHELLS.contains(&name.as_str()) {
+        return FirstPrompt {
+            argument: format!("\"$(cat {})\"", quote_for_shell(path, false)),
+            shown: text.to_owned(),
+            echoed: false,
+        };
+    }
+    if windows && POWERSHELLS.contains(&name.as_str()) {
+        return FirstPrompt {
+            argument: format!("\"$(Get-Content -Raw '{}')\"", path.replace('\'', "''")),
+            shown: text.to_owned(),
+            echoed: false,
+        };
+    }
+    let instruction = format!("Read {path} and follow the instructions in it.");
+    FirstPrompt {
+        argument: quote_for_shell(&instruction, windows),
+        shown: instruction,
+        echoed: true,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{drawn_twice, land_branch, visible_text};
+    use super::{drawn_at_least, first_prompt_for, land_branch, visible_text};
     use crate::git::test_repository::{TestRepository, commit_file_in};
 
     #[test]
@@ -322,19 +361,70 @@ mod tests {
     }
 
     #[test]
-    fn a_prompt_counts_once_the_agent_draws_it_too() {
-        let text = "Read /w/p.md and follow the instructions in it.";
-        let echoed = "$ opencode --prompt 'Read /w/p.md and follow the instructions in it.'\n";
+    fn a_prompt_is_drawn_once_when_the_shell_reads_the_file_and_twice_when_the_line_echoes_it() {
+        let text = "Escreva o guia.\nUse a seção de instalação.";
+        let typed = "$ opencode --prompt \"$(cat '/tmp/p.md')\"\n";
         assert!(
-            !drawn_twice(echoed, text),
-            "the echoed command alone is not enough"
+            !drawn_at_least(typed, text, 1),
+            "the typed line names the file, not the text"
         );
 
-        let drawn = format!("{echoed}Read /w/p.md and follow the\ninstructions in it.");
+        let drawn = format!("{typed}Escreva o guia.\nUse a seção de instalação.");
+        assert!(drawn_at_least(&drawn, text, 1));
+
+        let echoed = "$ opencode --prompt 'Read /w/p.md and follow the instructions in it.'\n";
+        let instruction = "Read /w/p.md and follow the instructions in it.";
         assert!(
-            drawn_twice(&drawn, text),
-            "a line break in the input does not hide it"
+            !drawn_at_least(echoed, instruction, 2),
+            "the echo alone is not enough"
         );
+        let shown = format!("{echoed}Read /w/p.md and follow the\ninstructions in it.");
+        assert!(
+            drawn_at_least(&shown, instruction, 2),
+            "a line break does not hide it"
+        );
+    }
+
+    #[test]
+    fn a_posix_shell_reads_the_prompt_file_into_the_first_message() {
+        let first = first_prompt_for("/bin/zsh", "/tmp/lynx-prompts/p.md", "Tarefa", false);
+
+        assert_eq!(first.argument, "\"$(cat /tmp/lynx-prompts/p.md)\"");
+        assert_eq!(first.shown, "Tarefa");
+        assert!(!first.echoed);
+    }
+
+    #[test]
+    fn powershell_reads_it_with_get_content_and_cmd_is_told_to_read_the_file() {
+        let path = "C:\\Users\\Ana's\\lynx-prompts\\p.md";
+        let pwsh = first_prompt_for(
+            "C:\\Program Files\\PowerShell\\pwsh.exe",
+            path,
+            "Tarefa",
+            true,
+        );
+        assert_eq!(
+            pwsh.argument,
+            "\"$(Get-Content -Raw 'C:\\Users\\Ana''s\\lynx-prompts\\p.md')\""
+        );
+
+        let cmd = first_prompt_for("cmd.exe", path, "Tarefa", true);
+        assert_eq!(
+            cmd.shown,
+            format!("Read {path} and follow the instructions in it.")
+        );
+        assert!(cmd.echoed, "the typed line carries the instruction");
+    }
+
+    #[test]
+    fn a_shell_nobody_listed_is_told_to_read_the_file() {
+        let first = first_prompt_for("/usr/bin/tcsh", "/tmp/p.md", "Tarefa", false);
+
+        assert_eq!(
+            first.argument,
+            "'Read /tmp/p.md and follow the instructions in it.'"
+        );
+        assert!(first.echoed);
     }
 
     #[test]

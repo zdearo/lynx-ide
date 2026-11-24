@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::bot_access::{AccessRequest, AccessState, Grant};
+use super::bot_bridge::session_of;
 use super::bot_conversation::{self, Author, ChatMessage, MAX_MESSAGE};
 use super::bot_folder::{self, BotError, BotFolder};
 use super::bot_memory;
@@ -23,6 +24,7 @@ use super::bot_topics;
 use super::claude_cli::{ClaudeAnswer, ClaudeCli};
 use super::command_permissions;
 use super::turn_note;
+use crate::orchestration::reports::{ReportSource, Reports};
 
 /// What asking for access did: the person is asked now, or was asked and has not answered yet.
 pub enum RequestOutcome {
@@ -48,7 +50,9 @@ pub struct BotChat {
     busy: Mutex<HashSet<String>>,
     /// What each thread of a bot must hear about its runs, in order, until it has time to look. The key
     /// is `<bot>:<label>`, the label being the thread, or the channel a run came from.
-    wakes: Mutex<HashMap<String, VecDeque<String>>>,
+    wakes: Mutex<HashMap<String, VecDeque<Wake>>>,
+    /// Where the reports of a bot's runs are read from, when its turn comes. Attached once the orchestration exists.
+    reports: OnceLock<Arc<dyn ReportSource>>,
     /// Shows a reply a bot wrote on its own, such as one answering a run's news.
     announce: OnceLock<Announce>,
     /// What each thread has said since its memory was last filed, keyed `<bot>:<thread>`.
@@ -89,6 +93,7 @@ impl BotChat {
             file: Mutex::new(()),
             busy: Mutex::new(HashSet::new()),
             wakes: Mutex::new(HashMap::new()),
+            reports: OnceLock::new(),
             announce: OnceLock::new(),
             captures: Mutex::new(HashMap::new()),
             capturing: Mutex::new(()),
@@ -187,12 +192,27 @@ impl BotChat {
     /// Queues a note for a bot, for the thread (or channel) the run came from: what changed in its
     /// runs. It is read there on the bot's next turn.
     pub fn wake(&self, bot: &str, label: &str, note: &str) {
+        self.queue(bot, label, Wake::Note(note.to_owned()));
+    }
+
+    /// Queues the reports of a bot's runs for the thread they came from. The reports themselves are taken when the
+    /// turn comes, so several reports make one turn, and none waiting makes none.
+    pub fn wake_reports(&self, bot: &str, label: &str) {
+        self.queue(bot, label, Wake::Reports);
+    }
+
+    /// Connects the reports of the orchestration, which the bot's turns take from.
+    pub fn attach_reports(&self, reports: Arc<dyn ReportSource>) {
+        let _ = self.reports.set(reports);
+    }
+
+    fn queue(&self, bot: &str, label: &str, wake: Wake) {
         self.wakes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .entry(wake_key(bot, label))
             .or_default()
-            .push_back(note.to_owned());
+            .push_back(wake);
     }
 
     /// Lets a bot read its queued notes for a thread now, on a thread of its own, unless that thread is
@@ -201,32 +221,62 @@ impl BotChat {
         std::thread::spawn(move || chat.run_wakes(&bot, &label));
     }
 
-    /// Runs the queued notes for a thread, one turn each, and shows each reply it writes. A note from a
-    /// channel's run is answered in the bot's most recent thread.
+    /// Runs the queued wakes for a thread, one turn each, and shows each reply it writes. A wake of reports takes the
+    /// reports waiting for the thread's runs when its turn comes: none waiting is no turn, and several are one turn.
     fn run_wakes(&self, bot: &str, label: &str) {
         loop {
-            let Some(note) = self.next_wake(bot, label) else {
+            let Some(wake) = self.next_wake(bot, label) else {
                 return;
             };
-            let Ok(thread) = self.thread_for(bot, label) else {
-                return;
+            let (note, reports) = match &wake {
+                Wake::Note(note) => (note.clone(), None),
+                Wake::Reports => match self.take_reports(bot, label) {
+                    Some(reports) => (reports.text.clone(), Some(reports)),
+                    None => continue,
+                },
+            };
+            let thread = match self.thread_for(bot, label) {
+                Ok(thread) => thread,
+                Err(_) => {
+                    self.give_back(reports.as_ref());
+                    return;
+                }
             };
             match self.resume(bot, &thread, &note, &mut |_| {}) {
                 Ok(message) => {
+                    if let (Some(source), Some(reports)) = (self.reports.get(), &reports) {
+                        source.sent(reports);
+                    }
                     if let Some(announce) = self.announce.get() {
                         announce(&bot_thread::key_of(bot, &thread), &message);
                     }
                 }
                 Err(BotError::Busy) => {
-                    self.requeue(bot, label, note);
+                    self.give_back(reports.as_ref());
+                    self.requeue(bot, label, wake);
                     return;
                 }
-                Err(_) => return,
+                Err(_) => {
+                    self.give_back(reports.as_ref());
+                    return;
+                }
             }
         }
     }
 
-    fn next_wake(&self, bot: &str, label: &str) -> Option<String> {
+    /// The reports waiting for the thread's runs, taken for this turn. None without any.
+    fn take_reports(&self, bot: &str, label: &str) -> Option<Reports> {
+        self.reports.get()?.take(&session_of(bot, label))
+    }
+
+    /// Reports whose turn did not happen are unread again, so the next wake or a check gets them.
+    fn give_back(&self, reports: Option<&Reports>) {
+        if let (Some(source), Some(reports)) = (self.reports.get(), reports) {
+            source.undelivered(reports);
+        }
+    }
+
+    fn next_wake(&self, bot: &str, label: &str) -> Option<Wake> {
         self.wakes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -234,13 +284,13 @@ impl BotChat {
             .pop_front()
     }
 
-    fn requeue(&self, bot: &str, label: &str, note: String) {
+    fn requeue(&self, bot: &str, label: &str, wake: Wake) {
         self.wakes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .entry(wake_key(bot, label))
             .or_default()
-            .push_front(note);
+            .push_front(wake);
     }
 
     /// The bot's threads, the most recently active first. A bot with none gets its first.
@@ -571,6 +621,14 @@ fn turn_key(bot: &str, thread: &str) -> String {
 }
 
 /// What keys the notes waiting for a thread.
+/// What a bot is owed for a thread: a note about something that happened, or the reports of its runs, which are
+/// taken when the turn comes.
+#[derive(Debug, Clone)]
+enum Wake {
+    Note(String),
+    Reports,
+}
+
 fn wake_key(bot: &str, label: &str) -> String {
     format!("{bot}:{label}")
 }
@@ -588,6 +646,44 @@ mod tests {
         let bots = dir.path().join("bots");
         let claude = Arc::new(ClaudeCli::new(bots.clone(), dir.path().to_path_buf()));
         BotChat::new(bots, claude)
+    }
+
+    /// A source asked for the reports of each session, with none waiting.
+    #[derive(Default)]
+    struct NoReports {
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl ReportSource for NoReports {
+        fn take(&self, session: &str) -> Option<Reports> {
+            self.asked.lock().unwrap().push(session.to_owned());
+            None
+        }
+
+        fn sent(&self, _reports: &Reports) {}
+
+        fn undelivered(&self, _reports: &Reports) {}
+    }
+
+    #[test]
+    fn a_bot_woken_for_reports_that_are_not_there_takes_no_turn() {
+        let dir = TempDir::new().expect("temp dir");
+        let chat = chat(&dir);
+        let source = Arc::new(NoReports::default());
+        chat.attach_reports(source.clone());
+
+        chat.wake_reports("ada", "t1");
+        chat.run_wakes("ada", "t1");
+
+        assert_eq!(
+            *source.asked.lock().unwrap(),
+            vec!["bot:ada:t1".to_owned()],
+            "the reports of the thread's runs are asked for once, under its session"
+        );
+        assert!(
+            chat.wakes.lock().unwrap().values().all(VecDeque::is_empty),
+            "the trigger is used up, with no turn behind it"
+        );
     }
 
     #[test]

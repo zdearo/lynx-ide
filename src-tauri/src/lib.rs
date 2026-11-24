@@ -284,6 +284,8 @@ pub fn run() {
                 )),
             ));
             app.manage(Arc::clone(&orchestration));
+            // The reports a coordinator is handed come from the orchestration: its workers' reports wait in the team.
+            let reports: Arc<dyn orchestration::reports::ReportSource> = orchestration.clone();
             // A bot deleted before its team lines went with it may have left members behind. Only a folder that is
             // really gone counts: an unreadable bot.json must not clear a bot's team. Best effort: a failure is
             // logged and the app still starts.
@@ -299,6 +301,7 @@ pub fn run() {
             let announce = bots::bots_commands::announce_message(app.handle().clone());
             let bot_chat = Arc::clone(&*app.state::<Arc<bots::bot_chat::BotChat>>());
             bot_chat.attach_announce(Arc::clone(&announce));
+            bot_chat.attach_reports(Arc::clone(&reports));
             let bot_chat_for_commands = Arc::clone(&bot_chat);
             let bot_processes = Arc::new(bots::bot_processes::BotProcesses::new(
                 Arc::new(bots::app_command_host::AppCommandHost::new(
@@ -362,6 +365,7 @@ pub fn run() {
             terminals.restore();
             app.manage(Arc::new(orchestration::agent_wake::AgentWakes::new(
                 terminals.clone(),
+                reports,
             )));
             app.manage(terminals);
             Ok(())

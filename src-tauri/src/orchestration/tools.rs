@@ -113,13 +113,13 @@ pub fn definitions() -> Vec<Value> {
         ),
         definition(
             "lynx_member_ask",
-            "A worker asks a member of its own team a question and waits for the answer, up to waitSeconds (540 by default). Name the member by its id or its role. A member that already waits for you cannot answer you, so the call is refused at once, and a member outside your team is refused too. The question and the answer reach your orchestrator at its next check.",
+            "A worker asks a member of its own team a question. Without waitSeconds it answers at once: the question is typed into the member's terminal, and the member's report reaches your orchestrator. With waitSeconds (up to 540) it waits for the answer and returns it. Name the member by its id or its role. A member that already waits for you cannot answer you, so the call is refused at once, and a member outside your team is refused too. The question reaches your orchestrator at its next check.",
             json!({
                 "type": "object",
                 "properties": {
                     "memberId": { "type": "string", "description": "The teammate's id or its role." },
                     "text": { "type": "string", "description": "The question. Line breaks are kept." },
-                    "waitSeconds": { "type": "integer", "minimum": 0, "maximum": ASK_MAX_WAIT_SECONDS, "description": "How long to wait for the answer." }
+                    "waitSeconds": { "type": "integer", "minimum": 0, "maximum": ASK_MAX_WAIT_SECONDS, "description": "How long to wait for the answer. Leave it out to send without waiting." }
                 },
                 "required": ["memberId", "text"]
             }),
@@ -487,7 +487,7 @@ fn ask(orchestration: &Orchestration, caller: &str, arguments: &Value) -> Result
     Ok(json!({ "answers": answers }))
 }
 
-/// A worker asks a teammate a question and waits for the answer.
+/// A worker asks a teammate a question. Asked to wait, it waits for the answer; asked for nothing, it answers at once.
 fn member_ask(
     orchestration: &Orchestration,
     caller: &str,
@@ -496,9 +496,19 @@ fn member_ask(
     let member = text(arguments, "memberId")?;
     let question = text(arguments, "text")?;
     let answer = orchestration
-        .member_ask(caller, &member, &question, ask_wait(arguments, caller)?)
+        .member_ask(caller, &member, &question, member_wait(arguments, caller)?)
         .map_err(message)?;
     Ok(answer_json(&member, &answer))
+}
+
+/// How long a teammate question waits: none unless the call asks for it, since the answer then reaches the
+/// orchestrator as the teammate's report.
+fn member_wait(arguments: &Value, caller: &str) -> Result<Duration, String> {
+    if arguments.get("waitSeconds").is_none_or(Value::is_null) {
+        Ok(Duration::ZERO)
+    } else {
+        ask_wait(arguments, caller)
+    }
 }
 
 /// How long a question waits for its answer: the wait the call asks for, at most the longest a question may wait.
@@ -804,6 +814,28 @@ fn model(arguments: &Value) -> Result<Option<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_teammate_question_waits_only_when_the_call_asks_for_it() {
+        let bot = "bot:ada:t1";
+        assert_eq!(member_wait(&json!({}), "s"), Ok(Duration::ZERO));
+        assert_eq!(
+            member_wait(&json!({"waitSeconds": null}), "s"),
+            Ok(Duration::ZERO)
+        );
+        assert_eq!(
+            member_wait(&json!({"waitSeconds": 30}), "s"),
+            Ok(Duration::from_secs(30))
+        );
+        assert_eq!(
+            member_wait(&json!({"waitSeconds": 9000}), "s"),
+            Ok(Duration::from_secs(540))
+        );
+        assert_eq!(
+            member_wait(&json!({"waitSeconds": 9000}), bot),
+            Ok(Duration::from_secs(20))
+        );
+    }
 
     #[test]
     fn every_tool_has_a_prefix_and_a_schema() {

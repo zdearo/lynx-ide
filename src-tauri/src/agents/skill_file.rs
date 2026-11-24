@@ -40,7 +40,7 @@ In both cases read the worker with `lynx_worker_read` before you ask again.
 
 ## Asking a member
 
-`lynx_member_ask` (`memberId`: a teammate's id or role; `text`; `waitSeconds`, 540 by default) asks a teammate of your own team and waits the same way. The teammate gets the question in its terminal and answers it with `lynx_report`; the answer comes back to you. The call is refused at once, without waiting, when the teammate is outside your team, is you, has no worker, or already waits for you, directly or through others: neither could answer the other. The question and the answer reach your orchestrator at its next `lynx_check`.
+`lynx_member_ask` (`memberId`: a teammate's id or role; `text`; `waitSeconds`, optional) asks a teammate of your own team. Without `waitSeconds` the question is typed into the teammate's terminal and the call answers at once: the teammate answers it with `lynx_report`, and that report reaches your orchestrator as a message. With `waitSeconds` (up to 540) the call waits for the answer and returns it to you. The call is refused at once, without waiting, when the teammate is outside your team, is you, has no worker, or already waits for you, directly or through others: neither could answer the other. The question reaches your orchestrator at its next `lynx_check`.
 
 ## Ending your turn
 

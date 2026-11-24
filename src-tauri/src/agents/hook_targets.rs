@@ -9,6 +9,7 @@ use super::cli_permissions;
 use super::codex_hooks::CodexHookTarget;
 use super::harness::{HarnessId, executable_name, supported};
 use super::hook_install::{HookInstallError, HookInstallState, HookInstallStatus, probe_version};
+use super::hook_ownership::OwnershipBook;
 use super::mcp_cleanup::McpCleanup;
 use super::omp_hooks;
 use super::opencode_hooks;
@@ -67,7 +68,8 @@ impl SkillFolders {
 
 impl HookTargets {
     /// Where each agent keeps its settings: the folder its own variable names, else its default.
-    pub fn from_environment(user_home: &Path, executable: Option<&Path>) -> Self {
+    pub fn from_environment(user_home: &Path, lynx_home: &Path, executable: Option<&Path>) -> Self {
+        let book = OwnershipBook::at(lynx_home.join("hook-ownership.json"));
         let folder = |name: &str| env::var_os(name).map(PathBuf::from);
         let folder_or =
             |name: &str, default: &str| folder(name).unwrap_or_else(|| user_home.join(default));
@@ -97,10 +99,12 @@ impl HookTargets {
             opencode_config: opencode.join("opencode.json"),
             claude: HookTarget::Claude(ClaudeHookTarget::new(
                 claude_hooks::settings_path(folder("CLAUDE_CONFIG_DIR"), user_home),
+                book.clone(),
                 executable,
             )),
             codex: HookTarget::Codex(CodexHookTarget::new(
                 folder_or("CODEX_HOME", ".codex"),
+                book,
                 executable,
             )),
             opencode: HookTarget::Plugin(opencode_hooks::target(opencode, executable)),

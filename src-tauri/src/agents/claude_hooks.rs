@@ -9,10 +9,8 @@ use super::activity::HookEvent;
 use super::hook_install::{
     HookInstallError, HookInstallState, HookInstallStatus, Version, relay_command,
 };
+use super::hook_ownership::{Owned, OwnershipBook};
 use super::json_hook_file::{self, EventSpec, JsonHookFormat};
-
-/// Appended to the app's executable path; a hook command carrying it is Lynx's.
-const MARKER: &str = " --agent-hook claude";
 
 /// Used when the installed version cannot be read. Claude 1.0.23 through 2.1.100 discard their
 /// whole settings file over one event name they do not know, so an unknown version gets only the
@@ -126,15 +124,18 @@ pub fn event_from_payload(payload: &Value) -> Option<HookEvent> {
 #[derive(Clone)]
 pub struct ClaudeHookTarget {
     settings_path: PathBuf,
+    /// What Lynx wrote into the settings file: only those entries are Lynx's to change.
+    book: OwnershipBook,
     command: Option<String>,
     /// The permission that lets Claude run the app's CLI without asking.
     cli_rule: Option<String>,
 }
 
 impl ClaudeHookTarget {
-    pub fn new(settings_path: PathBuf, executable: Option<&Path>) -> Self {
+    pub fn new(settings_path: PathBuf, book: OwnershipBook, executable: Option<&Path>) -> Self {
         Self {
             settings_path,
+            book,
             command: executable.map(hook_command),
             cli_rule: executable
                 .map(|executable| format!("Bash({} --cli *)", executable.display())),
@@ -156,23 +157,47 @@ impl ClaudeHookTarget {
             .command
             .as_deref()
             .ok_or(HookInstallError::NoExecutable)?;
+        let owned = self.owned();
         let mut settings = read_settings(&self.settings_path)?;
-        apply(&mut settings, command, &events_for(version));
-        set_cli_rule(&mut settings, self.cli_rule.as_deref());
+        apply(
+            &mut settings,
+            command,
+            &owned.commands,
+            &events_for(version),
+        );
+        set_cli_rule(&mut settings, self.cli_rule.as_deref(), &owned.rules);
         write_settings(&self.settings_path, &settings)?;
+        self.book.record(
+            &self.settings_path,
+            Owned {
+                commands: vec![command.to_owned()],
+                rules: self.cli_rule.iter().cloned().collect(),
+            },
+        )?;
         Ok(self.status(version))
     }
 
     /// Removes Lynx's entries and leaves the rest of the file as it was.
     pub fn remove(&self, version: Option<Version>) -> Result<HookInstallStatus, HookInstallError> {
+        let owned = self.owned();
         let mut settings = read_settings(&self.settings_path)?;
         let before = settings.clone();
-        strip(&mut settings);
-        set_cli_rule(&mut settings, None);
+        strip(&mut settings, &owned.commands);
+        set_cli_rule(&mut settings, None, &owned.rules);
         if settings != before {
             write_settings(&self.settings_path, &settings)?;
         }
+        self.book.record(&self.settings_path, Owned::default())?;
         Ok(self.status(version))
+    }
+
+    /// What Lynx owns in this settings file: what its book names, and this app's own command and rule.
+    fn owned(&self) -> Owned {
+        self.book.owned(
+            &self.settings_path,
+            self.command.as_deref(),
+            self.cli_rule.as_deref(),
+        )
     }
 
     fn describe(&self, settings: &Value, version: Option<Version>) -> HookInstallStatus {
@@ -229,20 +254,17 @@ fn write_settings(path: &Path, settings: &Value) -> Result<(), HookInstallError>
     json_hook_file::write_settings(path, settings)
 }
 
-fn apply(settings: &mut Value, command: &str, events: &[EventSpec]) {
-    json_hook_file::apply(settings, &FORMAT, MARKER, command, events);
+fn apply(settings: &mut Value, command: &str, owned: &[String], events: &[EventSpec]) {
+    json_hook_file::apply(settings, &FORMAT, owned, command, events);
 }
 
-fn strip(settings: &mut Value) -> bool {
-    json_hook_file::strip(settings, &FORMAT, MARKER)
+fn strip(settings: &mut Value, owned: &[String]) -> bool {
+    json_hook_file::strip(settings, &FORMAT, owned)
 }
 
-/// The end of the permission Lynx adds for its CLI, which tells it apart from the user's own rules.
-const CLI_RULE_END: &str = " --cli *)";
-
-/// Sets Lynx's CLI permission: the one rule that ends with `CLI_RULE_END` is replaced by `rule`, or removed
-/// when `rule` is None. Other permissions stay. Keys it created and left empty are removed again.
-fn set_cli_rule(settings: &mut Value, rule: Option<&str>) {
+/// Sets Lynx's CLI permission: the rules in `owned` are replaced by `rule`, or removed when `rule` is None. Other
+/// permissions stay. Keys it created and left empty are removed again.
+fn set_cli_rule(settings: &mut Value, rule: Option<&str>, owned: &[String]) {
     let Some(root) = settings.as_object_mut() else {
         return;
     };
@@ -257,7 +279,7 @@ fn set_cli_rule(settings: &mut Value, rule: Option<&str>) {
     list.retain(|entry| {
         !entry
             .as_str()
-            .is_some_and(|text| text.ends_with(CLI_RULE_END))
+            .is_some_and(|text| owned.iter().any(|own| own == text))
     });
     if let Some(rule) = rule {
         list.push(json!(rule));
@@ -294,6 +316,10 @@ mod tests {
         json!({ "hooks": [{ "type": "command", "command": command }] })
     }
 
+    fn book_in(dir: &Path) -> OwnershipBook {
+        OwnershipBook::at(dir.join("hook-ownership.json"))
+    }
+
     fn names(events: &[EventSpec]) -> Vec<&'static str> {
         events.iter().map(|event| event.name).collect()
     }
@@ -302,7 +328,7 @@ mod tests {
     fn install_adds_one_entry_per_event_for_the_version() {
         let mut settings = json!({});
         let events = events_for(Some(RECENT));
-        apply(&mut settings, COMMAND, &events);
+        apply(&mut settings, COMMAND, &[], &events);
         for event in &events {
             assert_eq!(
                 hook_commands(&settings, event.name),
@@ -316,7 +342,7 @@ mod tests {
     #[test]
     fn tool_events_get_the_wildcard_matcher_and_the_others_do_not() {
         let mut settings = json!({});
-        apply(&mut settings, COMMAND, &events_for(Some(RECENT)));
+        apply(&mut settings, COMMAND, &[], &events_for(Some(RECENT)));
         assert_eq!(settings["hooks"]["PreToolUse"][0]["matcher"], "*");
         assert!(settings["hooks"]["Stop"][0].get("matcher").is_none());
     }
@@ -327,7 +353,7 @@ mod tests {
             "model": "opus",
             "hooks": { "Stop": [user_hook("notify-send done")] }
         });
-        apply(&mut settings, COMMAND, &events_for(Some(RECENT)));
+        apply(&mut settings, COMMAND, &[], &events_for(Some(RECENT)));
         assert_eq!(settings["model"], "opus");
         assert_eq!(
             hook_commands(&settings, "Stop"),
@@ -341,9 +367,15 @@ mod tests {
         apply(
             &mut settings,
             "'/old/lynx-ide' --agent-hook claude",
+            &[],
             &events_for(Some(RECENT)),
         );
-        apply(&mut settings, COMMAND, &events_for(Some(RECENT)));
+        apply(
+            &mut settings,
+            COMMAND,
+            &["'/old/lynx-ide' --agent-hook claude".to_owned()],
+            &events_for(Some(RECENT)),
+        );
         assert_eq!(hook_commands(&settings, "Stop"), vec![COMMAND]);
     }
 
@@ -352,8 +384,8 @@ mod tests {
         let mut settings = json!({
             "hooks": { "Stop": [user_hook("notify-send done")] }
         });
-        apply(&mut settings, COMMAND, &events_for(Some(RECENT)));
-        assert!(strip(&mut settings));
+        apply(&mut settings, COMMAND, &[], &events_for(Some(RECENT)));
+        assert!(strip(&mut settings, &[COMMAND.to_owned()]));
         assert_eq!(
             settings,
             json!({ "hooks": { "Stop": [user_hook("notify-send done")] } })
@@ -363,8 +395,8 @@ mod tests {
     #[test]
     fn remove_drops_the_hooks_object_when_lynx_was_its_only_content() {
         let mut settings = json!({ "model": "opus" });
-        apply(&mut settings, COMMAND, &events_for(Some(RECENT)));
-        assert!(strip(&mut settings));
+        apply(&mut settings, COMMAND, &[], &events_for(Some(RECENT)));
+        assert!(strip(&mut settings, &[COMMAND.to_owned()]));
         assert_eq!(settings, json!({ "model": "opus" }));
     }
 
@@ -372,7 +404,7 @@ mod tests {
     fn remove_on_a_file_without_lynx_reports_no_change() {
         let mut settings = json!({ "hooks": { "Stop": [user_hook("notify-send done")] } });
         let before = settings.clone();
-        assert!(!strip(&mut settings));
+        assert!(!strip(&mut settings, &[COMMAND.to_owned()]));
         assert_eq!(settings, before);
     }
 
@@ -390,6 +422,7 @@ mod tests {
         let path = dir.path().join("settings.json");
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
+            book: book_in(dir.path()),
             command: Some(COMMAND.to_owned()),
             cli_rule: None,
         };
@@ -422,6 +455,7 @@ mod tests {
         let path = dir.path().join("nested").join("settings.json");
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
+            book: book_in(dir.path()),
             command: Some(COMMAND.to_owned()),
             cli_rule: None,
         };
@@ -449,6 +483,7 @@ mod tests {
         fs::write(&path, "{ not json").expect("write");
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
+            book: book_in(dir.path()),
             command: Some(COMMAND.to_owned()),
             cli_rule: None,
         };
@@ -463,6 +498,7 @@ mod tests {
         let path = dir.path().join("settings.json");
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
+            book: book_in(dir.path()),
             command: None,
             cli_rule: None,
         };
@@ -482,6 +518,7 @@ mod tests {
         fs::write(&path, r#"{"model":"opus"}"#).expect("write");
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
+            book: book_in(dir.path()),
             command: Some(COMMAND.to_owned()),
             cli_rule: None,
         };
@@ -505,6 +542,7 @@ mod tests {
         let path = dir.path().join("settings.json");
         let target = ClaudeHookTarget {
             settings_path: path.clone(),
+            book: book_in(dir.path()),
             command: Some(COMMAND.to_owned()),
             cli_rule: None,
         };
@@ -552,6 +590,7 @@ mod tests {
         let path = dir.path().join("settings.json");
         let target = ClaudeHookTarget {
             settings_path: path,
+            book: book_in(dir.path()),
             command: Some(COMMAND.to_owned()),
             cli_rule: None,
         };
@@ -561,6 +600,151 @@ mod tests {
 
         assert_eq!(status.state, HookInstallState::Installed);
         assert!(status.detail.unwrap_or_default().contains("Could not read"));
+    }
+
+    const MAESTRI: &str = "'/opt/Maestri.AppImage' --agent-hook claude";
+    const MAESTRI_RULE: &str = "Bash(/opt/Maestri.AppImage --cli *)";
+    const LYNX_RULE: &str = "Bash(/opt/lynx/lynx-ide --cli *)";
+    const OLD: &str = "'/old/lynx-ide' --agent-hook claude";
+
+    fn settings_of(path: &Path) -> Value {
+        serde_json::from_str(&fs::read_to_string(path).expect("read")).expect("json")
+    }
+
+    fn allowed(settings: &Value) -> Vec<&str> {
+        settings["permissions"]["allow"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect()
+    }
+
+    fn target_at(dir: &Path, path: &Path, cli_rule: Option<&str>) -> ClaudeHookTarget {
+        ClaudeHookTarget {
+            settings_path: path.to_path_buf(),
+            book: book_in(dir),
+            command: Some(COMMAND.to_owned()),
+            cli_rule: cli_rule.map(str::to_owned),
+        }
+    }
+
+    /// Another app's hook and CLI permission in the same file are kept by install, remove and install again.
+    #[test]
+    fn another_apps_entries_in_the_same_file_survive_install_remove_and_install_again() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            json!({ "permissions": { "allow": [MAESTRI_RULE] }, "hooks": { "Stop": [user_hook(MAESTRI)] } })
+                .to_string(),
+        )
+        .expect("write");
+        let target = target_at(dir.path(), &path, Some(LYNX_RULE));
+
+        target.install(Some(RECENT)).expect("install");
+        let settings = settings_of(&path);
+        assert_eq!(hook_commands(&settings, "Stop"), vec![MAESTRI, COMMAND]);
+        assert_eq!(allowed(&settings), vec![MAESTRI_RULE, LYNX_RULE]);
+
+        target.remove(Some(RECENT)).expect("remove");
+        let settings = settings_of(&path);
+        assert_eq!(hook_commands(&settings, "Stop"), vec![MAESTRI]);
+        assert_eq!(allowed(&settings), vec![MAESTRI_RULE]);
+
+        target.install(Some(RECENT)).expect("install again");
+        let settings = settings_of(&path);
+        assert_eq!(hook_commands(&settings, "Stop"), vec![MAESTRI, COMMAND]);
+        assert_eq!(allowed(&settings), vec![MAESTRI_RULE, LYNX_RULE]);
+    }
+
+    /// An entry from before the book, with this app's exact command, is taken over; another app's is not.
+    #[test]
+    fn an_entry_of_this_app_from_before_the_book_is_taken_over() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            json!({ "hooks": { "Stop": [user_hook(MAESTRI), user_hook(COMMAND)] } }).to_string(),
+        )
+        .expect("write");
+
+        target_at(dir.path(), &path, None)
+            .install(Some(RECENT))
+            .expect("install");
+
+        assert_eq!(
+            hook_commands(&settings_of(&path), "Stop"),
+            vec![MAESTRI, COMMAND]
+        );
+    }
+
+    /// The book names the commands Lynx wrote for an older executable: those are replaced, another app's are kept.
+    #[test]
+    fn a_command_the_book_names_is_replaced_and_another_apps_is_kept() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            json!({ "hooks": { "Stop": [user_hook(MAESTRI), user_hook(OLD)] } }).to_string(),
+        )
+        .expect("write");
+        let target = target_at(dir.path(), &path, None);
+        target
+            .book
+            .record(
+                &path,
+                Owned {
+                    commands: vec![OLD.to_owned()],
+                    rules: Vec::new(),
+                },
+            )
+            .expect("record");
+
+        target.install(Some(RECENT)).expect("install");
+
+        assert_eq!(
+            hook_commands(&settings_of(&path), "Stop"),
+            vec![MAESTRI, COMMAND]
+        );
+    }
+
+    /// A damaged book names nothing, so a command it cannot vouch for stays where it is.
+    #[test]
+    fn a_damaged_book_leaves_the_commands_it_does_not_know() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            json!({ "hooks": { "Stop": [user_hook(MAESTRI), user_hook(OLD)] } }).to_string(),
+        )
+        .expect("write");
+        fs::write(dir.path().join("hook-ownership.json"), "{ not json").expect("write book");
+
+        target_at(dir.path(), &path, None)
+            .install(Some(RECENT))
+            .expect("install");
+
+        assert_eq!(
+            hook_commands(&settings_of(&path), "Stop"),
+            vec![MAESTRI, OLD, COMMAND]
+        );
+    }
+
+    /// Only this app's own command counts as installed: another app's hooks in the file do not.
+    #[test]
+    fn another_apps_hooks_alone_are_not_installed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            json!({ "hooks": { "Stop": [user_hook(MAESTRI)] } }).to_string(),
+        )
+        .expect("write");
+
+        let status = target_at(dir.path(), &path, None).status(Some(RECENT));
+
+        assert_eq!(status.state, HookInstallState::NotInstalled);
     }
 
     #[cfg(not(windows))]
@@ -634,8 +818,12 @@ mod cli_permission_tests {
     fn the_cli_rule_is_added_beside_the_users_rules_and_replaced_not_duplicated() {
         let mut settings = json!({ "permissions": { "allow": ["Bash(npm test)"] } });
 
-        set_cli_rule(&mut settings, Some("Bash(/opt/lynx/lynx-ide --cli *)"));
-        set_cli_rule(&mut settings, Some("Bash(/opt/new/lynx-ide --cli *)"));
+        set_cli_rule(&mut settings, Some("Bash(/opt/lynx/lynx-ide --cli *)"), &[]);
+        set_cli_rule(
+            &mut settings,
+            Some("Bash(/opt/new/lynx-ide --cli *)"),
+            &["Bash(/opt/lynx/lynx-ide --cli *)".to_owned()],
+        );
 
         assert_eq!(
             settings["permissions"]["allow"],
@@ -646,16 +834,24 @@ mod cli_permission_tests {
     #[test]
     fn removing_the_rule_leaves_the_users_rules_and_no_empty_keys() {
         let mut settings = json!({ "permissions": { "allow": ["Bash(npm test)"] } });
-        set_cli_rule(&mut settings, Some("Bash(/opt/lynx/lynx-ide --cli *)"));
-        set_cli_rule(&mut settings, None);
+        set_cli_rule(&mut settings, Some("Bash(/opt/lynx/lynx-ide --cli *)"), &[]);
+        set_cli_rule(
+            &mut settings,
+            None,
+            &["Bash(/opt/lynx/lynx-ide --cli *)".to_owned()],
+        );
         assert_eq!(
             settings,
             json!({ "permissions": { "allow": ["Bash(npm test)"] } })
         );
 
         let mut bare = json!({ "model": "x" });
-        set_cli_rule(&mut bare, Some("Bash(/opt/lynx/lynx-ide --cli *)"));
-        set_cli_rule(&mut bare, None);
+        set_cli_rule(&mut bare, Some("Bash(/opt/lynx/lynx-ide --cli *)"), &[]);
+        set_cli_rule(
+            &mut bare,
+            None,
+            &["Bash(/opt/lynx/lynx-ide --cli *)".to_owned()],
+        );
         assert_eq!(
             bare,
             json!({ "model": "x" }),

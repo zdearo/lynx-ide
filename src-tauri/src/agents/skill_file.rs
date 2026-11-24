@@ -42,9 +42,13 @@ In both cases read the worker with `lynx_worker_read` before you ask again.
 
 `lynx_member_ask` (`memberId`: a teammate's id or role; `text`; `waitSeconds`, 540 by default) asks a teammate of your own team and waits the same way. The teammate gets the question in its terminal and answers it with `lynx_report`; the answer comes back to you. The call is refused at once, without waiting, when the teammate is outside your team, is you, has no worker, or already waits for you, directly or through others: neither could answer the other. The question and the answer reach your orchestrator at its next `lynx_check`.
 
+## Ending your turn
+
+Once you have started the workers, tell the person what you delegated and end your turn. Each worker's report reaches you as a message, and you go on with it then. `lynx_check` answers at once and waits only when `waitSeconds` asks for it (up to 90): call it for the details of a report, never in a loop, and never to wait for a worker, since a turn that waits holds the person up.
+
 ## Timeouts
 
-A call with `waitSeconds` can take up to 540 seconds, and the transport waits 30 seconds longer than the call asks. Give the shell call a timeout of at least 570000 ms, or the shell ends it before Lynx answers.
+A call with `waitSeconds` (`lynx_ask`, `lynx_member_ask`) can take up to 540 seconds, and the transport waits 30 seconds longer than the call asks. Give that shell call a timeout of at least 570000 ms, or the shell ends it before Lynx answers.
 
 ## Closing a delivery
 
@@ -232,6 +236,7 @@ mod tests {
             "`waitSeconds`",
             "`lynx_member_ask`",
             "`effort`",
+            "end your turn",
             "570000 ms",
             "`Commit`",
             "git log -1 --stat",
@@ -239,6 +244,17 @@ mod tests {
         ] {
             assert!(text.contains(topic), "the skill teaches {topic}");
         }
+    }
+
+    #[test]
+    fn the_long_timeout_is_for_the_calls_that_wait_not_for_a_check() {
+        let text = agent_skill(&PathBuf::from("/opt/lynx/lynx-ide"));
+        let line = text
+            .lines()
+            .find(|line| line.contains("570000 ms"))
+            .expect("the timeout line");
+        assert!(line.contains("`waitSeconds`"));
+        assert!(!line.contains("lynx_check"));
     }
 
     #[test]

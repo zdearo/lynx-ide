@@ -2,6 +2,7 @@ import { useEffect } from "react";
 
 import { useNavigationStore } from "@/navigation/navigation-store";
 import { matchShortcut } from "@/platform-shortcuts";
+import { useTeamStore } from "@/team/team-store";
 import {
   closeActiveTerminal,
   startShellInSelectedWorktree,
@@ -27,6 +28,10 @@ export function useAppShortcuts(
     const onKeyDown = (event: KeyboardEvent) => {
       const action = matchShortcut(event);
       if (!action) return;
+      // With the team's modal open, its close button is the way out: the shortcut would close a session behind it.
+      if (action === "closeTerminal" && useTeamStore.getState().terminalOpen) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
 

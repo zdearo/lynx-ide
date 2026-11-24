@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { BotAvatar } from "@/bots/BotAvatar";
@@ -12,7 +12,11 @@ import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/error-message";
 import type { TeamAgent, TeamBot, TeamMember } from "@/team/team-fixtures";
 import { focusMemberCard } from "@/team/team-focus";
-import { MODAL_FRAME_CLASS, MODAL_OVERLAY_CLASS } from "@/team/team-stage";
+import {
+  MODAL_FRAME_CLASS,
+  MODAL_OVERLAY_CLASS,
+  stageIdOf,
+} from "@/team/team-stage";
 import { TeamStatusIcon } from "@/team/TeamStatus";
 import {
   agentNameOf,
@@ -45,12 +49,39 @@ function closeModal() {
   useTeamStore.getState().closeTerminal();
 }
 
+/** Inert while the team's modal is open: the modal is then the only part of the screen that takes focus or reading. */
+export function TeamInert({ children }: { children: ReactNode }) {
+  const open = useTeamStore((state) => state.terminalOpen);
+  return (
+    <div className="contents" inert={open}>
+      {children}
+    </div>
+  );
+}
+
 function OpenModal({ member }: { member: TeamMember }) {
-  // Escape closes it, as it closed the dialog it replaces.
+  const titleId = useId();
+  const descriptionId = useId();
+  const frameRef = useRef<HTMLDivElement>(null);
+  // An agent's terminal is on the stage while its session is open; the modal then names that stage.
+  const session = useTerminalStore((state) =>
+    member.kind === "agent" && member.sessionId !== null
+      ? state.sessions.find((candidate) => candidate.id === member.sessionId)
+      : undefined,
+  );
+  const ids = { title: titleId, description: descriptionId };
+
+  // Escape closes it, as it closed the dialog it replaces. Inside the terminal Escape belongs to the agent, so only
+  // Shift+Escape closes the modal from there.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      const inTerminal =
+        event.target instanceof Element &&
+        event.target.closest(".xterm") !== null;
+      if (inTerminal && !event.shiftKey) return;
       event.preventDefault();
+      event.stopPropagation();
       closeModal();
     };
     window.addEventListener("keydown", onKeyDown, { capture: true });
@@ -68,15 +99,35 @@ function OpenModal({ member }: { member: TeamMember }) {
     [member.id],
   );
 
+  // With no terminal on the stage, the modal takes the focus itself; a stage's terminal takes it by its own effect.
+  useEffect(() => {
+    if (session === undefined) frameRef.current?.focus();
+  }, [session]);
+
   return (
     <>
       <div className={MODAL_OVERLAY_CLASS} onClick={closeModal} />
-      <div role="dialog" aria-modal="true" className={MODAL_FRAME_CLASS}>
-        {member.kind === "bot" && <BotChatPane member={member} />}
-        {member.kind === "agent" && <TerminalPane member={member} />}
+      <div
+        ref={frameRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        aria-owns={session ? stageIdOf(session.id) : undefined}
+        tabIndex={-1}
+        className={MODAL_FRAME_CLASS}
+      >
+        {member.kind === "bot" && <BotChatPane member={member} ids={ids} />}
+        {member.kind === "agent" && <TerminalPane member={member} ids={ids} />}
       </div>
     </>
   );
+}
+
+/** The ids the modal's ARIA names it by: its title and its description. */
+interface ModalIds {
+  title: string;
+  description: string;
 }
 
 /** The title bar of every pane: the member's icon and title, its status, and the close button. */
@@ -84,15 +135,19 @@ function PaneHeader({
   member,
   icon,
   title,
+  titleId,
 }: {
   member: TeamMember;
   icon: ReactNode;
   title: string;
+  titleId: string;
 }) {
   return (
     <header className="pointer-events-auto flex h-9 min-w-0 shrink-0 items-center gap-2 border-b bg-popover px-3 pr-10">
       {icon}
-      <h2 className="min-w-0 truncate text-ui font-medium">{title}</h2>
+      <h2 id={titleId} className="min-w-0 truncate text-ui font-medium">
+        {title}
+      </h2>
       <span className="ml-auto flex shrink-0 items-center gap-1.5 text-meta text-muted-foreground">
         <TeamStatusIcon status={member.status} />
         {copy.team.status[member.status]}
@@ -101,6 +156,7 @@ function PaneHeader({
         label={
           member.kind === "bot" ? copy.team.closeChat : copy.team.closeTerminal
         }
+        shortcut={copy.team.closeShortcut}
         className="absolute top-2 right-2"
         onClick={closeModal}
       >
@@ -110,7 +166,7 @@ function PaneHeader({
   );
 }
 
-function TerminalPane({ member }: { member: TeamAgent }) {
+function TerminalPane({ member, ids }: { member: TeamAgent; ids: ModalIds }) {
   const agent = member.harness ? agentNameOf(member.harness) : member.role;
   const session = useTerminalStore((state) =>
     member.sessionId
@@ -124,6 +180,7 @@ function TerminalPane({ member }: { member: TeamAgent }) {
         <AgentBrandIcon harness={member.harness} className="size-4 shrink-0" />
       }
       title={copy.team.sheetLabel(member.role, agent)}
+      titleId={ids.title}
     />
   );
 
@@ -131,7 +188,10 @@ function TerminalPane({ member }: { member: TeamAgent }) {
     return (
       <>
         {header}
-        <p className="pointer-events-auto border-b bg-background px-3 py-1.5 text-meta text-muted-foreground">
+        <p
+          id={ids.description}
+          className="pointer-events-auto border-b bg-background px-3 py-1.5 text-meta text-muted-foreground"
+        >
           {copy.team.simulatedTerminal}
         </p>
         <div className="pointer-events-auto min-h-0 flex-1 overflow-y-auto bg-background p-3 font-mono text-ui">
@@ -149,7 +209,10 @@ function TerminalPane({ member }: { member: TeamAgent }) {
     return (
       <>
         {header}
-        <p className="pointer-events-auto border-b bg-background px-3 py-1.5 text-meta text-muted-foreground">
+        <p
+          id={ids.description}
+          className="pointer-events-auto border-b bg-background px-3 py-1.5 text-meta text-muted-foreground"
+        >
           {copy.team.terminalClosed}
         </p>
         <ClosedAgentPane key={member.id} member={member} />
@@ -161,7 +224,9 @@ function TerminalPane({ member }: { member: TeamAgent }) {
   return (
     <>
       {header}
-      <p className="sr-only">{copy.team.terminalDescription}</p>
+      <p id={ids.description} className="sr-only">
+        {copy.team.terminalDescription}
+      </p>
       <div className="min-h-0 flex-1" />
     </>
   );
@@ -213,7 +278,7 @@ function ClosedAgentPane({ member }: { member: TeamAgent }) {
  * A bot's conversation, in the same conversation view the Bots view uses. It shows the bot's most recent thread,
  * with no list of threads beside it. A bot with no thread gets its first one when its threads are read.
  */
-function BotChatPane({ member }: { member: TeamBot }) {
+function BotChatPane({ member, ids }: { member: TeamBot; ids: ModalIds }) {
   const text = copy.bots.chat;
   const bots = useBotsStore((state) => state.bots);
   const bot = botOf(member, bots);
@@ -242,8 +307,11 @@ function BotChatPane({ member }: { member: TeamBot }) {
           />
         }
         title={copy.team.sheetLabel(member.role, engineOf(member, bots))}
+        titleId={ids.title}
       />
-      <p className="sr-only">{text.log(bot?.name ?? member.role)}</p>
+      <p id={ids.description} className="sr-only">
+        {text.log(bot?.name ?? member.role)}
+      </p>
       <div className="pointer-events-auto flex min-h-0 flex-1 flex-col bg-background">
         {bot && thread && (
           <Conversation

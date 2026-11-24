@@ -15,8 +15,9 @@ use crate::team::team_model::{
 use crate::team::team_service::TeamService;
 
 use super::agent_wake::free_to_type;
+use super::reports::ReportSource;
 use super::service::{
-    Assignment, LaunchSetup, NewMember, Orchestration, OrchestrationError, WorkerHost,
+    Assignment, FirstPrompt, LaunchSetup, NewMember, Orchestration, OrchestrationError, WorkerHost,
     WorkerWorktree,
 };
 
@@ -34,6 +35,8 @@ pub struct FakeHost {
     stopped: Mutex<Vec<String>>,
     notified: Mutex<Vec<String>>,
     sent: Mutex<Vec<(String, String)>>,
+    pasted: Mutex<Vec<(String, String)>>,
+    submitted: Mutex<Vec<(String, String, bool)>>,
     prompts: Mutex<Vec<String>>,
     landed: Mutex<Vec<(String, String)>>,
     efforts: Mutex<Vec<Option<AgentEffort>>>,
@@ -125,6 +128,20 @@ impl FakeHost {
 
     pub fn landed(&self) -> Vec<(String, String)> {
         self.landed
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    pub fn pasted(&self) -> Vec<(String, String)> {
+        self.pasted
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    pub fn submitted(&self) -> Vec<(String, String, bool)> {
+        self.submitted
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .clone()
@@ -247,7 +264,27 @@ impl WorkerHost for FakeHost {
     }
 
     fn send_pasted(&self, session: &str, text: &str) -> Result<(), String> {
+        self.pasted
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push((session.to_owned(), text.to_owned()));
         self.send(session, text)
+    }
+
+    /// The shell reads the prompt file as the first message, the way a POSIX shell does.
+    fn first_prompt(&self, path: &str, text: &str) -> FirstPrompt {
+        FirstPrompt {
+            argument: format!("\"$(cat {path})\""),
+            shown: text.to_owned(),
+            echoed: false,
+        }
+    }
+
+    fn submit_when_shown(&self, session: &str, text: &str, echoed: bool) {
+        self.submitted
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push((session.to_owned(), text.to_owned(), echoed));
     }
 }
 
@@ -470,8 +507,8 @@ fn a_worker_starts_for_its_member_and_its_report_reaches_the_lead() {
     assert!(
         fixture.host.started()[0]
             .1
-            .contains("Read /prompts/task.md"),
-        "the worker reads its task from the file"
+            .ends_with("-- \"$(cat /prompts/task.md)\""),
+        "the shell reads the task file into the worker's first message"
     );
 
     fixture
@@ -1007,6 +1044,7 @@ fn a_finished_worker_takes_its_next_task_in_the_same_session() {
     let fixture = fixture();
     let writer = fixture.add("Writer", "Escreva o guia", Vec::new());
     let session = finished_worker(&fixture, &writer);
+    fixture.host.set_status(&session, AgentStatus::Done);
 
     let given = fixture
         .orchestration
@@ -1018,9 +1056,10 @@ fn a_finished_worker_takes_its_next_task_in_the_same_session() {
     assert_eq!(fixture.host.sent().len(), 1);
     assert_eq!(fixture.host.sent()[0].0, session);
     assert!(
-        fixture.host.prompts()[1].contains("Revise o guia"),
-        "the new task is in the file the worker reads"
+        fixture.host.pasted()[0].1.contains("Revise o guia"),
+        "the new task is pasted into the worker's input as text"
     );
+    assert_eq!(fixture.host.prompts().len(), 1, "no file for an assignment");
     let writer = fixture.member(&writer.id);
     assert_eq!(writer.task, "Revise o guia");
     assert_eq!(writer.task_state, Some(TaskState::Running));
@@ -1867,5 +1906,279 @@ fn a_worker_is_told_to_ask_its_teammates_with_the_member_ask_tool() {
     assert!(
         prompt.contains("lynx_member_ask"),
         "a worker learns how to ask a teammate"
+    );
+}
+
+#[test]
+fn a_first_prompt_is_the_whole_text_and_the_agent_is_not_told_to_read_it() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva o guia\n- com exemplos", Vec::new());
+    fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Claude,
+            WorkerWorktree::Current,
+            LaunchSetup::default(),
+        )
+        .expect("the worker starts");
+
+    let command = &fixture.host.started()[0].1;
+    assert!(
+        command.ends_with("-- \"$(cat /prompts/task.md)\""),
+        "{command}"
+    );
+    assert!(!command.contains("Read "), "{command}");
+    assert!(
+        fixture.host.prompts()[0].contains("Escreva o guia\n- com exemplos"),
+        "the file keeps the whole text"
+    );
+}
+
+#[test]
+fn opencode_gets_the_prompt_with_prompt_and_is_submitted_once_it_is_drawn() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva", Vec::new());
+    let started = fixture
+        .orchestration
+        .start_worker(
+            LEAD_SESSION,
+            &writer.id,
+            HarnessId::Opencode,
+            WorkerWorktree::Current,
+            LaunchSetup::default(),
+        )
+        .expect("the worker starts");
+
+    assert!(
+        fixture.host.started()[0]
+            .1
+            .contains(" --prompt \"$(cat /prompts/task.md)\""),
+        "{}",
+        fixture.host.started()[0].1
+    );
+    let submitted = fixture.host.submitted();
+    assert_eq!(submitted.len(), 1);
+    assert_eq!(submitted[0].0, started.session_id);
+    assert!(
+        submitted[0].1.starts_with("Escreva"),
+        "the text the agent draws"
+    );
+    assert!(
+        !submitted[0].2,
+        "the typed line names the file, not the text"
+    );
+}
+
+#[test]
+fn a_busy_worker_does_not_get_the_task_and_nothing_changes() {
+    let mut fixture = fixture();
+    fixture.orchestration.ready_wait = Duration::from_millis(50);
+    let writer = fixture.add("Writer", "Escreva", Vec::new());
+    let session = finished_worker(&fixture, &writer);
+    fixture.host.set_status(&session, AgentStatus::Working);
+
+    let given = fixture
+        .orchestration
+        .assign(LEAD_SESSION, "writer", "Revise", "");
+
+    assert_eq!(given, Err(OrchestrationError::NotReady));
+    assert!(
+        fixture.host.pasted().is_empty(),
+        "nothing is typed into a busy agent"
+    );
+    let writer = fixture.member(&writer.id);
+    assert_eq!(writer.task, "Escreva");
+    assert_eq!(writer.task_state, Some(TaskState::Done));
+}
+
+#[test]
+fn control_characters_in_a_task_are_taken_out_before_the_worker_reads_it() {
+    let fixture = fixture();
+    let writer = fixture.add("Writer", "Escreva", Vec::new());
+    let session = finished_worker(&fixture, &writer);
+    fixture.host.set_status(&session, AgentStatus::Done);
+
+    fixture
+        .orchestration
+        .assign(
+            LEAD_SESSION,
+            "writer",
+            "Revise\u{1b}[201~ o guia\r\nfim\u{7}",
+            "",
+        )
+        .expect("the task is given");
+
+    let pasted = &fixture.host.pasted()[0].1;
+    assert!(pasted.contains("Revise o guia\nfim"), "{pasted:?}");
+    assert!(
+        !pasted.contains('\u{1b}') && !pasted.contains('\u{7}'),
+        "{pasted:?}"
+    );
+}
+
+#[test]
+fn a_report_is_handed_to_the_coordinator_once_with_its_worker_and_role_and_releases_the_worker() {
+    let fixture = fixture_with(FakeHost::releasing());
+    let (writer, session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    fixture
+        .orchestration
+        .report(&session, Outcome::Done, "Guia escrito")
+        .expect("the worker reports");
+
+    let reports = fixture
+        .orchestration
+        .take(LEAD_SESSION)
+        .expect("the report waits for the coordinator");
+    assert_eq!(reports.messages.len(), 1);
+    assert!(
+        reports.text.starts_with(&format!(
+            "Relatório do worker {} (papel Writer, concluído).",
+            writer.id
+        )),
+        "{}",
+        reports.text
+    );
+    assert!(reports.text.ends_with("Guia escrito"));
+    assert!(
+        fixture.orchestration.take(LEAD_SESSION).is_none(),
+        "handed over once"
+    );
+
+    fixture.orchestration.sent(&reports);
+    assert_eq!(fixture.host.stopped(), vec![session]);
+}
+
+#[test]
+fn two_reports_are_one_text_and_one_hand_over() {
+    let fixture = fixture();
+    let (_writer, writer_session) = started_worker(&fixture, "Writer", "Escreva");
+    let (_tester, tester_session) = started_worker(&fixture, "Tester", "Teste");
+    fixture
+        .orchestration
+        .report(&writer_session, Outcome::Done, "um")
+        .expect("reports");
+    fixture
+        .orchestration
+        .report(&tester_session, Outcome::Failed, "dois")
+        .expect("reports");
+
+    let reports = fixture
+        .orchestration
+        .take(LEAD_SESSION)
+        .expect("both reports wait");
+
+    assert_eq!(reports.messages.len(), 2);
+    assert_eq!(reports.text.matches("Relatório do worker").count(), 2);
+    assert!(reports.text.contains("(papel Tester, falhou)"));
+    assert!(fixture.orchestration.take(LEAD_SESSION).is_none());
+}
+
+#[test]
+fn a_hand_over_that_does_not_go_through_leaves_the_reports_for_the_next_one() {
+    let fixture = fixture();
+    let (_writer, session) = started_worker(&fixture, "Writer", "Escreva");
+    fixture
+        .orchestration
+        .report(&session, Outcome::Done, "Guia")
+        .expect("reports");
+    let first = fixture.orchestration.take(LEAD_SESSION).expect("waits");
+
+    fixture.orchestration.undelivered(&first);
+
+    let again = fixture
+        .orchestration
+        .take(LEAD_SESSION)
+        .expect("back among the unread");
+    let ids = |reports: &super::reports::Reports| -> Vec<String> {
+        reports
+            .messages
+            .iter()
+            .map(|message| message.id.clone())
+            .collect()
+    };
+    assert_eq!(ids(&again), ids(&first));
+}
+
+#[test]
+fn a_check_that_reads_a_report_leaves_none_to_hand_over() {
+    let fixture = fixture();
+    let (_writer, session) = started_worker(&fixture, "Writer", "Escreva");
+    fixture
+        .orchestration
+        .report(&session, Outcome::Done, "Guia")
+        .expect("reports");
+
+    fixture
+        .orchestration
+        .check(LEAD_SESSION, Duration::ZERO)
+        .expect("the lead hears it");
+
+    assert!(fixture.orchestration.take(LEAD_SESSION).is_none());
+}
+
+#[test]
+fn a_check_waiting_for_news_takes_the_report_that_arrives_during_its_wait() {
+    let fixture = fixture();
+    let (_writer, session) = started_worker(&fixture, "Writer", "Escreva");
+
+    std::thread::scope(|scope| {
+        let checking = scope.spawn(|| {
+            fixture
+                .orchestration
+                .check(LEAD_SESSION, Duration::from_secs(5))
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        fixture
+            .orchestration
+            .report(&session, Outcome::Done, "Pronto")
+            .expect("reports");
+        let check = checking
+            .join()
+            .expect("the check does not panic")
+            .expect("the check answers");
+        assert_eq!(check.messages.len(), 1);
+    });
+
+    assert!(
+        fixture.orchestration.take(LEAD_SESSION).is_none(),
+        "the check took it, so no hand-over repeats it"
+    );
+}
+
+#[test]
+fn a_question_without_a_wait_is_typed_at_once_and_waits_for_the_orchestrators_check() {
+    let fixture = fixture();
+    let (writer, writer_session) = started_worker(&fixture, "Writer", "Escreva o guia");
+    let (_reviewer, reviewer_session) = started_worker(&fixture, "Reviewer", "Revise o guia");
+    fixture
+        .host
+        .set_status(&reviewer_session, AgentStatus::Idle);
+
+    let answer = fixture
+        .orchestration
+        .member_ask(&writer_session, "reviewer", "Posso fechar?", Duration::ZERO)
+        .expect("the question is typed");
+
+    assert_eq!(answer.report, None, "nothing is waited for");
+    assert_eq!(
+        fixture.host.pasted(),
+        vec![(reviewer_session, "Posso fechar?".to_owned())]
+    );
+    assert!(
+        fixture.orchestration.take(LEAD_SESSION).is_none(),
+        "a question is not a report to hand over"
+    );
+    let check = fixture
+        .orchestration
+        .check(LEAD_SESSION, Duration::ZERO)
+        .expect("the lead hears it");
+    assert!(
+        check
+            .messages
+            .iter()
+            .any(|message| message.kind == MessageKind::Question && message.member_id == writer.id),
+        "the question is unread for the check"
     );
 }

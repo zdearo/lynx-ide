@@ -20,8 +20,9 @@ use super::team_rules::{
 };
 use super::team_store::{
     clear_tasks_of, insert_exchange, insert_member, insert_message, insert_pair, mark_message_read,
-    remove_member, remove_pair, replace_dependencies, set_dispatch_state_row, set_task_state_row,
-    start_worker_row, take_unread_messages, update_expanded, update_member, update_session,
+    mark_unread, remove_member, remove_pair, replace_dependencies, set_dispatch_state_row,
+    set_task_state_row, start_worker_row, take_unread_messages, take_unread_reports,
+    update_expanded, update_member, update_session,
 };
 
 /// A member of a batch as it is planned: the member, what it waits for by key or id, and its key.
@@ -571,6 +572,22 @@ impl TeamService {
         Ok(self
             .database
             .team_transaction(|connection| take_unread_messages(connection, parent_ids))?)
+    }
+
+    /// The reports nobody has read from the workers that `notify_session` started, which are then marked read.
+    pub fn take_unread_reports(&self, notify_session: &str) -> Result<Vec<TeamMessage>, TeamError> {
+        let _turn = self.turn();
+        Ok(self
+            .database
+            .team_transaction(|connection| take_unread_reports(connection, notify_session))?)
+    }
+
+    /// Marks messages unread again, for a hand-over that did not go through.
+    pub fn mark_unread(&self, message_ids: &[String]) -> Result<(), TeamError> {
+        let _turn = self.turn();
+        self.database
+            .team_transaction(|connection| mark_unread(connection, message_ids))?;
+        Ok(())
     }
 
     /// The session a member's worker reports to, when it has started.

@@ -3,6 +3,7 @@
 
 pub mod agent_wake;
 pub mod host;
+pub mod reports;
 pub mod router;
 pub mod service;
 pub mod tools;

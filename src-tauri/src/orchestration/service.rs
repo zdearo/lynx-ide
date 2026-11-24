@@ -25,7 +25,9 @@ use crate::team::team_rules::MAX_EXCHANGE_CHARS;
 use crate::team::team_service::{TeamService, new_id};
 
 use super::agent_wake::free_to_type;
+use super::reports::{Line, ReportSource, Reports, compose};
 use super::tools::AGENTS;
+use crate::terminal::pasted_text::sanitize;
 
 const MAX_REPORT_CHARS: usize = 4_000;
 const MAX_MODEL_CHARS: usize = 100;
@@ -42,6 +44,8 @@ const ASK_POLL: Duration = Duration::from_millis(100);
 /// shortcut: a worker that never shows work counts as done after this, so its answer can come before its work ends.
 /// Upgrade: end the turn only on the agent's Stop hook.
 const IDLE_AFTER_ASK: Duration = Duration::from_secs(2);
+/// How long an assignment waits for its worker to be idle, so the task can be pasted into its input.
+const ASSIGN_READY_WAIT: Duration = Duration::from_secs(30);
 
 /// Where a worker works: in a worktree of its own, or in the team's worktree, where the orchestrator works.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +67,15 @@ impl WorkerWorktree {
     }
 }
 
+/// The first prompt of an agent: the argument its start line gives it, what it draws in its input, and whether the
+/// typed line carries that text too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FirstPrompt {
+    pub argument: String,
+    pub shown: String,
+    pub echoed: bool,
+}
+
 /// What the rules need from the rest of the app.
 pub trait WorkerHost: Send + Sync + 'static {
     /// The orchestration settings as the user has them now.
@@ -71,6 +84,17 @@ pub trait WorkerHost: Send + Sync + 'static {
     fn new_worktree(&self, from: &str, name: &str) -> Result<String, String>;
     /// Writes `text` where an agent can read it, and returns the path.
     fn prompt_file(&self, text: &str) -> Result<String, String>;
+    /// How the agent's first prompt reaches it, from the file `path` holds (`text` is its content): the shell's argument,
+    /// what the agent draws in its input, and whether the typed line carries that too. By default the agent is told to
+    /// read the file.
+    fn first_prompt(&self, path: &str, _text: &str) -> FirstPrompt {
+        let instruction = format!("Read {path} and follow the instructions in it.");
+        FirstPrompt {
+            argument: quote_for_shell(&instruction, cfg!(windows)),
+            shown: instruction,
+            echoed: true,
+        }
+    }
     /// The line that starts an agent, with the launch mode and arguments Settings hold for it, and the effort the
     /// call names. `unattended` says nobody watches its terminal, so it must not stop to ask for permissions.
     fn launch_line(
@@ -110,12 +134,11 @@ pub trait WorkerHost: Send + Sync + 'static {
     /// A message was added for the orchestrator that started the worker in `session`, so it should look at its
     /// workers again. Only a bot is woken; an agent orchestrator checks when it chooses.
     fn notify(&self, _session: &str) {}
-    /// The orchestrator read its workers now, so a note waiting for it is no longer needed. Nothing by default.
-    fn checked(&self, _coordinator: &str) {}
     /// The team changed, so the screens that show it must be read again. Nothing by default.
     fn changed(&self) {}
-    /// Sends Enter to a worker once `text` shows on its screen. Nothing by default.
-    fn submit_when_shown(&self, _session: &str, _text: &str) {}
+    /// Sends Enter to a worker once `text` shows on its screen; `echoed` when the typed start line carries it too.
+    /// Nothing by default.
+    fn submit_when_shown(&self, _session: &str, _text: &str, _echoed: bool) {}
     /// Whether a question may be typed into the session now: the agent is idle or done, and the person has no
     /// draft in its input. The same guard that decides when a note is typed.
     fn ready_for_input(&self, session: &str) -> bool {
@@ -184,6 +207,10 @@ pub enum OrchestrationError {
         "the question was typed into the worker, and it did not answer in time. Read the worker with lynx_worker_read to see how far it got"
     )]
     AskNoAnswer,
+    #[error(
+        "the worker was busy and did not take the task in time, so nothing was sent: ask again later, or read the worker with lynx_worker_read"
+    )]
+    NotReady,
     #[error("{0} is not in your team: a member can only ask the members of its own team")]
     NotInYourTeam(String),
     #[error("a member cannot ask itself")]
@@ -321,6 +348,8 @@ pub struct Orchestration {
     /// The asks in progress, as (asker, asked), one entry per ask: two asks of the same pair can overlap, and each
     /// leaves its own entry. Kept in memory: an ask lasts one tool call.
     waits: Mutex<Vec<(String, String)>>,
+    /// How long an assignment waits for its worker to be idle.
+    pub(super) ready_wait: Duration,
 }
 
 impl Orchestration {
@@ -331,6 +360,7 @@ impl Orchestration {
             waiting: Mutex::new(HashMap::new()),
             asks: Mutex::new(HashMap::new()),
             waits: Mutex::new(Vec::new()),
+            ready_wait: ASSIGN_READY_WAIT,
         }
     }
 
@@ -622,9 +652,10 @@ impl Orchestration {
         };
         let role = self.team.role_prompt(&member.role)?;
         let task = worker_task(member, continuing);
+        let text = worker_prompt(harness, role.as_deref(), &task);
         let prompt = self
             .host
-            .prompt_file(&worker_prompt(harness, role.as_deref(), &task))
+            .prompt_file(&text)
             .map_err(OrchestrationError::Host)?;
         // A bot does not watch its workers' terminals, so they never stop to ask for permissions.
         let unattended = bot_of_session(caller).is_some();
@@ -637,8 +668,8 @@ impl Orchestration {
             ),
             _ => line,
         };
-        let instruction = read_instruction(&prompt);
-        let command = agent_command(harness, &line, &instruction, setup.model.as_deref());
+        let first = self.host.first_prompt(&prompt, &text);
+        let command = agent_command(harness, &line, &first.argument, setup.model.as_deref());
         let session = self
             .host
             .start(&execution, &command)
@@ -651,8 +682,9 @@ impl Orchestration {
             return Err(error.into());
         }
         if harness == HarnessId::Opencode {
-            // OpenCode's --prompt only fills its input; the instruction is sent when Enter follows it.
-            self.host.submit_when_shown(&session, &instruction);
+            // OpenCode's --prompt only fills its input; Enter is sent once the prompt shows there.
+            self.host
+                .submit_when_shown(&session, &first.shown, first.echoed);
         }
         self.host.changed();
         Ok(WorkerStart {
@@ -674,6 +706,8 @@ impl Orchestration {
     ) -> Result<Assignment, OrchestrationError> {
         let parents = self.orchestrators(caller)?;
         let member = self.child_of(&parents, member_ref)?;
+        // The task goes into the worker's input as text, so control characters are taken out before anything else.
+        let task = sanitize(task);
         if task.trim().is_empty() {
             return Err(OrchestrationError::InvalidText(
                 "say what the member must do".to_owned(),
@@ -691,7 +725,7 @@ impl Orchestration {
         if !alive {
             self.check_can_start(&new)?;
             self.team
-                .retask(&member.id, task, acceptance, TaskState::Pending)?;
+                .retask(&member.id, &task, acceptance, TaskState::Pending)?;
             self.host.changed();
             return Ok(Assignment::Pending);
         }
@@ -703,19 +737,31 @@ impl Orchestration {
             worker_task(&new, false)
         );
         let role = self.team.role_prompt(&member.role)?;
-        let prompt = self
-            .host
-            .prompt_file(&worker_prompt(harness, role.as_deref(), &task_for_worker))
-            .map_err(OrchestrationError::Host)?;
+        let text = worker_prompt(harness, role.as_deref(), &task_for_worker);
+        self.wait_until_ready(session)?;
         self.host
-            .send(session, &read_instruction(&prompt))
+            .send_pasted(session, &text)
             .map_err(OrchestrationError::Host)?;
         self.team
-            .retask(&member.id, task, acceptance, TaskState::Running)?;
+            .retask(&member.id, &task, acceptance, TaskState::Running)?;
         self.team
             .set_dispatch_state(&member.id, DispatchState::Running)?;
         self.host.changed();
         Ok(Assignment::Sent)
+    }
+
+    /// Waits until the worker can take a paste: idle or done, with no draft in its input. Nothing is typed before
+    /// that, and a worker that does not get there in time is left as it was.
+    fn wait_until_ready(&self, session: &str) -> Result<(), OrchestrationError> {
+        let ready = poll_until(Instant::now() + self.ready_wait, || {
+            if !self.host.running(session) {
+                return Err(OrchestrationError::Host(
+                    "the worker has ended, so there is no one to give the task to".to_owned(),
+                ));
+            }
+            Ok(self.host.ready_for_input(session).then_some(()))
+        })?;
+        ready.ok_or(OrchestrationError::NotReady)
     }
 
     /// Swaps the agent of a member's worker for another, in the same worktree and with the same task. The old
@@ -1147,7 +1193,6 @@ impl Orchestration {
     pub fn check(&self, caller: &str, wait: Duration) -> Result<Check, OrchestrationError> {
         let parents = self.orchestrators(caller)?;
         let parent_ids: Vec<String> = parents.iter().map(|parent| parent.id.clone()).collect();
-        self.host.checked(caller);
         let deadline = Instant::now() + wait;
         loop {
             self.notice_workers(&parent_ids)?;
@@ -1271,7 +1316,6 @@ impl Orchestration {
             &answer_body(report.as_deref(), &output),
             true,
         )?;
-        self.host.checked(caller);
         Ok(AskAnswer {
             report,
             output,
@@ -1307,6 +1351,20 @@ impl Orchestration {
             return Err(OrchestrationError::Host(
                 "the worker has ended, so there is no one to answer".to_owned(),
             ));
+        }
+        if wait.is_zero() {
+            // Nothing waits here: the question is typed and recorded, and the teammate's answer reaches the orchestrator
+            // as its report.
+            self.host
+                .send_pasted(&session, &text)
+                .map_err(OrchestrationError::Host)?;
+            self.record(MessageKind::Question, &asker.id, &target.id, &text, false)?;
+            return Ok(AskAnswer {
+                report: None,
+                output: self.screen_of(&session)?,
+                running: self.host.running(&session),
+                status: self.host.status(&session),
+            });
         }
         let _asking = self.start_ask(&asker.id, &target.id)?;
         let deadline = Instant::now() + wait;
@@ -1630,6 +1688,62 @@ impl Orchestration {
     }
 }
 
+impl ReportSource for Orchestration {
+    fn take(&self, session: &str) -> Option<Reports> {
+        if !self.host.settings().enabled {
+            return None;
+        }
+        let members = match self.team.members() {
+            Ok(members) => members,
+            Err(error) => {
+                log::error!("could not read the team for the reports of {session}: {error}");
+                return None;
+            }
+        };
+        let messages = match self.team.take_unread_reports(session) {
+            Ok(messages) if !messages.is_empty() => messages,
+            Ok(_) => return None,
+            Err(error) => {
+                log::error!("could not take the reports of {session}: {error}");
+                return None;
+            }
+        };
+        let text = {
+            let lines: Vec<Line<'_>> = messages
+                .iter()
+                .map(|message| Line {
+                    worker: &message.member_id,
+                    role: members
+                        .iter()
+                        .find(|member| member.id == message.member_id)
+                        .map_or("", |member| member.role.as_str()),
+                    kind: message.kind,
+                    body: &message.body,
+                })
+                .collect();
+            compose(&lines)
+        };
+        Some(Reports { messages, text })
+    }
+
+    fn sent(&self, reports: &Reports) {
+        if let Err(error) = self.release_reported(&reports.messages) {
+            log::error!("could not close the workers whose reports were handed over: {error}");
+        }
+    }
+
+    fn undelivered(&self, reports: &Reports) {
+        let ids: Vec<String> = reports
+            .messages
+            .iter()
+            .map(|message| message.id.clone())
+            .collect();
+        if let Err(error) = self.team.mark_unread(&ids) {
+            log::error!("could not put the reports back among the unread: {error}");
+        }
+    }
+}
+
 /// A bot's member ids, one per worktree it is in: the parents its workers answer to.
 fn bot_member_ids<'a>(members: &'a [TeamMember], bot: &str) -> Vec<&'a str> {
     members
@@ -1697,13 +1811,14 @@ fn worker_task(member: &TeamMember, continuing: bool) -> String {
 /// the tools, how to report and where the team's notes are.
 fn worker_prompt(harness: HarnessId, role: Option<&str>, task: &str) -> String {
     let role = role.map_or_else(String::new, |prompt| format!("Your role:\n{prompt}\n\n"));
-    if reports_through_tools(harness) {
+    // Read by an agent as its input: control characters are taken out once, here.
+    sanitize(&if reports_through_tools(harness) {
         format!(
-            "{role}{task}\n\nThe team shares notes: lynx_note_read lists them and reads one, lynx_note_write and lynx_note_edit change them.\n\nTo ask a member of your team something, call lynx_member_ask with its id or role and your question. The call waits for the answer, so ask only what you need.\n\nWhen you finish, or if you cannot, report to your orchestrator with lynx_report (outcome \"done\" or \"failed\" and a short summary). lynx_report is a Lynx tool: call it from your shell through the lynx skill, as the skill describes."
+            "{role}{task}\n\nThe team shares notes: lynx_note_read lists them and reads one, lynx_note_write and lynx_note_edit change them.\n\nTo ask a member of your team something, call lynx_member_ask with its id or role and your question. Without waitSeconds the question is sent and the call answers at once, and the member's answer reaches your orchestrator; with waitSeconds (up to 540) the call waits for the answer, so ask only what you need.\n\nWhen you finish, or if you cannot, report to your orchestrator with lynx_report (outcome \"done\" or \"failed\" and a short summary). lynx_report is a Lynx tool: call it from your shell through the lynx skill, as the skill describes."
         )
     } else {
         format!("{role}{task}")
-    }
+    })
 }
 
 /// Whether a member that waits for these ids must wait: one of them is not a done member of the team. A name of a
@@ -1808,11 +1923,6 @@ fn clean_question(text: &str) -> Result<String, OrchestrationError> {
     Ok(text)
 }
 
-/// The sentence that tells a worker to read its task from the file.
-fn read_instruction(path: &str) -> String {
-    format!("Read {path} and follow the instructions in it.")
-}
-
 /// A model name is typed into the shell with the rest of the line, so it is only the characters
 /// that no shell reads as syntax. OpenCode's start command takes no model, so it is refused.
 fn check_model(harness: HarnessId, model: &str) -> Result<(), OrchestrationError> {
@@ -1828,15 +1938,14 @@ fn check_model(harness: HarnessId, model: &str) -> Result<(), OrchestrationError
     Ok(())
 }
 
-/// The line typed for a worker: its agent's launch line, the model, and the instruction. OpenCode
-/// takes its first prompt through `--prompt`, the others take it after the line.
-fn agent_command(harness: HarnessId, line: &str, instruction: &str, model: Option<&str>) -> String {
-    let quoted = quote_for_shell(instruction, cfg!(windows));
+/// The line typed for a worker: its agent's launch line, the model, and the first prompt's argument. OpenCode takes it
+/// through `--prompt`; the others take it after `--`, so a prompt that starts with a dash is not read as an option.
+fn agent_command(harness: HarnessId, line: &str, argument: &str, model: Option<&str>) -> String {
     match harness {
-        HarnessId::Opencode => format!("{line} --prompt {quoted}"),
+        HarnessId::Opencode => format!("{line} --prompt {argument}"),
         _ => {
             let model = model.map_or_else(String::new, |model| format!(" --model {model}"));
-            format!("{line}{model} {quoted}")
+            format!("{line}{model} -- {argument}")
         }
     }
 }

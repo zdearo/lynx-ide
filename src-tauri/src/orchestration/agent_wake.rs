@@ -1,61 +1,77 @@
-//! Waking an agent coordinator when a worker of its run reports or needs an answer. The note is typed into
-//! the coordinator's terminal, but only when the agent is idle and the person is not halfway through a message:
-//! a coordinator busy in a turn gets the note when the turn ends (its `Stop` hook changes the status), and a
-//! message the person is writing waits until they submit it.
+//! Handing a coordinator agent the reports its workers sent. A report waits in the team until a hand-over reads it.
+//! The reports are pasted into the coordinator's input only when its agent is idle (its `Stop` hook moved it to
+//! `Done`) and the person has no draft there; a busy coordinator gets them when its turn ends. One paste carries
+//! every report that waits, so the coordinator reads them as one message.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::iter::Peekable;
 use std::str::Chars;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::agents::activity::AgentStatus;
 use crate::terminal::TerminalError;
+use crate::terminal::pasted_text::as_paste;
 use crate::terminal::terminal_manager::TerminalManager;
 
-use super::host::WAKE_NOTE;
-
-/// How long a note waits for its coordinator before it is dropped. The check tool still reads the workers then.
-pub const DEADLINE: Duration = Duration::from_secs(15 * 60);
+use super::reports::{ReportSource, Reports};
 
 /// The pause between the text and its Enter, the same one the team's own messages use.
 const SUBMIT_DELAY: Duration = Duration::from_millis(150);
 
+/// What a session's agent shows now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Live {
+    pub running: bool,
+    pub status: Option<AgentStatus>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
-    /// Nothing is waiting for this session.
+    /// No reports wait for this session.
     Nothing,
     /// The agent is busy, or the person has a draft in its input.
     Wait,
-    /// The agent is idle and free: type the note now.
+    /// The agent is idle and free: paste the reports now.
     Deliver,
-    /// The note can no longer be delivered: the session ended, or the wait ran out.
+    /// The session ended. Its reports stay in the team, for a check to read.
     Forget,
 }
 
-/// What is waiting for each coordinator, and which sessions the person has typed into without submitting.
+/// What one attempt did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Delivery {
+    Nothing,
+    Waiting,
+    Forgotten,
+    /// The reports went in, with this many messages.
+    Delivered(usize),
+    /// The paste failed: the reports are unread again, and the next status change tries again.
+    Undelivered(String),
+}
+
+/// Which coordinators have reports waiting, and which sessions the person has typed into without submitting.
 #[derive(Default)]
-pub struct WakeBook {
-    since: HashMap<String, Instant>,
+pub struct CoordinatorGate {
+    waiting: HashSet<String>,
     draft: HashSet<String>,
 }
 
-impl WakeBook {
-    /// A note for the session. Several reports while it waits make one note.
-    pub fn note(&mut self, session: &str, now: Instant) {
-        self.since.entry(session.to_owned()).or_insert(now);
+impl CoordinatorGate {
+    pub fn wait(&mut self, session: &str) {
+        self.waiting.insert(session.to_owned());
     }
 
-    pub fn is_pending(&self, session: &str) -> bool {
-        self.since.contains_key(session)
+    pub fn is_waiting(&self, session: &str) -> bool {
+        self.waiting.contains(session)
     }
 
-    /// Drops the note: it was delivered, or the coordinator has read its workers itself.
-    pub fn cancel(&mut self, session: &str) {
-        self.since.remove(session);
+    /// Clears the wait: the reports were handed over, or none were there.
+    pub fn done_waiting(&mut self, session: &str) {
+        self.waiting.remove(session);
     }
 
-    /// Records what the person typed into a session, so a draft is known before the next note.
+    /// Records what the person typed into a session, so a draft is known before the next hand-over.
     pub fn typed(&mut self, session: &str, data: &str) {
         if draft_after(self.draft.contains(session), data) {
             self.draft.insert(session.to_owned());
@@ -64,9 +80,9 @@ impl WakeBook {
         }
     }
 
-    /// The session ended: its note and its draft go with it.
+    /// The session ended: its wait and its draft go with it.
     pub fn closed(&mut self, session: &str) {
-        self.since.remove(session);
+        self.waiting.remove(session);
         self.draft.remove(session);
     }
 
@@ -75,38 +91,201 @@ impl WakeBook {
         self.draft.contains(session)
     }
 
-    /// What to do with the note of `session` now.
-    pub fn decide(
-        &self,
-        session: &str,
-        running: bool,
-        status: Option<AgentStatus>,
-        now: Instant,
-    ) -> Step {
-        let Some(since) = self.since.get(session) else {
+    /// What to do with the reports of `session` now.
+    pub fn decide(&self, session: &str, live: Live) -> Step {
+        if !self.waiting.contains(session) {
             return Step::Nothing;
-        };
-        if !running || now.saturating_duration_since(*since) > DEADLINE {
+        }
+        if !live.running {
             return Step::Forget;
         }
         if self.draft.contains(session) {
             return Step::Wait;
         }
-        match status {
+        match live.status {
             Some(AgentStatus::Idle | AgentStatus::Done) => Step::Deliver,
             Some(AgentStatus::Working | AgentStatus::NeedsYou) | None => Step::Wait,
         }
     }
 }
 
+/// Hands coordinators their reports, one hand-over at a time.
+pub struct ReportDelivery {
+    gate: Mutex<CoordinatorGate>,
+    /// Held for a whole attempt, so two attempts cannot take and paste reports for the same coordinator at once.
+    turn: Mutex<()>,
+    reports: Arc<dyn ReportSource>,
+}
+
+impl ReportDelivery {
+    pub fn new(reports: Arc<dyn ReportSource>) -> Self {
+        Self {
+            gate: Mutex::new(CoordinatorGate::default()),
+            turn: Mutex::new(()),
+            reports,
+        }
+    }
+
+    fn gate(&self) -> MutexGuard<'_, CoordinatorGate> {
+        self.gate.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Reports were written for the coordinator in `session`.
+    pub fn note(&self, session: &str) {
+        self.gate().wait(session);
+    }
+
+    pub fn is_waiting(&self, session: &str) -> bool {
+        self.gate().is_waiting(session)
+    }
+
+    pub fn typed(&self, session: &str, data: &str) {
+        self.gate().typed(session, data);
+    }
+
+    pub fn closed(&self, session: &str) {
+        self.gate().closed(session);
+    }
+
+    pub fn has_draft(&self, session: &str) -> bool {
+        self.gate().has_draft(session)
+    }
+
+    /// Hands the reports of `session` over, if it can take them now. `live` is read under the turn lock, so the
+    /// status it gives is the one left by the last hand-over. `type_text` pastes a text and presses Enter.
+    pub fn attempt(
+        &self,
+        session: &str,
+        live: impl FnOnce() -> Live,
+        type_text: &mut dyn FnMut(&str) -> Result<(), String>,
+    ) -> Delivery {
+        let _turn = self.turn.lock().unwrap_or_else(PoisonError::into_inner);
+        let step = {
+            let mut gate = self.gate();
+            let step = gate.decide(session, live());
+            if step == Step::Forget {
+                gate.done_waiting(session);
+            }
+            step
+        };
+        match step {
+            Step::Nothing => Delivery::Nothing,
+            Step::Wait => Delivery::Waiting,
+            Step::Forget => Delivery::Forgotten,
+            Step::Deliver => {
+                // Cleared before the reports are taken: a report that arrives during the paste asks for another attempt.
+                self.gate().done_waiting(session);
+                let Some(reports) = self.reports.take(session) else {
+                    return Delivery::Nothing;
+                };
+                match type_text(&reports.text) {
+                    Ok(()) => {
+                        self.reports.sent(&reports);
+                        Delivery::Delivered(reports.messages.len())
+                    }
+                    Err(error) => {
+                        self.undelivered(session, &reports);
+                        Delivery::Undelivered(error)
+                    }
+                }
+            }
+        }
+    }
+
+    fn undelivered(&self, session: &str, reports: &Reports) {
+        self.reports.undelivered(reports);
+        self.gate().wait(session);
+    }
+}
+
+/// The reports of the coordinators, handed to their agents through their terminals.
+pub struct AgentWakes {
+    terminals: TerminalManager,
+    deliveries: ReportDelivery,
+}
+
+impl AgentWakes {
+    pub fn new(terminals: TerminalManager, reports: Arc<dyn ReportSource>) -> Self {
+        Self {
+            terminals,
+            deliveries: ReportDelivery::new(reports),
+        }
+    }
+
+    /// A report was written for the coordinator in `session`.
+    pub fn note(self: &Arc<Self>, session: &str) {
+        self.deliveries.note(session);
+        self.attempt_later(session);
+    }
+
+    /// The person typed into a session. Only a session with reports waiting is looked at again.
+    pub fn typed(self: &Arc<Self>, session: &str, data: &str) {
+        self.deliveries.typed(session, data);
+        if self.deliveries.is_waiting(session) {
+            self.attempt_later(session);
+        }
+    }
+
+    /// The status of a session changed, so its reports may go in now.
+    pub fn status_changed(self: &Arc<Self>, session: &str) {
+        self.attempt_later(session);
+    }
+
+    pub fn closed(&self, session: &str) {
+        self.deliveries.closed(session);
+    }
+
+    /// Whether the person has a draft in `session`'s input, which holds back anything typed into it.
+    pub fn has_draft(&self, session: &str) -> bool {
+        self.deliveries.has_draft(session)
+    }
+
+    /// Tries the hand-over on its own thread: the status event comes from a monitor that must not wait on a terminal.
+    fn attempt_later(self: &Arc<Self>, session: &str) {
+        if !self.deliveries.is_waiting(session) {
+            return;
+        }
+        let wakes = Arc::clone(self);
+        let session = session.to_owned();
+        std::thread::spawn(move || wakes.attempt(&session));
+    }
+
+    fn attempt(&self, session: &str) {
+        let outcome = self
+            .deliveries
+            .attempt(session, || self.live(session), &mut |text| {
+                type_and_submit(&self.terminals, session, &as_paste(text))
+                    .map_err(|error| error.to_string())
+            });
+        if let Delivery::Undelivered(error) = outcome {
+            log::error!("could not hand the reports to coordinator {session}: {error}");
+        }
+    }
+
+    fn live(&self, session: &str) -> Live {
+        let info = self.terminals.info(session).ok();
+        Live {
+            running: info.as_ref().is_some_and(|info| info.running),
+            status: info.and_then(|info| info.agent_status),
+        }
+    }
+}
+
+/// Types `text` and presses Enter. The Enter is a write of its own: a program that reads a paste takes an Enter
+/// that arrives with the text as more text, and the message would stay in its input unsent.
+pub(super) fn type_and_submit(
+    terminals: &TerminalManager,
+    session: &str,
+    text: &str,
+) -> Result<(), TerminalError> {
+    terminals.write(session, text)?;
+    std::thread::sleep(SUBMIT_DELAY);
+    terminals.write(session, "\r")
+}
+
 /// Whether a question may be typed into a session now: its agent is idle or done, and the person has no draft.
 pub fn free_to_type(status: Option<AgentStatus>, draft: bool) -> bool {
     !draft && matches!(status, Some(AgentStatus::Idle | AgentStatus::Done))
-}
-
-/// Wraps `text` as a paste, so a program that reads it takes its line breaks as text and not as Enter.
-pub fn as_paste(text: &str) -> String {
-    format!("\u{1b}[200~{text}\u{1b}[201~")
 }
 
 /// Whether the input has a draft after the person typed `data`: printable text that was not submitted.
@@ -139,219 +318,137 @@ fn skip_escape(chars: &mut Peekable<Chars<'_>>) {
     }
 }
 
-/// The wake notes of the agent coordinators, shared by the event sink, the tools and the terminal writes.
-pub struct AgentWakes {
-    book: Mutex<WakeBook>,
-    terminals: TerminalManager,
-}
-
-impl AgentWakes {
-    pub fn new(terminals: TerminalManager) -> Self {
-        Self {
-            book: Mutex::new(WakeBook::default()),
-            terminals,
-        }
-    }
-
-    fn book(&self) -> MutexGuard<'_, WakeBook> {
-        self.book.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// A worker of the coordinator's run reported or needs an answer.
-    pub fn note(self: &Arc<Self>, coordinator: &str) {
-        self.book().note(coordinator, Instant::now());
-        self.attempt_later(coordinator);
-    }
-
-    /// The person typed into a session. Only a note that waits is looked at again, so typing costs nothing else.
-    pub fn typed(self: &Arc<Self>, session: &str, data: &str) {
-        let mut book = self.book();
-        book.typed(session, data);
-        let pending = book.is_pending(session);
-        drop(book);
-        if pending {
-            self.attempt_later(session);
-        }
-    }
-
-    /// The status of a session changed, so a note waiting for it may be deliverable now.
-    pub fn status_changed(self: &Arc<Self>, session: &str) {
-        self.attempt_later(session);
-    }
-
-    /// The coordinator read its workers itself, so the note would repeat what it already knows.
-    pub fn cancel(&self, session: &str) {
-        self.book().cancel(session);
-    }
-
-    pub fn closed(&self, session: &str) {
-        self.book().closed(session);
-    }
-
-    /// Whether the person has a draft in `session`'s input, which holds back anything typed into it.
-    pub fn has_draft(&self, session: &str) -> bool {
-        self.book().has_draft(session)
-    }
-
-    /// Tries the note on its own thread: the status event comes from a monitor that must not wait on a terminal.
-    fn attempt_later(self: &Arc<Self>, session: &str) {
-        if !self.book().is_pending(session) {
-            return;
-        }
-        let wakes = Arc::clone(self);
-        let session = session.to_owned();
-        std::thread::spawn(move || wakes.attempt(&session));
-    }
-
-    fn attempt(&self, session: &str) {
-        let info = self.terminals.info(session).ok();
-        let running = info.as_ref().is_some_and(|info| info.running);
-        let status = info.and_then(|info| info.agent_status);
-        // Deciding and dropping the note happen under one lock, so two attempts cannot both type it.
-        let step = {
-            let mut book = self.book();
-            let step = book.decide(session, running, status, Instant::now());
-            if matches!(step, Step::Deliver | Step::Forget) {
-                book.cancel(session);
-            }
-            step
-        };
-        if step == Step::Deliver {
-            self.type_note(session);
-        }
-    }
-
-    /// Types the note and presses Enter, as the person would.
-    fn type_note(&self, session: &str) {
-        if let Err(error) = type_and_submit(&self.terminals, session, WAKE_NOTE) {
-            log::error!("could not wake coordinator {session}: {error}");
-        }
-    }
-}
-
-/// Types `text` and presses Enter. The Enter is a write of its own: a program that reads a paste takes an Enter
-/// that arrives with the text as more text, and the message would stay in its input unsent.
-pub(super) fn type_and_submit(
-    terminals: &TerminalManager,
-    session: &str,
-    text: &str,
-) -> Result<(), TerminalError> {
-    terminals.write(session, text)?;
-    std::thread::sleep(SUBMIT_DELAY);
-    terminals.write(session, "\r")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::team::team_model::{MessageKind, TeamMessage};
 
     const S: &str = "coordinator";
 
-    fn start() -> Instant {
-        Instant::now()
+    fn live(status: Option<AgentStatus>) -> Live {
+        Live {
+            running: true,
+            status,
+        }
+    }
+
+    fn message(id: &str) -> TeamMessage {
+        TeamMessage {
+            id: id.to_owned(),
+            member_id: "worker".to_owned(),
+            kind: MessageKind::Done,
+            body: "guia".to_owned(),
+            created_at: 0,
+        }
+    }
+
+    fn reports(ids: &[&str], text: &str) -> Reports {
+        Reports {
+            messages: ids.iter().map(|id| message(id)).collect(),
+            text: text.to_owned(),
+        }
+    }
+
+    /// The reports waiting in the team: a hand-over takes the first, and a failed one puts it back.
+    #[derive(Default)]
+    struct FakeReports {
+        waiting: Mutex<Vec<Reports>>,
+        sent: Mutex<usize>,
+        returned: Mutex<usize>,
+    }
+
+    impl FakeReports {
+        fn with(waiting: Vec<Reports>) -> Self {
+            Self {
+                waiting: Mutex::new(waiting),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl ReportSource for FakeReports {
+        fn take(&self, _session: &str) -> Option<Reports> {
+            let mut waiting = self.waiting.lock().unwrap();
+            (!waiting.is_empty()).then(|| waiting.remove(0))
+        }
+
+        fn sent(&self, _reports: &Reports) {
+            *self.sent.lock().unwrap() += 1;
+        }
+
+        fn undelivered(&self, reports: &Reports) {
+            *self.returned.lock().unwrap() += 1;
+            self.waiting.lock().unwrap().insert(0, reports.clone());
+        }
+    }
+
+    /// A paste that goes through, recording each text it was given.
+    fn typing(typed: &mut Vec<String>) -> impl FnMut(&str) -> Result<(), String> + '_ {
+        move |text| {
+            typed.push(text.to_owned());
+            Ok(())
+        }
     }
 
     #[test]
-    fn an_idle_coordinator_is_woken_at_once() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
+    fn an_idle_or_done_coordinator_takes_its_reports_and_a_busy_one_does_not() {
+        let mut gate = CoordinatorGate::default();
+        gate.wait(S);
+        assert_eq!(gate.decide(S, live(Some(AgentStatus::Idle))), Step::Deliver);
+        assert_eq!(gate.decide(S, live(Some(AgentStatus::Done))), Step::Deliver);
+        assert_eq!(gate.decide(S, live(Some(AgentStatus::Working))), Step::Wait);
         assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Idle), t),
-            Step::Deliver
-        );
-    }
-
-    #[test]
-    fn a_coordinator_that_is_done_with_its_turn_is_woken_too() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Done), t),
-            Step::Deliver
-        );
-    }
-
-    #[test]
-    fn a_busy_or_waiting_coordinator_is_not_interrupted() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Working), t),
+            gate.decide(S, live(Some(AgentStatus::NeedsYou))),
             Step::Wait
         );
         assert_eq!(
-            book.decide(S, true, Some(AgentStatus::NeedsYou), t),
-            Step::Wait
-        );
-        assert_eq!(
-            book.decide(S, true, None, t),
+            gate.decide(S, live(None)),
             Step::Wait,
             "no status is not idle"
         );
     }
 
     #[test]
-    fn a_note_waits_for_the_turn_to_end_and_is_delivered_then() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
+    fn a_session_with_no_reports_waiting_has_nothing_to_do_and_an_ended_one_is_forgotten() {
+        let mut gate = CoordinatorGate::default();
+        assert_eq!(gate.decide(S, live(Some(AgentStatus::Idle))), Step::Nothing);
+        gate.wait(S);
+        let ended = Live {
+            running: false,
+            status: Some(AgentStatus::Idle),
+        };
+        assert_eq!(gate.decide(S, ended), Step::Forget);
+    }
+
+    #[test]
+    fn a_draft_in_the_input_holds_the_reports_until_it_is_submitted() {
+        let mut gate = CoordinatorGate::default();
+        gate.wait(S);
+        gate.typed(S, "quero saber");
+        assert_eq!(gate.decide(S, live(Some(AgentStatus::Idle))), Step::Wait);
+        gate.typed(S, "\r");
+        assert_eq!(gate.decide(S, live(Some(AgentStatus::Idle))), Step::Deliver);
+    }
+
+    #[test]
+    fn a_draft_typed_in_one_session_does_not_hold_another() {
+        let mut gate = CoordinatorGate::default();
+        gate.wait("b");
+        gate.typed("a", "rascunho");
         assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Working), t),
-            Step::Wait
-        );
-        // The Stop hook moves the status to done: the same note is delivered.
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Done), t),
+            gate.decide("b", live(Some(AgentStatus::Idle))),
             Step::Deliver
         );
     }
 
     #[test]
-    fn many_reports_make_one_note() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
-        book.note(S, t + Duration::from_secs(5));
-        book.note(S, t + Duration::from_secs(9));
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Idle), t),
-            Step::Deliver
-        );
-        book.cancel(S);
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Idle), t),
-            Step::Nothing
-        );
-    }
-
-    #[test]
-    fn a_note_keeps_its_first_time_so_the_deadline_is_not_pushed_back() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
-        book.note(S, t + DEADLINE);
-        let late = t + DEADLINE + Duration::from_secs(1);
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Working), late),
-            Step::Forget
-        );
-    }
-
-    #[test]
-    fn a_draft_in_the_input_holds_the_note_until_it_is_submitted() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
-        book.typed(S, "quero saber");
-        assert_eq!(book.decide(S, true, Some(AgentStatus::Idle), t), Step::Wait);
-        book.typed(S, "\r");
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Idle), t),
-            Step::Deliver
-        );
+    fn a_closed_session_forgets_its_wait_and_its_draft() {
+        let mut gate = CoordinatorGate::default();
+        gate.wait(S);
+        gate.typed(S, "meio");
+        gate.closed(S);
+        assert!(!gate.is_waiting(S));
+        assert!(!gate.has_draft(S));
     }
 
     #[test]
@@ -384,84 +481,133 @@ mod tests {
     }
 
     #[test]
-    fn a_draft_typed_in_one_session_does_not_hold_another() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note("b", t);
-        book.typed("a", "rascunho");
+    fn an_idle_coordinator_gets_its_reports_once() {
+        let source = Arc::new(FakeReports::with(vec![reports(&["m1"], "relatório um")]));
+        let delivery = ReportDelivery::new(source.clone());
+        let mut typed = Vec::new();
+        delivery.note(S);
+
+        let first = delivery.attempt(S, || live(Some(AgentStatus::Idle)), &mut typing(&mut typed));
+        let second = delivery.attempt(S, || live(Some(AgentStatus::Idle)), &mut typing(&mut typed));
+
+        assert_eq!(first, Delivery::Delivered(1));
+        assert_eq!(second, Delivery::Nothing, "nothing is owed twice");
+        assert_eq!(typed, vec!["relatório um".to_owned()]);
+        assert_eq!(*source.sent.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn a_busy_coordinator_gets_its_reports_when_its_turn_ends() {
+        let source = Arc::new(FakeReports::with(vec![reports(&["m1", "m2"], "dois")]));
+        let delivery = ReportDelivery::new(source);
+        let mut typed = Vec::new();
+        delivery.note(S);
+
+        let busy = delivery.attempt(
+            S,
+            || live(Some(AgentStatus::Working)),
+            &mut typing(&mut typed),
+        );
+        assert_eq!(busy, Delivery::Waiting);
+        assert!(typed.is_empty(), "nothing goes into a busy agent");
+
+        let done = delivery.attempt(S, || live(Some(AgentStatus::Done)), &mut typing(&mut typed));
+        assert_eq!(done, Delivery::Delivered(2));
+        assert_eq!(typed.len(), 1);
+    }
+
+    #[test]
+    fn several_reports_go_in_one_paste() {
+        let source = Arc::new(FakeReports::with(vec![reports(
+            &["m1", "m2", "m3"],
+            "tres",
+        )]));
+        let delivery = ReportDelivery::new(source);
+        let mut typed = Vec::new();
+        delivery.note(S);
+
+        delivery.attempt(S, || live(Some(AgentStatus::Idle)), &mut typing(&mut typed));
+
+        assert_eq!(typed, vec!["tres".to_owned()]);
+    }
+
+    #[test]
+    fn a_paste_that_fails_puts_the_reports_back_and_the_next_status_tries_again() {
+        let source = Arc::new(FakeReports::with(vec![reports(&["m1"], "relatório")]));
+        let delivery = ReportDelivery::new(source.clone());
+        delivery.note(S);
+
+        let failed = delivery.attempt(S, || live(Some(AgentStatus::Idle)), &mut |_| {
+            Err("the terminal is gone".to_owned())
+        });
         assert_eq!(
-            book.decide("b", true, Some(AgentStatus::Idle), t),
-            Step::Deliver
+            failed,
+            Delivery::Undelivered("the terminal is gone".to_owned())
+        );
+        assert_eq!(*source.returned.lock().unwrap(), 1);
+        assert_eq!(*source.sent.lock().unwrap(), 0);
+        assert!(delivery.is_waiting(S), "the next status change tries again");
+
+        let mut typed = Vec::new();
+        let retried =
+            delivery.attempt(S, || live(Some(AgentStatus::Idle)), &mut typing(&mut typed));
+        assert_eq!(retried, Delivery::Delivered(1));
+        assert_eq!(
+            typed,
+            vec!["relatório".to_owned()],
+            "the same report, once more"
         );
     }
 
     #[test]
-    fn a_closed_session_forgets_its_note_and_its_draft() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
-        book.typed(S, "meio");
-        book.closed(S);
-        assert_eq!(
-            book.decide(S, false, Some(AgentStatus::Idle), t),
-            Step::Nothing
-        );
-        book.note(S, t);
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Idle), t),
-            Step::Deliver,
-            "no draft is left"
-        );
+    fn reports_a_check_already_read_are_not_pasted() {
+        let source = Arc::new(FakeReports::default());
+        let delivery = ReportDelivery::new(source);
+        let mut typed = Vec::new();
+        delivery.note(S);
+
+        let outcome =
+            delivery.attempt(S, || live(Some(AgentStatus::Idle)), &mut typing(&mut typed));
+
+        assert_eq!(outcome, Delivery::Nothing);
+        assert!(typed.is_empty());
     }
 
     #[test]
-    fn a_session_that_is_no_longer_running_is_forgotten() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
+    fn a_draft_in_the_input_holds_the_reports_back() {
+        let source = Arc::new(FakeReports::with(vec![reports(&["m1"], "relatório")]));
+        let delivery = ReportDelivery::new(source);
+        let mut typed = Vec::new();
+        delivery.note(S);
+        delivery.typed(S, "rascunho");
+
+        let outcome =
+            delivery.attempt(S, || live(Some(AgentStatus::Idle)), &mut typing(&mut typed));
+
+        assert_eq!(outcome, Delivery::Waiting);
+        assert!(typed.is_empty());
+    }
+
+    #[test]
+    fn a_coordinator_whose_session_ended_gets_nothing_and_keeps_its_reports_for_a_check() {
+        let source = Arc::new(FakeReports::with(vec![reports(&["m1"], "relatório")]));
+        let delivery = ReportDelivery::new(source.clone());
+        let mut typed = Vec::new();
+        delivery.note(S);
+
+        let ended = Live {
+            running: false,
+            status: None,
+        };
+        let outcome = delivery.attempt(S, || ended, &mut typing(&mut typed));
+
+        assert_eq!(outcome, Delivery::Forgotten);
+        assert!(typed.is_empty());
         assert_eq!(
-            book.decide(S, false, Some(AgentStatus::Idle), t),
-            Step::Forget
+            source.waiting.lock().unwrap().len(),
+            1,
+            "still unread in the team"
         );
-    }
-
-    #[test]
-    fn a_note_past_the_deadline_is_forgotten_even_when_the_agent_is_idle() {
-        let t = start();
-        let mut book = WakeBook::default();
-        book.note(S, t);
-        let late = t + DEADLINE + Duration::from_secs(1);
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Idle), late),
-            Step::Forget
-        );
-    }
-
-    #[test]
-    fn without_a_note_nothing_happens() {
-        let t = start();
-        let book = WakeBook::default();
-        assert_eq!(
-            book.decide(S, true, Some(AgentStatus::Idle), t),
-            Step::Nothing
-        );
-    }
-
-    #[test]
-    fn a_question_is_typed_only_into_an_idle_agent_with_no_draft() {
-        assert!(free_to_type(Some(AgentStatus::Idle), false));
-        assert!(free_to_type(Some(AgentStatus::Done), false));
-        assert!(!free_to_type(Some(AgentStatus::Working), false));
-        assert!(!free_to_type(Some(AgentStatus::NeedsYou), false));
-        assert!(!free_to_type(None, false), "no status is not idle");
-        assert!(
-            !free_to_type(Some(AgentStatus::Idle), true),
-            "a draft holds it"
-        );
-    }
-
-    #[test]
-    fn a_question_is_pasted_between_the_paste_markers() {
-        assert_eq!(as_paste("uma\nduas"), "\u{1b}[200~uma\nduas\u{1b}[201~");
+        assert!(!delivery.is_waiting(S));
     }
 }

@@ -427,6 +427,44 @@ pub(super) fn take_unread_messages(
     Ok(messages)
 }
 
+/// The reports nobody has read yet from the workers that the session `notify_session` started, oldest first.
+/// Taking them marks them read, so each reaches the coordinator once. Questions and answers between members are
+/// unread too, for a check to hear; they are not reports, so they stay where they are.
+pub(super) fn take_unread_reports(
+    connection: &Connection,
+    notify_session: &str,
+) -> Result<Vec<TeamMessage>, DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT m.id, m.member_id, m.kind, m.body, m.created_at
+         FROM team_messages m JOIN team_members t ON t.id = m.member_id
+         WHERE m.unread = 1 AND t.notify_session = ?1
+           AND m.kind IN ('done', 'failed', 'noReport', 'needsYou')
+         ORDER BY m.created_at, m.rowid",
+    )?;
+    let messages = statement
+        .query_map([notify_session], message_from)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    for message in &messages {
+        connection.execute(
+            "UPDATE team_messages SET unread = 0 WHERE id = ?1",
+            [&message.id],
+        )?;
+    }
+    Ok(messages)
+}
+
+/// Puts messages back among the unread ones, when handing them over did not go through.
+pub(super) fn mark_unread(
+    connection: &Connection,
+    message_ids: &[String],
+) -> Result<(), DatabaseError> {
+    for id in message_ids {
+        connection.execute("UPDATE team_messages SET unread = 1 WHERE id = ?1", [id])?;
+    }
+    Ok(())
+}
+
 /// Empties the task of every member under `parent_id`. Used before the parent goes, so they keep no task
 /// once they answer to no one.
 pub(super) fn clear_tasks_of(

@@ -7,6 +7,7 @@ pub mod daemon_host;
 pub mod daemon_pty;
 pub mod foreground_job;
 pub mod output_channels;
+pub mod pasted_text;
 pub mod session_records;
 pub mod terminal_commands;
 pub mod terminal_events;

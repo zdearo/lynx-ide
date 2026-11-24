@@ -14,6 +14,7 @@ use super::hook_install::{
     HookInstallError, HookInstallState, HookInstallStatus, Version, invalid_config, io_error,
     read_optional, write_atomic,
 };
+use super::hook_ownership::{Owned, OwnershipBook};
 
 /// Appended to the app's executable path; a hook command ending with it is Lynx's.
 const COMMAND_SUFFIX: &str = " --agent-hook codex";
@@ -135,11 +136,12 @@ fn parse_trust_key(key: &str, source: &str) -> Option<(String, usize, usize)> {
     (found_source == source).then(|| (label.to_owned(), group, handler))
 }
 
-fn is_lynx_handler(handler: &Value) -> bool {
+/// Whether a handler is one Lynx wrote: its command is one of `owned`, exactly.
+fn is_owned(handler: &Value, owned: &[String]) -> bool {
     handler
         .get("command")
         .and_then(Value::as_str)
-        .is_some_and(|command| command.ends_with(COMMAND_SUFFIX))
+        .is_some_and(|command| owned.iter().any(|own| own == command))
 }
 
 fn handlers_of(group: &Value) -> &[Value] {
@@ -209,17 +211,18 @@ fn read_config(path: &Path) -> Result<DocumentMut, HookInstallError> {
     text.parse().map_err(|_| invalid_config(path))
 }
 
-/// Takes Lynx's handlers out of `hooks.json`. The trust entries of the handlers that move to
-/// fill the gap are renamed to match, so each trust entry keeps the hook it was given to.
-/// Returns whether anything was removed.
-fn strip(hooks: &mut Value, config: &mut DocumentMut, source: &str) -> bool {
+/// Takes the handlers whose command is one of `owned` out of `hooks.json`. The trust entries of the handlers that move
+/// to fill the gap are renamed to match, so each trust entry keeps the hook it was given to. Returns whether anything
+/// was removed.
+fn strip(hooks: &mut Value, config: &mut DocumentMut, source: &str, owned: &[String]) -> bool {
     let mut changed = false;
     for event in HOOKED_EVENTS {
         let groups = groups_of(hooks, event.name);
-        if !groups
-            .iter()
-            .any(|group| handlers_of(group).iter().any(is_lynx_handler))
-        {
+        if !groups.iter().any(|group| {
+            handlers_of(group)
+                .iter()
+                .any(|handler| is_owned(handler, owned))
+        }) {
             continue;
         }
         // Each old (group, handler) position maps to its new one, or to nothing when removed.
@@ -229,7 +232,7 @@ fn strip(hooks: &mut Value, config: &mut DocumentMut, source: &str) -> bool {
             let handlers = handlers_of(group);
             let mut kept = Vec::new();
             for (handler_index, handler) in handlers.iter().enumerate() {
-                if is_lynx_handler(handler) {
+                if is_owned(handler, owned) {
                     moves.push(((group_index, handler_index), None));
                 } else {
                     moves.push((
@@ -334,13 +337,16 @@ fn implicit_table() -> Item {
 pub struct CodexHookTarget {
     /// The folder Codex keeps its settings in: `CODEX_HOME`, or `~/.codex`.
     home: PathBuf,
+    /// What Lynx wrote into `hooks.json`: only those handlers are Lynx's to change.
+    book: OwnershipBook,
     command: Option<String>,
 }
 
 impl CodexHookTarget {
-    pub fn new(home: PathBuf, executable: Option<&Path>) -> Self {
+    pub fn new(home: PathBuf, book: OwnershipBook, executable: Option<&Path>) -> Self {
         Self {
             home,
+            book,
             command: executable.map(|path| {
                 let path = path.to_string_lossy();
                 let quoted = if cfg!(windows) {
@@ -366,6 +372,12 @@ impl CodexHookTarget {
         self.hooks_path().to_string_lossy().into_owned()
     }
 
+    /// What Lynx owns in `hooks.json`: what its book names, and this app's own command.
+    fn owned(&self) -> Owned {
+        self.book
+            .owned(&self.hooks_path(), self.command.as_deref(), None)
+    }
+
     pub fn status(&self, version: Option<Version>) -> HookInstallStatus {
         let read = read_hooks(&self.hooks_path())
             .and_then(|hooks| read_config(&self.config_path()).map(|config| (hooks, config)));
@@ -382,10 +394,11 @@ impl CodexHookTarget {
             .as_deref()
             .ok_or(HookInstallError::NoExecutable)?;
         let source = self.source();
+        let owned = self.owned();
         let mut hooks = read_hooks(&self.hooks_path())?;
         let mut config = read_config(&self.config_path())?;
 
-        strip(&mut hooks, &mut config, &source);
+        strip(&mut hooks, &mut config, &source, &owned.commands);
 
         let trusting = trusts(version);
         let invalid = || invalid_config(&self.hooks_path());
@@ -426,20 +439,29 @@ impl CodexHookTarget {
         let text = serde_json::to_string_pretty(&hooks)
             .map_err(|error| io_error(&self.hooks_path(), std::io::Error::other(error)))?;
         write_atomic(&self.hooks_path(), &format!("{text}\n"))?;
+        self.book.record(
+            &self.hooks_path(),
+            Owned {
+                commands: vec![command.to_owned()],
+                ..Owned::default()
+            },
+        )?;
         Ok(self.status(version))
     }
 
     /// Removes Lynx's handlers and their trust, and leaves everything else as it was.
     pub fn remove(&self, version: Option<Version>) -> Result<HookInstallStatus, HookInstallError> {
         let source = self.source();
+        let owned = self.owned();
         let mut hooks = read_hooks(&self.hooks_path())?;
         let mut config = read_config(&self.config_path())?;
-        if strip(&mut hooks, &mut config, &source) {
+        if strip(&mut hooks, &mut config, &source, &owned.commands) {
             write_atomic(&self.config_path(), &config.to_string())?;
             let text = serde_json::to_string_pretty(&hooks)
                 .map_err(|error| io_error(&self.hooks_path(), std::io::Error::other(error)))?;
             write_atomic(&self.hooks_path(), &format!("{text}\n"))?;
         }
+        self.book.record(&self.hooks_path(), Owned::default())?;
         Ok(self.status(version))
     }
 
@@ -620,6 +642,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
+            OwnershipBook::at(dir.path().join("hook-ownership.json")),
             Some(Path::new("/opt/lynx/lynx-ide")),
         );
 
@@ -655,6 +678,7 @@ mod tests {
         .expect("write config");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
+            OwnershipBook::at(dir.path().join("hook-ownership.json")),
             Some(Path::new("/opt/lynx/lynx-ide")),
         );
 
@@ -695,6 +719,7 @@ mod tests {
         .expect("write config");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
+            OwnershipBook::at(dir.path().join("hook-ownership.json")),
             Some(Path::new("/opt/lynx/lynx-ide")),
         );
 
@@ -717,6 +742,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
+            OwnershipBook::at(dir.path().join("hook-ownership.json")),
             Some(Path::new("/opt/lynx/lynx-ide")),
         );
 
@@ -732,6 +758,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
+            OwnershipBook::at(dir.path().join("hook-ownership.json")),
             Some(Path::new("/opt/lynx/lynx-ide")),
         );
         target.install(Some([0, 160, 1])).expect("install");
@@ -748,12 +775,78 @@ mod tests {
         assert!(status.detail.unwrap_or_default().contains("turned off"));
     }
 
+    /// The Stop commands of a hooks file, in order.
+    fn stop_commands(dir: &Path) -> Vec<String> {
+        let hooks: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("hooks.json")).expect("hooks"))
+                .expect("json");
+        hooks["hooks"]["Stop"]
+            .as_array()
+            .expect("stop groups")
+            .iter()
+            .flat_map(|group| group["hooks"].as_array().cloned().unwrap_or_default())
+            .filter_map(|handler| handler["command"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// Another app's Codex handler in the same file is kept by install and remove.
+    #[test]
+    fn another_apps_codex_handler_survives_install_and_remove() {
+        const MAESTRI_CODEX: &str = "'/opt/Maestri.AppImage' --agent-hook codex";
+        const LYNX_CODEX: &str = "'/opt/lynx/lynx-ide' --agent-hook codex";
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(
+            dir.path().join("hooks.json"),
+            json!({ "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": MAESTRI_CODEX }] }] } })
+                .to_string(),
+        )
+        .expect("write hooks");
+        let target = CodexHookTarget::new(
+            dir.path().to_path_buf(),
+            OwnershipBook::at(dir.path().join("hook-ownership.json")),
+            Some(Path::new("/opt/lynx/lynx-ide")),
+        );
+
+        target.install(Some([0, 160, 1])).expect("install");
+        assert_eq!(stop_commands(dir.path()), vec![MAESTRI_CODEX, LYNX_CODEX]);
+
+        target.remove(Some([0, 160, 1])).expect("remove");
+        assert_eq!(stop_commands(dir.path()), vec![MAESTRI_CODEX]);
+    }
+
+    /// A handler from before the book, with this app's exact command, is taken over; another app's is not.
+    #[test]
+    fn an_older_handler_of_this_app_is_taken_over_by_its_exact_command() {
+        const MAESTRI_CODEX: &str = "'/opt/Maestri.AppImage' --agent-hook codex";
+        const LYNX_CODEX: &str = "'/opt/lynx/lynx-ide' --agent-hook codex";
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(
+            dir.path().join("hooks.json"),
+            json!({ "hooks": { "Stop": [
+                { "hooks": [{ "type": "command", "command": MAESTRI_CODEX }] },
+                { "hooks": [{ "type": "command", "command": LYNX_CODEX }] }
+            ] } })
+            .to_string(),
+        )
+        .expect("write hooks");
+        let target = CodexHookTarget::new(
+            dir.path().to_path_buf(),
+            OwnershipBook::at(dir.path().join("hook-ownership.json")),
+            Some(Path::new("/opt/lynx/lynx-ide")),
+        );
+
+        target.install(Some([0, 160, 1])).expect("install");
+
+        assert_eq!(stop_commands(dir.path()), vec![MAESTRI_CODEX, LYNX_CODEX]);
+    }
+
     #[test]
     fn a_hooks_file_that_is_not_json_is_reported_and_never_overwritten() {
         let dir = tempfile::tempdir().expect("temp dir");
         fs::write(dir.path().join("hooks.json"), "{ nope").expect("write");
         let target = CodexHookTarget::new(
             dir.path().to_path_buf(),
+            OwnershipBook::at(dir.path().join("hook-ownership.json")),
             Some(Path::new("/opt/lynx/lynx-ide")),
         );
 

@@ -13,6 +13,7 @@ pub mod harness;
 pub mod hook_events;
 pub mod hook_hub;
 pub mod hook_install;
+pub mod hook_ownership;
 pub mod hook_relay;
 pub mod hook_targets;
 pub mod hub_address;

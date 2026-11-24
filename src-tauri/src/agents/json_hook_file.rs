@@ -1,5 +1,5 @@
 //! Hook entries in a JSON settings file, the shape most agents share. Lynx owns the entries whose
-//! command carries its marker; every other entry and every other key stays as it is.
+//! command it wrote (the caller says which); every other entry and every other key stays as it is.
 
 use std::path::Path;
 
@@ -51,13 +51,13 @@ fn entry(format: &JsonHookFormat, spec: &EventSpec, command: &str) -> Value {
     }
 }
 
-/// Whether a handler is Lynx's: one of its command fields carries the marker.
-fn owned(handler: &Value, marker: &str) -> bool {
+/// Whether a handler is one Lynx wrote: one of its command fields is one of `owned`, exactly.
+fn is_owned(handler: &Value, owned: &[String]) -> bool {
     ["command", "bash", "powershell"].iter().any(|key| {
         handler
             .get(*key)
             .and_then(Value::as_str)
-            .is_some_and(|command| command.contains(marker))
+            .is_some_and(|command| owned.iter().any(|own| own == command))
     })
 }
 
@@ -96,23 +96,23 @@ pub fn write_settings(path: &Path, settings: &Value) -> Result<(), HookInstallEr
     write_atomic(path, &text)
 }
 
-/// Removes Lynx's handlers from every event under the root key, dropping the groups and events
-/// they leave empty. Returns whether anything changed.
-pub fn strip(settings: &mut Value, format: &JsonHookFormat, marker: &str) -> bool {
+/// Removes the handlers whose command is one of `owned` from every event under the root key, dropping the groups and
+/// events they leave empty. Returns whether anything changed.
+pub fn strip(settings: &mut Value, format: &JsonHookFormat, owned: &[String]) -> bool {
     let Some(root) = settings.as_object_mut() else {
         return false;
     };
     let Some(events) = root.get_mut(format.root_key).and_then(Value::as_object_mut) else {
         return false;
     };
-    let changed = strip_events(events, marker);
+    let changed = strip_events(events, owned);
     if changed && events.is_empty() {
         root.remove(format.root_key);
     }
     changed
 }
 
-fn strip_events(events: &mut Map<String, Value>, marker: &str) -> bool {
+fn strip_events(events: &mut Map<String, Value>, owned: &[String]) -> bool {
     let mut changed = false;
     let mut emptied = Vec::new();
     for (name, list) in events.iter_mut() {
@@ -123,13 +123,13 @@ fn strip_events(events: &mut Map<String, Value>, marker: &str) -> bool {
         list.retain_mut(|item| {
             if let Some(inner) = item.get_mut("hooks").and_then(Value::as_array_mut) {
                 let count = inner.len();
-                inner.retain(|handler| !owned(handler, marker));
+                inner.retain(|handler| !is_owned(handler, owned));
                 let removed = inner.len() != count;
                 event_changed |= removed;
                 // A group that held only Lynx's handler goes with it; a group with others stays.
                 return !(removed && inner.is_empty());
             }
-            if owned(item, marker) {
+            if is_owned(item, owned) {
                 event_changed = true;
                 return false;
             }
@@ -148,15 +148,15 @@ fn strip_events(events: &mut Map<String, Value>, marker: &str) -> bool {
     changed
 }
 
-/// Replaces Lynx's entries with a fresh set, one per event, that runs `command`.
+/// Replaces the entries whose command is one of `owned` with a fresh set, one per event, that runs `command`.
 pub fn apply(
     settings: &mut Value,
     format: &JsonHookFormat,
-    marker: &str,
+    owned: &[String],
     command: &str,
     events: &[EventSpec],
 ) {
-    strip(settings, format, marker);
+    strip(settings, format, owned);
     let Some(root) = settings.as_object_mut() else {
         return;
     };
@@ -220,7 +220,6 @@ pub fn commands_of<'a>(settings: &'a Value, format: &JsonHookFormat, event: &str
 mod tests {
     use super::*;
 
-    const MARKER: &str = " --agent-hook demo";
     const COMMAND: &str = "'/opt/lynx/lynx-ide' --agent-hook demo";
 
     fn claude_handler(command: &str) -> Value {
@@ -242,7 +241,7 @@ mod tests {
     #[test]
     fn grouped_events_nest_the_handler_and_take_the_matcher() {
         let mut settings = json!({});
-        apply(&mut settings, &grouped_format(), MARKER, COMMAND, GROUPED);
+        apply(&mut settings, &grouped_format(), &[], COMMAND, GROUPED);
         assert_eq!(settings["hooks"]["Stop"][0]["hooks"][0]["command"], COMMAND);
         assert_eq!(settings["hooks"]["PreToolUse"][0]["matcher"], "*");
     }
@@ -258,11 +257,31 @@ mod tests {
                 ]
             }
         });
-        assert!(strip(&mut settings, &grouped_format(), MARKER));
+        assert!(strip(
+            &mut settings,
+            &grouped_format(),
+            &[COMMAND.to_owned()]
+        ));
         assert_eq!(settings["model"], "x");
         assert_eq!(
             commands_of(&settings, &grouped_format(), "Stop"),
             vec!["other tool"]
+        );
+    }
+
+    /// Only the commands Lynx wrote are its own: another app's command that merely shares the text is kept.
+    #[test]
+    fn strip_keeps_a_command_that_is_not_one_of_the_owned_ones() {
+        let other = "'/opt/Other.AppImage' --agent-hook demo";
+        let mut settings = json!({ "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": other }] }] } });
+        assert!(!strip(
+            &mut settings,
+            &grouped_format(),
+            &[COMMAND.to_owned()]
+        ));
+        assert_eq!(
+            commands_of(&settings, &grouped_format(), "Stop"),
+            vec![other]
         );
     }
 
@@ -272,7 +291,7 @@ mod tests {
         apply(
             &mut settings,
             &grouped_format(),
-            MARKER,
+            &[],
             COMMAND,
             &GROUPED[..1],
         );

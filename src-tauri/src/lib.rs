@@ -145,7 +145,11 @@ pub fn run() {
             let agents_home = lynx_home(user_home.clone());
             #[cfg(not(debug_assertions))]
             let agents_home = user_home.clone();
-            let hook_targets = HookTargets::from_environment(&agents_home, executable.as_deref());
+            let hook_targets = HookTargets::from_environment(
+                &agents_home,
+                &lynx_home(user_home.clone()),
+                executable.as_deref(),
+            );
             // Agents turned on before the browser tools existed get them too; this waits on the
             // agents' CLIs, so it stays off the startup path.
             let pending_tools = hook_targets.clone();

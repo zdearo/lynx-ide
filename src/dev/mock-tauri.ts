@@ -3,6 +3,7 @@
  * plain browser (`?mock=full` or `?mock=empty`). Development only: main.tsx
  * imports it behind `import.meta.env.DEV`, so it never reaches a release build.
  */
+import { webglBudget } from "@/terminal/terminal-renderer";
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 
@@ -3085,6 +3086,22 @@ export function installMockTauri(scenario: string): void {
     __lynxMock: {
       probe,
       pendingCommands: () => pendingCommands,
+      /** Development only: how many terminals hold a WebGL context now. */
+      webglHolders: () => webglBudget.holding(),
+      /** Development only: every running session prints `lines` lines at once, as a command with a lot of output does. */
+      printBurst: (lines: number) => {
+        const text = Array.from(
+          { length: lines },
+          (_, index) =>
+            `\x1b[3${index % 7}m burst line ${index}\x1b[0m ${"x".repeat(80)}\r\n`,
+        ).join("");
+        for (const session of sessions) {
+          if (!session.running) continue;
+          const next = (seq.get(session.id) ?? 0) + 1;
+          seq.set(session.id, next);
+          sendOutput(session.id, next, text);
+        }
+      },
       resizes: () => terminalResizes,
       /** The team's pairs and each member's orchestrator, as the e2e checks a line it drew or removed. */
       teamLines: () => {

@@ -17,10 +17,9 @@ import {
 import { useDialogStore } from "@/dialog-store";
 import { cn } from "@/lib/utils";
 import { shortcutLabel } from "@/platform-shortcuts";
-import { requestCloseTerminal } from "@/terminal/terminal-actions";
 import { tabTitles } from "@/terminal/terminal-tab-title";
-import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
-import type { AgentItem } from "@/agents/AgentRow";
+import { useTerminalStore } from "@/terminal/terminal-store";
+import type { AgentItem } from "@/agents/AgentGroup";
 import { copy } from "@/ui-copy";
 import { StateDot } from "@/workspace/worktrees/StateDot";
 import { CollapsedSummary } from "@/workspace/projects/CollapsedSummary";
@@ -51,18 +50,11 @@ function RepoSectionView({
   onSelectWorktree,
 }: RepoSectionProps) {
   const toggleRepo = useWorkspaceStore((state) => state.toggleRepo);
-  const expandedAgentGroups = useWorkspaceStore(
-    (state) => state.expandedAgentGroups,
-  );
-  const toggleAgentGroup = useWorkspaceStore((state) => state.toggleAgentGroup);
   const openNewWorktree = useWorkspaceStore((state) => state.openNewWorktree);
   const refreshWorktrees = useWorkspaceStore((state) => state.refreshWorktrees);
   const askRemoveRepo = useDialogStore((state) => state.askRemoveRepo);
   const askMove = useDialogStore((state) => state.askMove);
   const sessions = useTerminalStore((state) => state.sessions);
-  const activeByWorktree = useTerminalStore((state) => state.activeByWorktree);
-  const setActiveTerminal = useTerminalStore((state) => state.setActive);
-  const requestFocus = useTerminalStore((state) => state.requestFocus);
 
   const runningByPath = useMemo(() => {
     const counts = new Map<string, number>();
@@ -218,25 +210,7 @@ function RepoSectionView({
               selected={worktree.path === selectedPath}
               runningCount={runningByPath.get(worktree.path) ?? 0}
               agents={agentsByPath.get(worktree.path) ?? []}
-              // Only the selected worktree has an open tab on screen; the remembered one of
-              // the others must not look selected.
-              activeAgentId={
-                worktree.path === selectedPath
-                  ? activeSessionId(sessions, activeByWorktree, worktree.path)
-                  : null
-              }
-              agentsExpanded={expandedAgentGroups[worktree.path] ?? false}
-              onToggleAgents={() => toggleAgentGroup(worktree.path)}
               onSelect={() => onSelectWorktree(worktree.path)}
-              onOpenAgent={(id) => {
-                // The agent may belong to a worktree that is not on screen yet.
-                if (worktree.path !== selectedPath) {
-                  onSelectWorktree(worktree.path);
-                }
-                setActiveTerminal(worktree.path, id);
-                requestFocus(id);
-              }}
-              onCloseAgent={requestCloseTerminal}
             />
           ))}
           {pending.map((item) => (

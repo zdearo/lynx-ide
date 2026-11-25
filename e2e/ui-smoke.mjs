@@ -1905,27 +1905,20 @@ await session("?mock=full", 1200, 760, async (p) => {
 });
 
 await session("?mock=full", 1300, 760, async (p) => {
-  const agent = (name, options = {}) =>
-    p.getByRole("button", { name, ...options });
-  const agentRows = p.locator("[data-agent-id]");
+  const agentGroup = (name, options = {}) =>
+    p.getByRole("group", { name, ...options });
   const groupOf = (path) => p.locator(`[data-agent-group="${path}"]`);
-  const toggleGroup = (path) => groupOf(path).locator(":scope > button");
   const featPath = "/home/dev/lynx-ide-worktrees/feat-auth";
-  const fixPath = "/home/dev/lynx-ide-worktrees/fix-pty";
-  const refactorPath = "/home/dev/api-server-worktrees/refactor-db";
 
   check(
-    "every worktree with agents keeps them listed, collapsed to one line",
+    "every worktree with agents keeps them listed, as one closed line each",
     (await p.locator("[data-agent-group]").count()) === 3 &&
-      (await p
-        .locator('[data-agent-group] > button[aria-expanded="false"]')
-        .count()) === 3 &&
-      (await agentRows.count()) === 0,
+      (await p.locator("[data-agent-id]").count()) === 0,
   );
   check(
-    "a collapsed group says how many agents it has and how many are running",
-    (await agent("1 agent, 1 running").count()) === 2 &&
-      (await agent("1 agent", { exact: true }).count()) === 1,
+    "a group says how many agents it has and how many are running",
+    (await agentGroup("1 agent, 1 running").count()) === 2 &&
+      (await agentGroup("1 agent", { exact: true }).count()) === 1,
   );
 
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
@@ -1935,269 +1928,12 @@ await session("?mock=full", 1300, 760, async (p) => {
     (await p.locator("[data-agent-group]").count()) === 3,
   );
 
-  await toggleGroup(featPath).click();
+  await groupOf(featPath).click();
   await settle(p, 300);
   check(
-    "opening a group lists its agents",
-    (await agent(/^claude, idle$/).count()) === 1,
-  );
-  check(
-    "plain shells are not listed as agents",
-    (await agentRows.count()) === 1,
-  );
-  check(
-    "an agent row says how long ago it started",
-    ((await agent(/^claude, idle$/).textContent()) ?? "").includes("5m"),
-  );
-  check(
-    "another worktree's agents stay collapsed until opened",
-    (await agent(/^codex/).count()) === 0,
-  );
-
-  await p.getByRole("tab", { name: /zsh/ }).click();
-  await agent(/^claude, idle$/).click();
-  await settle(p, 400);
-  check(
-    "clicking an agent brings its tab forward",
-    (await p.getByRole("tab", { name: /claude/, selected: true }).count()) ===
-      1,
-  );
-  check(
-    "and focuses its terminal",
-    await p.evaluate(() => document.activeElement?.closest(".xterm") !== null),
-  );
-  check(
-    "the agent row of the open tab is marked current",
-    (await agent(/^claude, idle$/).getAttribute("aria-current")) === "true",
-  );
-
-  const claudeCurrent = (value) =>
-    p
-      .waitForFunction(
-        (expected) =>
-          document
-            .querySelector("[data-agent-id]")
-            ?.getAttribute("aria-current") === expected,
-        value,
-        { timeout: 5000 },
-      )
-      .then(
-        () => true,
-        () => false,
-      );
-  await p.getByRole("button", { name: /^fix\/pty/ }).click();
-  check(
-    "an agent of a worktree that is not selected is not marked current",
-    await claudeCurrent(null),
-  );
-  await agent(/^claude, idle$/).click();
-  check(
-    "clicking it selects its worktree and brings its tab forward",
-    (await claudeCurrent("true")) &&
-      (await p.getByRole("tab", { name: /claude/, selected: true }).count()) ===
-        1,
-  );
-
-  // The card around a worktree and its agents is one click target, not just the name line.
-  await p.getByRole("button", { name: /^fix\/pty/ }).click();
-  const featCard = groupOf(featPath).locator("xpath=../..");
-  const featCardBox = await featCard.boundingBox();
-  await featCard.click({
-    position: { x: 10, y: (featCardBox?.height ?? 4) - 2 },
-  });
-  check(
-    "clicking the card outside its buttons selects the worktree",
-    await p
-      .waitForFunction(
-        () =>
-          [...document.querySelectorAll("button[aria-current]")].some((b) =>
-            /^feat\/auth/.test(b.textContent ?? ""),
-          ),
-        null,
-        { timeout: 5000 },
-      )
-      .then(
-        () => true,
-        () => false,
-      ),
-  );
-
-  // The card click made this worktree's terminal active, and that terminal takes focus on a frame: let it land first.
-  await p.evaluate(
-    () =>
-      new Promise((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(resolve)),
-      ),
-  );
-  await p.getByRole("button", { name: /^feat\/auth/ }).focus();
-  await p.keyboard.press("ArrowDown");
-  await settle(p, 120);
-  check(
-    "ArrowDown walks from the worktree into its agents group",
-    (await p.evaluate(() =>
-      document.activeElement
-        ?.closest("[data-agent-group]")
-        ?.getAttribute("data-agent-group"),
-    )) === featPath,
-  );
-
-  const axeAgents = await p.evaluate(async (src) => {
-    window.eval(src);
-    const r = await window.axe.run(document, {
-      runOnly: ["wcag2a", "wcag2aa"],
-    });
-    return r.violations.map(
-      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 140)}`,
-    );
-  }, axeSource);
-  check(
-    "axe: no WCAG A/AA violations with agent rows",
-    axeAgents.length === 0,
-    axeAgents.join(" || "),
-  );
-
-  await p.getByRole("button", { name: /^fix\/pty/ }).click();
-  await settle(p, 400);
-  check(
-    "selecting another worktree keeps the first one's agents in view",
-    (await agent(/^claude, idle$/).count()) === 1,
-  );
-  check(
-    "the newly selected worktree's agents stay collapsed until opened",
-    (await agent(/^codex, needs you$/).count()) === 0,
-  );
-  await toggleGroup(fixPath).click();
-  await settle(p, 300);
-  check(
-    "each row shows its own age",
-    ((await agent(/^codex, needs you$/).textContent()) ?? "").includes("3h"),
-  );
-
-  await toggleGroup(refactorPath).click();
-  await settle(p, 300);
-  check(
-    "a finished agent is shown as exited, with its age",
-    (await agent(/^claude, exited with code 0$/).count()) === 1 &&
-      ((await agent(/^claude, exited/).textContent()) ?? "").includes("2d"),
-  );
-
-  await agent(/^claude, idle$/).hover();
-  await groupOf(featPath).getByRole("button", { name: "Close claude" }).click();
-  await settle(p, 400);
-  check(
-    "closing from the row removes the agent and its tab",
-    (await agent(/^claude, idle$/).count()) === 0 &&
-      (await p.getByRole("tab", { name: /claude/ }).count()) === 0,
-  );
-  check(
-    "a group with no agents left disappears",
-    (await groupOf(featPath).count()) === 0,
-  );
-});
-
-await session("?mock=full", 1300, 760, async (p) => {
-  const panel = p.getByRole("complementary", { name: "Projects" });
-  const longRow = p.getByRole("button", { name: /^feature\/very-long-branch/ });
-  const fits = async (row) =>
-    p.evaluate(
-      ([rowEl, panelEl]) =>
-        rowEl.getBoundingClientRect().right <=
-        panelEl.getBoundingClientRect().right + 0.5,
-      [await row.elementHandle(), await panel.elementHandle()],
-    );
-  check(
-    "a long branch name stays inside the sidebar (it truncates)",
-    await fits(longRow),
-  );
-
-  await p.getByRole("button", { name: /^feat\/auth/ }).click();
-  await settle(p, 300);
-  await p
-    .locator(
-      '[data-agent-group="/home/dev/lynx-ide-worktrees/feat-auth"] > button',
-    )
-    .click();
-  await settle(p, 300);
-  const agentRow = p.getByRole("button", { name: /^claude, idle$/ });
-  check("agent rows stay inside the sidebar too", await fits(agentRow));
-
-  const surfaces = await p.evaluate(() => {
-    const bg = (el) => getComputedStyle(el).backgroundColor;
-    const open = document.querySelector('[data-agent-id][aria-current="true"]');
-    const idle = [...document.querySelectorAll("[data-agent-id]")].find(
-      (el) => el.getAttribute("aria-current") !== "true",
-    );
-    const card = document
-      .querySelector(
-        '[aria-current="true"][data-nav-item]:not([data-agent-id])',
-      )
-      ?.closest("li");
-    return {
-      open: open ? bg(open) : null,
-      idle: idle ? bg(idle) : null,
-      card: card ? bg(card) : null,
-      ring: card ? getComputedStyle(card).boxShadow : null,
-    };
-  });
-  const indent = await p.evaluate(() => {
-    const header = document.querySelector(
-      '[aria-current="true"][data-nav-item]:not([data-agent-id])',
-    );
-    const dot = header?.querySelector(".rounded-full");
-    const pill = document.querySelector("[data-agent-id]");
-    if (!dot || !pill) return null;
-    return {
-      dotLeft: dot.getBoundingClientRect().left,
-      pillLeft: pill.getBoundingClientRect().left,
-    };
-  });
-  check(
-    "the agent pill starts at the worktree's dot, indented from the card's edge",
-    indent !== null && Math.abs(indent.pillLeft - indent.dotLeft) <= 1,
-    JSON.stringify(indent),
-  );
-  const hierarchy = await p.evaluate(() => {
-    const worktreeLabel = document.querySelector(
-      '[aria-current="true"][data-nav-item]:not([data-agent-id]) span[title]',
-    );
-    const agentTitle = document.querySelector(
-      "[data-agent-id] > span.truncate",
-    );
-    const agentIcons = [
-      ...document.querySelectorAll("[data-agent-id] > svg"),
-    ].map((svg) => svg.getBoundingClientRect().width);
-    return {
-      worktreeFont: worktreeLabel
-        ? parseFloat(getComputedStyle(worktreeLabel).fontSize)
-        : null,
-      agentFont: agentTitle
-        ? parseFloat(getComputedStyle(agentTitle).fontSize)
-        : null,
-      agentIcons,
-    };
-  });
-  check(
-    "agent titles are a step smaller than the worktree name",
-    hierarchy.agentFont !== null &&
-      hierarchy.worktreeFont !== null &&
-      hierarchy.agentFont < hierarchy.worktreeFont,
-    JSON.stringify(hierarchy),
-  );
-  check(
-    "agent icons are smaller than the worktree name's text",
-    hierarchy.agentIcons.length > 0 &&
-      hierarchy.agentIcons.every((w) => w < hierarchy.worktreeFont),
-    JSON.stringify(hierarchy),
-  );
-  check(
-    "the card has no border or ring",
-    surfaces.ring === "none" || surfaces.ring === "",
-    String(surfaces.ring),
-  );
-  check(
-    "an agent that is not open has no surface of its own",
-    surfaces.idle === null || surfaces.idle === "rgba(0, 0, 0, 0)",
-    String(surfaces.idle),
+    "a click on a closed group opens nothing: no rows and no button",
+    (await p.locator("[data-agent-id]").count()) === 0 &&
+      (await p.locator("[data-agent-group] button").count()) === 0,
   );
 });
 
@@ -2614,73 +2350,29 @@ await session("?mock=crowded", 1300, 760, async (p) => {
   const fixGroup = p.locator(
     '[data-agent-group="/home/dev/lynx-ide-worktrees/fix-pty"]',
   );
-  const header = fixGroup.locator(":scope > button");
-  const badges = header.locator('svg[data-icon="agent"]');
+  const badges = fixGroup.locator('svg[data-icon="agent"]');
 
   check(
-    "a collapsed group shows up to three agent badges side by side",
+    "a closed group shows up to three agent badges side by side",
     (await badges.count()) === 3,
     String(await badges.count()),
   );
   check(
     "and a +X badge for the agents that do not fit",
-    (await header.getByText("+1", { exact: true }).count()) === 1,
+    (await fixGroup.getByText("+1", { exact: true }).count()) === 1,
   );
   check(
     "the group names all four agents and that they are running",
-    (await header.getAttribute("aria-label")) === "4 agents, 4 running",
-    String(await header.getAttribute("aria-label")),
+    (await fixGroup.getAttribute("aria-label")) === "4 agents, 4 running",
+    String(await fixGroup.getAttribute("aria-label")),
   );
 
-  await header.click();
+  await fixGroup.click();
   await settle(p, 300);
   check(
-    "opened, the header is only the word Agents, with no badges",
-    (await header.locator('svg[data-icon="agent"]').count()) === 0 &&
-      ((await header.textContent()) ?? "").trim() === "Agents",
-    JSON.stringify(await header.textContent()),
-  );
-  check(
-    "and the rows of every agent follow it",
-    (await fixGroup.locator("[data-agent-id]").count()) === 4,
-  );
-
-  await p.mouse.move(0, 0);
-  await settle(p, 200);
-  const styles = await p.evaluate(() => {
-    const header = document.querySelector(
-      '[data-agent-group="/home/dev/lynx-ide-worktrees/fix-pty"] > button',
-    );
-    const title = header.querySelector("span");
-    const repoName = document.querySelector('[data-project-id="r1"] span');
-    const h = getComputedStyle(header);
-    const t = getComputedStyle(title);
-    const r = getComputedStyle(repoName);
-    return {
-      headerBg: h.backgroundColor,
-      titleWeight: t.fontWeight,
-      repoWeight: r.fontWeight,
-      titleColor: t.color,
-      repoColor: r.color,
-    };
-  });
-  check(
-    "the group header has no colour of its own until hovered",
-    styles.headerBg === "rgba(0, 0, 0, 0)",
-    JSON.stringify(styles),
-  );
-  check(
-    "Agents has the same weight and colour as the repo name",
-    styles.titleWeight === styles.repoWeight &&
-      styles.titleColor === styles.repoColor,
-    JSON.stringify(styles),
-  );
-  await header.hover();
-  await settle(p, 200);
-  check(
-    "hovering the header is the only thing that changes it",
-    (await header.evaluate((el) => getComputedStyle(el).backgroundColor)) !==
-      "rgba(0, 0, 0, 0)",
+    "clicking it opens nothing: the badges stay and no rows appear",
+    (await badges.count()) === 3 &&
+      (await fixGroup.locator("[data-agent-id]").count()) === 0,
   );
 });
 

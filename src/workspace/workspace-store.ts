@@ -40,8 +40,6 @@ interface WorkspaceState {
   folders: Folder[];
   worktrees: Record<string, WorktreeInfo[]>;
   collapsedRepoIds: Record<string, boolean>;
-  /** Worktrees whose agent list is open. Missing means collapsed, which is the default. */
-  expandedAgentGroups: Record<string, boolean>;
   selectedWorktreePath: string | null;
   pending: PendingWorktree[];
   draft: WorktreeDraft | null;
@@ -71,7 +69,6 @@ interface WorkspaceState {
   removeRepo: (repoId: string) => Promise<void>;
   selectWorktree: (path: string) => void;
   toggleRepo: (repoId: string) => void;
-  toggleAgentGroup: (worktreePath: string) => void;
   openNewWorktree: (repoId: string) => void;
   closeNewWorktree: () => void;
   createWorktree: (draft: WorktreeDraft) => Promise<void>;
@@ -138,7 +135,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     folders: [],
     worktrees: {},
     collapsedRepoIds: {},
-    expandedAgentGroups: {},
     selectedWorktreePath: readRememberedSelection(),
     pending: [],
     draft: null,
@@ -281,15 +277,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     selectWorktree: select,
-
-    toggleAgentGroup(worktreePath) {
-      set((state) => ({
-        expandedAgentGroups: {
-          ...state.expandedAgentGroups,
-          [worktreePath]: !state.expandedAgentGroups[worktreePath],
-        },
-      }));
-    },
 
     toggleRepo(repoId) {
       set((state) => ({

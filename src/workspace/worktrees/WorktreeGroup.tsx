@@ -52,10 +52,10 @@ export function WorktreeGroup({
         onSelect();
       }}
       className={cn(
-        "rounded-lg",
+        "rounded-lg border",
         selected
-          ? "bg-sidebar-accent"
-          : "cursor-pointer hover:bg-sidebar-accent/50",
+          ? "border-hairline bg-card"
+          : "cursor-pointer border-transparent hover:bg-card/50",
       )}
     >
       <WorktreeRow

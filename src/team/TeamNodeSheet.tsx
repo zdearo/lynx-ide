@@ -39,9 +39,12 @@ import { copy } from "@/ui-copy";
 export function TeamNodeSheet({
   member,
   members,
+  hidden = false,
 }: {
   member: TeamMember;
   members: readonly TeamMember[];
+  /** Hidden, not unmounted: a panel that mounts takes the focus, so it stays mounted while it waits. */
+  hidden?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const canDock = useMediaQuery(DOCK_RIGHT_QUERY);
@@ -69,6 +72,7 @@ export function TeamNodeSheet({
       ref={ref}
       role="dialog"
       aria-label={copy.team.sheetLabel(member.role, agent)}
+      hidden={hidden}
       tabIndex={-1}
       className="absolute top-3 right-3 flex max-h-[calc(100%-1.5rem)] w-80 max-w-[calc(100%-1.5rem)] flex-col gap-3 overflow-y-auto rounded-xl bg-popover p-3 text-ui text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none"
     >

@@ -49,7 +49,7 @@ const COMPONENTS: Components = {
   ),
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ children }) => (
-    <code className="rounded bg-muted px-1 py-0.5 font-mono text-meta [pre_&]:bg-transparent [pre_&]:p-0">
+    <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-meta [pre_&]:bg-transparent [pre_&]:p-0">
       {children}
     </code>
   ),

@@ -185,7 +185,7 @@ export function Conversation({
         }}
         className="px-6 pt-2 pb-4"
       >
-        <div className="flex items-end gap-2 rounded-xl border border-input bg-muted/40 p-2 focus-within:ring-2 focus-within:ring-ring">
+        <div className="flex items-end gap-2 rounded-lg border border-input bg-muted/40 p-2 focus-within:ring-2 focus-within:ring-ring">
           <Textarea
             value={draft}
             rows={1}

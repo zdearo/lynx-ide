@@ -105,8 +105,9 @@ function canvasStyle(): cytoscape.StylesheetStyle[] {
     {
       selector: "node",
       style: {
-        width: TEAM_CARD_WIDTH,
-        height: TEAM_CARD_HEIGHT,
+        // The size is the node's data, so a restyle (the theme changes) keeps the size the team draws it at.
+        width: "data(w)",
+        height: "data(h)",
         opacity: 0,
       },
     },
@@ -528,7 +529,9 @@ export function TeamCanvas({
       if (duration === 0) cy.viewport({ zoom, pan });
       else cy.animate({ zoom, pan }, motion);
     };
-    const newest = openList.filter((id) => !before.includes(id)).at(-1);
+    // One terminal opened is centred on; several at once (open all) fit the whole map on the screen.
+    const added = openList.filter((id) => !before.includes(id));
+    const newest = added.length === 1 ? added[0] : undefined;
     const corner = newest === undefined ? undefined : places.get(newest);
     if (newest !== undefined && corner) {
       viewTo(1, centredPan(centreOf(corner, sizeAt(newest)), bounds));
@@ -582,7 +585,7 @@ export function TeamCanvas({
         if (node.empty()) {
           cy.add({
             group: "nodes",
-            data: { id },
+            data: { id, w: size.width, h: size.height },
             position: centreOf(corner, size),
           });
         } else {
@@ -595,10 +598,7 @@ export function TeamCanvas({
           drawn.height !== size.height
         ) {
           sizesDrawn.current.set(id, size);
-          cy.getElementById(id).style({
-            width: size.width,
-            height: size.height,
-          });
+          cy.getElementById(id).data({ w: size.width, h: size.height });
           if (drawn && resizingId.current !== id) holdForChange(id);
         }
       }

@@ -187,7 +187,7 @@ function TeamNodeCardBase({
             }
           }}
           className={cn(
-            "group size-full flex flex-col gap-2.5 overflow-hidden rounded-lg border bg-card p-3 text-ui text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            "group size-full flex flex-col gap-2.5 overflow-hidden rounded-lg border bg-sidebar p-3 text-ui text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
             selected ? "border-ring" : "border-border",
             dimmed && "opacity-80",
             open && "gap-0 p-0",

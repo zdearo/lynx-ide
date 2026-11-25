@@ -1,8 +1,16 @@
 import cytoscape from "cytoscape";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import type { TeamMember } from "@/team/team-fixtures";
 import {
+  cardTransform,
+  centreOf,
+  cornerOf,
+  focusOf,
+} from "@/team/team-canvas-model";
+import {
+  extraRowsAt,
+  siblingOrderAt,
   TEAM_CARD_HEIGHT,
   TEAM_CARD_WIDTH,
   teamLayout,
@@ -10,18 +18,15 @@ import {
   type TeamPosition,
 } from "@/team/team-layout";
 import { pairKey, type TeamPair } from "@/team/team-pairs";
-import {
-  cardTransform,
-  centreOf,
-  cornerOf,
-  focusOf,
-} from "@/team/team-canvas-model";
 import { TeamNodeCard } from "@/team/TeamNodeCard";
 import { openMember, useTeamStore } from "@/team/team-store";
+import { useGlidedPositions } from "@/team/use-glided-positions";
 import { copy } from "@/ui-copy";
 
 /** Empty space around the team when the map fits the screen, in screen pixels. */
 const FIT_PADDING = 40;
+/** How far the pointer must move before a press on a card is a drag, in screen pixels. */
+const DRAG_THRESHOLD = 4;
 
 /**
  * A computed colour of a design token. Cytoscape cannot read CSS variables, so the token is resolved by the browser
@@ -115,7 +120,8 @@ function linesOf(
 
 /**
  * The team as a canvas. Cytoscape draws the lines and takes the pan, the zoom and the hit tests on empty space. The
- * cards are DOM laid over it, moved by the same pan and zoom, so a card keeps its own buttons and menus.
+ * cards are DOM laid over it, moved by the same pan and zoom, so a card keeps its own buttons and menus. A card taken
+ * with the mouse leaves a dashed ghost where it would land, and the other cards make room for it.
  */
 export function TeamCanvas({
   members,
@@ -133,18 +139,73 @@ export function TeamCanvas({
   pairs: readonly TeamPair[];
 }) {
   const surface = useRef<HTMLDivElement>(null);
-  const layer = useRef<HTMLDivElement>(null);
   const cards = useRef(new Map<string, HTMLDivElement>());
+  const ghost = useRef<HTMLDivElement>(null);
+  // Where the ghost goes, read by the canvas's render: kept out of the render itself.
+  const spotRef = useRef<TeamPosition | null>(null);
   const canvas = useRef<cytoscape.Core | null>(null);
+  // The card being held and where its top-left corner is, in canvas units.
+  const [drag, setDrag] = useState<{
+    id: string;
+    position: TeamPosition;
+  } | null>(null);
+  // A drop is followed by a click on the same card, which must not select it.
+  const dropped = useRef(false);
 
-  const placed = useMemo(
+  const base = useMemo(
     () => teamLayout(members, expanded, extraRows, siblingOrder, pairs),
     [members, expanded, extraRows, siblingOrder, pairs],
   );
+  // The row the held card is over. While it is not its own, the others already take the places they would have
+  // on release, and go back if it returns.
+  const dragId = drag?.id ?? null;
+  const rows = drag ? extraRowsAt(members, base, drag.id, drag.position.y) : 0;
+  const moved = dragId !== null && rows !== (extraRows[dragId] ?? 0);
+  const { targets, order } = useMemo(() => {
+    if (!dragId || !drag) return { targets: base, order: siblingOrder };
+    const rowsNow = moved ? { ...extraRows, [dragId]: rows } : extraRows;
+    const rowLayout = moved
+      ? teamLayout(members, expanded, rowsNow, siblingOrder, pairs)
+      : base;
+    // Sideways, the card goes after the siblings on its row that are to its left.
+    const next = siblingOrderAt(
+      members,
+      rowLayout,
+      dragId,
+      drag.position.x,
+      siblingOrder,
+      pairs,
+    );
+    return next === siblingOrder
+      ? { targets: rowLayout, order: next }
+      : {
+          targets: teamLayout(members, expanded, rowsNow, next, pairs),
+          order: next,
+        };
+  }, [
+    drag,
+    dragId,
+    moved,
+    rows,
+    members,
+    expanded,
+    extraRows,
+    siblingOrder,
+    pairs,
+    base,
+  ]);
+  // Where each card is drawn: the others glide to their targets, the held card stays under the pointer.
+  const shown = useGlidedPositions(targets, drag);
   const focus = useMemo(
     () => focusOf(members, pairs, selectedId),
     [members, pairs, selectedId],
   );
+
+  // Read by a pointer release, which outlives the render it started in.
+  const latest = useRef({ drag, base, members, siblingOrder, order });
+  useEffect(() => {
+    latest.current = { drag, base, members, siblingOrder, order };
+  });
 
   // Built once. Its handlers read the store, so they never go stale.
   useEffect(() => {
@@ -170,6 +231,10 @@ export function TeamCanvas({
         const { x, y } = node.position();
         card.style.transform = cardTransform(cornerOf({ x, y }), zoom, pan);
       }
+      const spotNow = spotRef.current;
+      if (ghost.current && spotNow) {
+        ghost.current.style.transform = cardTransform(spotNow, zoom, pan);
+      }
     };
     cy.on("render", place);
     cy.on("tap", (event) => {
@@ -186,17 +251,24 @@ export function TeamCanvas({
     };
   }, []);
 
-  // The canvas takes the placement of the cards: one node per placed card, and the lines between them.
+  // The canvas takes where the cards are drawn: one node per card, and the lines between them.
   useEffect(() => {
     const cy = canvas.current;
     if (!cy) return;
+    const placed = new Map<string, TeamPosition>();
+    for (const member of members) {
+      const corner = shown.get(member.id) ?? targets.get(member.id);
+      if (corner && base.has(member.id)) placed.set(member.id, corner);
+    }
     cy.batch(() => {
       for (const [id, corner] of placed) {
         const centre = centreOf(corner);
         const node = cy.getElementById(id);
-        if (node.empty())
+        if (node.empty()) {
           cy.add({ group: "nodes", data: { id }, position: centre });
-        else node.position(centre);
+        } else {
+          node.position(centre);
+        }
       }
       cy.nodes().forEach((node) => {
         if (!placed.has(node.id())) node.remove();
@@ -205,7 +277,7 @@ export function TeamCanvas({
       cy.add(linesOf(members, placed, pairs));
     });
     cy.emit("render");
-  }, [members, placed, pairs]);
+  }, [members, shown, targets, base, pairs]);
 
   // The lines of the selected member's line of work stay solid; the rest fade.
   useEffect(() => {
@@ -219,12 +291,12 @@ export function TeamCanvas({
       edge.toggleClass("focus", inFocus);
       edge.toggleClass("dim", focus !== null && !inFocus);
     });
-  }, [focus, placed, pairs]);
+  }, [focus, shown, pairs]);
 
   // A card added or removed can land outside the view, so the map fits again. The wait lets the canvas place the
   // new cards first; shortcut: a fixed 50 ms, upgrade to an event if a slow machine misses it.
   const cardIds = members
-    .filter((member) => placed.has(member.id))
+    .filter((member) => base.has(member.id))
     .map((member) => member.id)
     .join("|");
   useEffect(() => {
@@ -235,21 +307,113 @@ export function TeamCanvas({
     return () => window.clearTimeout(timer);
   }, [cardIds]);
 
+  // The pointer's place in canvas units: the screen point, minus the canvas's pan, divided by its zoom.
+  const onCanvas = (clientX: number, clientY: number): TeamPosition => {
+    const box = surface.current?.getBoundingClientRect();
+    const cy = canvas.current;
+    const zoom = cy?.zoom() ?? 1;
+    const pan = cy?.pan() ?? { x: 0, y: 0 };
+    return {
+      x: (clientX - (box?.left ?? 0) - pan.x) / zoom,
+      y: (clientY - (box?.top ?? 0) - pan.y) / zoom,
+    };
+  };
+
+  // A press on a card is a drag once the pointer has moved past the threshold; a press on a button is not.
+  const startDrag = (id: string, event: PointerEvent<HTMLDivElement>) => {
+    // Each press starts afresh: a drop that no click followed must not swallow the next click.
+    dropped.current = false;
+    if (event.button !== 0) return;
+    if ((event.target as Element).closest("button")) return;
+    const corner = base.get(id);
+    if (!corner) return;
+    const origin = { x: event.clientX, y: event.clientY };
+    const start = onCanvas(event.clientX, event.clientY);
+    const offset = { x: start.x - corner.x, y: start.y - corner.y };
+    let moving = false;
+    const move = (moment: globalThis.PointerEvent) => {
+      if (
+        !moving &&
+        Math.hypot(moment.clientX - origin.x, moment.clientY - origin.y) <
+          DRAG_THRESHOLD
+      ) {
+        return;
+      }
+      moving = true;
+      const at = onCanvas(moment.clientX, moment.clientY);
+      setDrag({
+        id,
+        position: { x: at.x - offset.x, y: at.y - offset.y },
+      });
+    };
+    const release = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+      if (!moving) return;
+      dropped.current = true;
+      // The row and the place the card is let go in are what the team keeps; the others glide to them.
+      const held = latest.current;
+      if (!held.drag) return;
+      const store = useTeamStore.getState();
+      store.setExtraRows(
+        held.drag.id,
+        extraRowsAt(
+          held.members,
+          held.base,
+          held.drag.id,
+          held.drag.position.y,
+        ),
+      );
+      if (held.order !== held.siblingOrder) {
+        store.setSiblingOrder(held.order);
+      }
+      setDrag(null);
+    };
+    // On the window, not the card: a fast pointer that leaves the card still moves it, and no capture retargets the click.
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+  };
+
+  // Where the held card would land: the spot under its parent, once the others have made room. The ghost is placed
+  // by the canvas's own render, so it follows the zoom and the pan without a new render.
+  const spot = targets !== base && dragId ? targets.get(dragId) : undefined;
+  useEffect(() => {
+    spotRef.current = spot ?? null;
+    canvas.current?.emit("render");
+  }, [spot]);
+
   return (
     <div className="relative size-full" aria-label={copy.team.mapLabel}>
-      <div ref={surface} className="absolute inset-0" />
-      <div
-        ref={layer}
-        className="pointer-events-none absolute inset-0 overflow-hidden"
-      >
+      {/* Cytoscape sets the position of its own container, so the box that sizes it is this one. */}
+      <div className="absolute inset-0">
+        <div ref={surface} className="size-full" />
+      </div>
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        {spot && (
+          <div
+            ref={ghost}
+            aria-hidden
+            className="absolute top-0 left-0 origin-top-left rounded-lg border-2 border-dashed border-ring/70 bg-ring/10"
+            style={{ width: TEAM_CARD_WIDTH, height: TEAM_CARD_HEIGHT }}
+          />
+        )}
         {members.flatMap((member) => {
-          if (!placed.has(member.id)) return [];
+          if (!base.has(member.id)) return [];
           return [
             <div
               key={member.id}
               ref={(element) => {
                 if (element) cards.current.set(member.id, element);
                 else cards.current.delete(member.id);
+              }}
+              onPointerDown={(event) => startDrag(member.id, event)}
+              onClickCapture={(event) => {
+                // The click that ends a drag is not a pick.
+                if (!dropped.current) return;
+                dropped.current = false;
+                event.stopPropagation();
               }}
               className="pointer-events-auto absolute top-0 left-0 origin-top-left"
             >

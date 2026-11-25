@@ -1056,15 +1056,35 @@ export function installMockTauri(scenario: string): void {
   const mockExpanded = new Set<string>(
     scenario === "full" ? [TEAM_ROOT_ID, "docs-lead"] : [],
   );
-  // Development only, for measuring the team's terminals (`?mock=full&perf=team5`): five agents, each with a session
-  // whose transcript is about a megabyte, the size a long agent session replays on attach.
-  if (
-    scenario === "full" &&
-    new URLSearchParams(window.location.search).get("perf") === "team5"
-  ) {
+  // Development only, for measuring the team's terminals (`?mock=full&perf=teamN`): N agents, each with a session
+  // whose transcript is about a megabyte, the size a long agent session replays on attach. Extra agents are added to
+  // the team under the lead when the team has fewer than N.
+  const perfTeam = /^team(\d+)$/.exec(
+    new URLSearchParams(window.location.search).get("perf") ?? "",
+  );
+  if (scenario === "full" && perfTeam) {
+    const count = Number(perfTeam[1]);
+    const template = mockMembers.find((member) => member.kind === "agent");
+    while (
+      template &&
+      mockMembers.filter((member) => member.kind === "agent").length < count
+    ) {
+      const extra = mockMembers.length;
+      mockMembers = [
+        ...mockMembers,
+        {
+          ...structuredClone(template),
+          id: `perf-${extra}`,
+          role: `Worker ${extra}`,
+          parentId: TEAM_ROOT_ID,
+          orchestrator: false,
+          sessionId: null,
+        },
+      ];
+    }
     mockMembers
       .filter((member) => member.kind === "agent")
-      .slice(0, 5)
+      .slice(0, count)
       .forEach((member, index) => {
         member.sessionId = addSession(
           member.worktree,

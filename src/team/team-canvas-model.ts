@@ -19,29 +19,37 @@ export const CARD_DEFAULT_SIZE: CardSize = {
 };
 /** The smallest a card may be resized to: a title, a status line and a task still fit. */
 export const CARD_MIN_SIZE: CardSize = { width: 180, height: 96 };
-/** The largest a card may be resized to, so a terminal-sized card cannot cover the team. */
+/** The largest a card may be resized to. */
 export const CARD_MAX_SIZE: CardSize = { width: 560, height: 420 };
+/** A member's terminal on the map when it is open and was not resized: a terminal that reads well. */
+export const TERMINAL_DEFAULT_SIZE: CardSize = { width: 480, height: 300 };
+export const TERMINAL_MIN_SIZE: CardSize = { width: 320, height: 180 };
+export const TERMINAL_MAX_SIZE: CardSize = { width: 960, height: 720 };
 
-/** A size held between the smallest and the largest a card may be. */
-export function clampSize(size: CardSize): CardSize {
+function clampTo(size: CardSize, min: CardSize, max: CardSize): CardSize {
   return {
-    width: Math.min(
-      CARD_MAX_SIZE.width,
-      Math.max(CARD_MIN_SIZE.width, Math.round(size.width)),
-    ),
-    height: Math.min(
-      CARD_MAX_SIZE.height,
-      Math.max(CARD_MIN_SIZE.height, Math.round(size.height)),
-    ),
+    width: Math.min(max.width, Math.max(min.width, Math.round(size.width))),
+    height: Math.min(max.height, Math.max(min.height, Math.round(size.height))),
   };
 }
 
-/** The size a member's card is drawn at: the one the user gave it, or the default. */
+/** A card's size held between the smallest and the largest a card may be. */
+export function clampSize(size: CardSize): CardSize {
+  return clampTo(size, CARD_MIN_SIZE, CARD_MAX_SIZE);
+}
+
+/** A terminal's size held between the smallest and the largest a terminal may be. */
+export function clampTerminalSize(size: CardSize): CardSize {
+  return clampTo(size, TERMINAL_MIN_SIZE, TERMINAL_MAX_SIZE);
+}
+
+/** The size a member's node is drawn at: the one the user gave it, or the default for its kind. */
 export function sizeOf(
   sizes: Readonly<Record<string, CardSize>>,
   id: string,
+  fallback: CardSize = CARD_DEFAULT_SIZE,
 ): CardSize {
-  return sizes[id] ?? CARD_DEFAULT_SIZE;
+  return sizes[id] ?? fallback;
 }
 
 /** Cytoscape places a node by its centre; the team places a card by its top-left corner. */
@@ -132,14 +140,6 @@ export interface Box {
   y1: number;
   x2: number;
   y2: number;
-}
-
-/** The size an open card takes: the modal's 5% inset on each side of the map, so 90% of it. */
-export function openSizeOf(area: CardSize): CardSize {
-  return {
-    width: Math.round(area.width * 0.9),
-    height: Math.round(area.height * 0.9),
-  };
 }
 
 /** The pan that puts a map point at the middle of the area, at zoom 1. */

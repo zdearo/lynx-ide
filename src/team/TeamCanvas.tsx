@@ -10,20 +10,20 @@ import {
 
 import type { TeamMember } from "@/team/team-fixtures";
 import {
+  boxOf,
   cardTransform,
+  centredPan,
   centreOf,
+  clampSize,
+  clampTerminalSize,
   cornerOf,
   focusOf,
-  boxOf,
-  centredPan,
-  clampSize,
   fitView,
   handleAnchor,
   isInView,
   OPPOSITE_HANDLE,
-  openSizeOf,
   sizeOf,
-  type Box,
+  TERMINAL_DEFAULT_SIZE,
   type CardSize,
   type HandleName,
 } from "@/team/team-canvas-model";
@@ -37,9 +37,9 @@ import {
   type TeamPosition,
 } from "@/team/team-layout";
 import { isValidConnection, pairKey, type TeamPair } from "@/team/team-pairs";
+import { pushApart, type PushItem } from "@/team/team-push";
 import { canOrchestrate, linkOf } from "@/team/team-hierarchy";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import { TeamNodeCard } from "@/team/TeamNodeCard";
 import { openMember, useTeamStore } from "@/team/team-store";
 import { useGlidedPositions } from "@/team/use-glided-positions";
@@ -49,9 +49,29 @@ import { copy } from "@/ui-copy";
 const FIT_PADDING = 40;
 /** How far the pointer must move before a press on a card is a drag, in screen pixels. */
 const DRAG_THRESHOLD = 4;
-/** How long opening or closing a card's terminal takes, in ms, and the curve it follows. */
+/** How long a card's size takes to change, in ms: the DOM card's transition, and the terminal's hold. */
 const CARD_OPEN_MS = 280;
 const CARD_OPEN_EASING = "ease-in-out" as const;
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+function reducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/**
+ * A node's size is changing: its card animates it in the DOM, and its terminal holds the process's size until the
+ * change lands, so the process gets the final size once.
+ */
+function holdForChange(id: string) {
+  useTeamStore.getState().setMoving(id, true);
+  window.setTimeout(
+    () => useTeamStore.getState().setMoving(id, false),
+    CARD_OPEN_MS,
+  );
+}
 
 /**
  * A colour of a design token in the form Cytoscape reads. Cytoscape parses rgb and hex only, and the tokens are oklch,
@@ -208,8 +228,8 @@ function ResizeDot({
 
 /**
  * The team as a canvas. Cytoscape draws the lines and takes the pan, the zoom and the hit tests on empty space. The
- * cards are DOM laid over it, moved by the same pan and zoom, so a card keeps its own buttons and menus. A card taken
- * with the mouse leaves a dashed ghost where it would land, and the other cards make room for it.
+ * cards are DOM laid over it, moved by the same pan and zoom, so a card keeps its own buttons, menus and terminal. A
+ * card whose terminal is open is drawn at the terminal's size, and the cards beside it are pushed aside.
  */
 export function TeamCanvas({
   members,
@@ -249,39 +269,38 @@ export function TeamCanvas({
     id: string;
     size: CardSize;
   } | null>(null);
-  const cardSizes = useTeamStore((state) => state.cardSizes);
-  const canvasMode = useTeamStore((state) => state.canvasMode);
-  const terminalOpen = useTeamStore((state) => state.terminalOpen);
-  const terminalFor = useTeamStore((state) => state.terminalFor);
-  const movingId = useTeamStore((state) => state.movingId);
-  // The card whose terminal is open, in terminal mode. It grows to the size the modal had: 90% of the area.
-  const expandedId =
-    canvasMode === "terminal" && terminalOpen ? terminalFor : null;
-  // The map's own area, measured as it changes: an open card is 90% of it in each direction.
+  // The card being resized, read by the sync: its size follows the pointer, so it is not animated.
+  const resizingId = useRef<string | null>(null);
+  // The size each node was last drawn at: a change is animated by its card's transition in the DOM.
+  const sizesDrawn = useRef(new Map<string, CardSize>());
+  // The open terminals, read by the render handler, which is set up once: every member in the expanded map.
+  const openRef = useRef<readonly string[]>([]);
+  // The open terminals on the screen, the only ones mounted, read by the render handler.
+  const onScreenRef = useRef<ReadonlySet<string>>(new Set());
+  const [onScreen, setOnScreen] = useState<ReadonlySet<string>>(new Set());
+  // The map's area, measured as it changes: the newest open terminal keeps the screen's centre.
   const [area, setArea] = useState<CardSize | null>(null);
-  const expansion = useMemo<CardSize | null>(
-    () =>
-      area
-        ? {
-            width: Math.round(area.width * 0.9),
-            height: Math.round(area.height * 0.9),
-          }
-        : null,
-    [area],
+
+  const cardSizes = useTeamStore((state) => state.cardSizes);
+  const terminalSizes = useTeamStore((state) => state.terminalSizes);
+  const canvasMode = useTeamStore((state) => state.canvasMode);
+  const openIds = useTeamStore((state) => state.openIds);
+  const expandedMap = canvasMode === "expanded";
+  // The terminals open on the map, in the order they were opened. The expanded map opens them all.
+  const openList = useMemo(
+    () => (expandedMap ? members.map((member) => member.id) : openIds),
+    [expandedMap, members, openIds],
   );
   const sizeNowOf = useCallback(
     (id: string): CardSize => {
-      if (id === expandedId && expansion) return expansion;
       if (resizing?.id === id) return resizing.size;
-      return sizeOf(cardSizes, id);
+      const open = canvasMode === "expanded" || openIds.includes(id);
+      return open
+        ? sizeOf(terminalSizes, id, TERMINAL_DEFAULT_SIZE)
+        : sizeOf(cardSizes, id);
     },
-    [expandedId, expansion, resizing, cardSizes],
+    [canvasMode, openIds, resizing, cardSizes, terminalSizes],
   );
-  // Read by the canvas's render, which is set up once and outlives every change: the card that is open, and whether
-  // its terminal is on the screen (a terminal off the screen is not mounted).
-  const openRef = useRef<string | null>(null);
-  const terminalVisible = useRef(true);
-  const [terminalShown, setTerminalShown] = useState(true);
 
   const base = useMemo(
     () => teamLayout(members, expanded, extraRows, siblingOrder, pairs),
@@ -325,18 +344,60 @@ export function TeamCanvas({
     pairs,
     base,
   ]);
-  // Where each card is drawn: the others glide to their targets, the held card stays under the pointer.
-  const shown = useGlidedPositions(targets, drag);
+  // The layout pushed apart: an open terminal takes its room and the cards beside it make way. The held card is
+  // placed first, then the open terminals in the order they were opened, then the rest. The push is computed from the
+  // layout each time, so a card that closes lets its neighbours go back to their places.
+  const placed = useMemo(() => {
+    const priority = [
+      ...(dragId ? [dragId] : []),
+      ...openList,
+      ...members.map((member) => member.id),
+    ];
+    const seen = new Set<string>();
+    const items: PushItem[] = [];
+    for (const id of priority) {
+      const corner = targets.get(id);
+      if (!corner || seen.has(id)) continue;
+      seen.add(id);
+      items.push({ id, corner, size: sizeNowOf(id) });
+    }
+    return pushApart(items);
+  }, [dragId, openList, members, targets, sizeNowOf]);
+  // Where each card is drawn: the others glide to their places, the held card stays under the pointer.
+  const shown = useGlidedPositions(placed, drag);
   const focus = useMemo(
     () => focusOf(members, pairs, selectedId),
     [members, pairs, selectedId],
   );
 
-  // Read by a pointer release, which outlives the render it started in.
-  const latest = useRef({ drag, base, members, siblingOrder, order, pairs });
-  useEffect(() => {
-    latest.current = { drag, base, members, siblingOrder, order, pairs };
+  // Read by a pointer release, the camera and the sync, which outlive the render they started in.
+  const latest = useRef({
+    drag,
+    base,
+    members,
+    siblingOrder,
+    order,
+    pairs,
+    placed,
+    sizeNowOf,
+    canvasMode,
   });
+  useEffect(() => {
+    latest.current = {
+      drag,
+      base,
+      members,
+      siblingOrder,
+      order,
+      pairs,
+      placed,
+      sizeNowOf,
+      canvasMode,
+    };
+  });
+  useEffect(() => {
+    openRef.current = openList;
+  }, [openList]);
 
   // Built once. Its handlers read the store, so they never go stale.
   useEffect(() => {
@@ -384,24 +445,35 @@ export function TeamCanvas({
           pan,
         );
       }
-      const openNode = openRef.current
-        ? cy.getElementById(openRef.current)
-        : null;
-      const onScreen =
-        !openNode ||
-        openNode.empty() ||
-        isInView(
-          boxOf(openNode.position(), {
-            width: openNode.width(),
-            height: openNode.height(),
-          }),
-          zoom,
-          pan,
-          { width: element.clientWidth, height: element.clientHeight },
-        );
-      if (onScreen !== terminalVisible.current) {
-        terminalVisible.current = onScreen;
-        setTerminalShown(onScreen);
+      // Each open terminal is mounted only while it is on the screen.
+      const bounds = {
+        width: element.clientWidth,
+        height: element.clientHeight,
+      };
+      const seen = new Set<string>();
+      for (const id of openRef.current) {
+        const node = cy.getElementById(id);
+        if (
+          node.nonempty() &&
+          isInView(
+            boxOf(node.position(), {
+              width: node.width(),
+              height: node.height(),
+            }),
+            zoom,
+            pan,
+            bounds,
+          )
+        ) {
+          seen.add(id);
+        }
+      }
+      const unchanged =
+        seen.size === onScreenRef.current.size &&
+        [...seen].every((id) => onScreenRef.current.has(id));
+      if (!unchanged) {
+        onScreenRef.current = seen;
+        setOnScreen(seen);
       }
       const spotNow = spotRef.current;
       if (ghost.current && spotNow) {
@@ -445,93 +517,61 @@ export function TeamCanvas({
     };
   }, []);
 
-  // Opening a card's terminal grows the card to the size of the modal and centres the map on it; closing it lands the
-  // card in its place and fits the map. Cytoscape moves the cards, and the DOM cards follow its render. The canvas's
-  // sync below leaves a moving card alone until it has landed.
+  // The camera: a terminal that opens is centred at zoom 1; when the terminals close, or the map is expanded, the map
+  // fits the team. The cards move and grow over the same time, so the camera goes where they end.
+  const openedBefore = useRef<readonly string[]>([]);
   useEffect(() => {
-    const previous = openRef.current;
-    openRef.current = expandedId;
     const cy = canvas.current;
     const element = surface.current;
-    if (!cy || !element || previous === expandedId) return;
+    const before = openedBefore.current;
+    openedBefore.current = openList;
+    if (!cy || !element || sameIds(before, openList)) return;
     const measured = element.getBoundingClientRect();
-    const area = { width: measured.width, height: measured.height };
-    const duration = window.matchMedia("(prefers-reduced-motion: reduce)")
-      .matches
-      ? 0
-      : CARD_OPEN_MS;
+    const bounds = { width: measured.width, height: measured.height };
+    const {
+      placed: places,
+      sizeNowOf: sizeAt,
+      canvasMode: mode,
+    } = latest.current;
+    const duration = reducedMotion() ? 0 : CARD_OPEN_MS;
     const motion = { duration, easing: CARD_OPEN_EASING, queue: false };
     const viewTo = (zoom: number, pan: { x: number; y: number }) => {
       cy.stop();
       if (duration === 0) cy.viewport({ zoom, pan });
       else cy.animate({ zoom, pan }, motion);
     };
-    // The card takes its size and place. While it moves, its terminal keeps the process's size (see TerminalView).
-    const moveCard = (id: string, size: CardSize, centre: TeamPosition) => {
-      const node = cy.getElementById(id);
-      if (node.empty()) return;
-      node.stop();
-      if (duration === 0) {
-        node.position(centre);
-        node.style({ width: size.width, height: size.height });
-        return;
-      }
-      useTeamStore.setState({ movingId: id });
-      node.animate(
-        { position: centre, style: { width: size.width, height: size.height } },
-        {
-          ...motion,
-          complete: () => {
-            if (useTeamStore.getState().movingId === id) {
-              useTeamStore.setState({ movingId: null });
-            }
-          },
-        },
-      );
-    };
-
-    // The card that was open goes back to its place first.
-    let landed: Box | null = null;
-    if (previous) {
-      const corner = latest.current.base.get(previous);
-      if (corner) {
-        const size = sizeOf(useTeamStore.getState().cardSizes, previous);
-        const centre = centreOf(corner, size);
-        moveCard(previous, size, centre);
-        landed = boxOf(centre, size);
-      }
-    }
-    if (expandedId) {
-      const node = cy.getElementById(expandedId);
-      if (!node.empty()) {
-        const centre = node.position();
-        moveCard(expandedId, openSizeOf(area), centre);
-        viewTo(1, centredPan(centre, area));
-      }
+    const newest = openList.filter((id) => !before.includes(id)).at(-1);
+    const corner = newest === undefined ? undefined : places.get(newest);
+    if (mode === "collapsed" && newest !== undefined && corner) {
+      viewTo(1, centredPan(centreOf(corner, sizeAt(newest)), bounds));
       return;
     }
-    // Closing: the map fits the team, with the card at the place it lands.
-    const boxes: Box[] = landed ? [landed] : [];
-    cy.nodes().forEach((node) => {
-      if (node.id() === previous) return;
-      boxes.push(
-        boxOf(node.position(), { width: node.width(), height: node.height() }),
-      );
+    const boxes = [...places].map(([id, at]) => {
+      const size = sizeAt(id);
+      return boxOf(centreOf(at, size), size);
     });
-    const view = fitView(boxes, area, FIT_PADDING, {
+    const view = fitView(boxes, bounds, FIT_PADDING, {
       min: cy.minZoom(),
       max: cy.maxZoom(),
     });
     viewTo(view.zoom, view.pan);
-  }, [expandedId]);
+  }, [openList]);
 
-  // The open card stays centred when the map's area changes; while it grows, the animation above centres it.
+  // The newest open terminal keeps the centre of the screen when the map's area changes.
   useEffect(() => {
     const cy = canvas.current;
     const element = surface.current;
-    if (!cy || !element || !expandedId || !expansion) return;
-    if (useTeamStore.getState().movingId) return;
-    const node = cy.getElementById(expandedId);
+    const newest = openRef.current.at(-1);
+    if (
+      !cy ||
+      !element ||
+      !area ||
+      newest === undefined ||
+      latest.current.canvasMode !== "collapsed"
+    ) {
+      return;
+    }
+    const node = cy.getElementById(newest);
     if (node.empty()) return;
     cy.viewport({
       zoom: 1,
@@ -540,48 +580,58 @@ export function TeamCanvas({
         height: element.clientHeight,
       }),
     });
-  }, [expandedId, expansion]);
+  }, [area]);
 
-  // The canvas takes where the cards are drawn: one node per card, and the lines between them.
+  // The canvas takes where the cards are drawn: one node per card, and the lines between them. A node whose size
+  // changes is animated by its card in the DOM, and its terminal holds the process's size until that lands.
   useEffect(() => {
     const cy = canvas.current;
     if (!cy) return;
-    const stored = useTeamStore.getState();
-    const moving = stored.movingId;
-    // The open card keeps the centre the map was centred on; its size still follows the area.
-    const openId =
-      stored.canvasMode === "terminal" && stored.terminalOpen
-        ? stored.terminalFor
-        : null;
-    const placed = new Map<string, TeamPosition>();
+    const drawnAt = new Map<string, TeamPosition>();
     for (const member of members) {
-      const corner = shown.get(member.id) ?? targets.get(member.id);
-      if (corner && base.has(member.id)) placed.set(member.id, corner);
+      // A card that just appeared is not in the glide yet: it is drawn at its place straight away.
+      const corner = shown.get(member.id) ?? placed.get(member.id);
+      if (corner && base.has(member.id)) drawnAt.set(member.id, corner);
     }
     cy.batch(() => {
-      for (const [id, corner] of placed) {
+      for (const [id, corner] of drawnAt) {
         const size = sizeNowOf(id);
-        const centre = centreOf(corner, size);
         const node = cy.getElementById(id);
-        // The card that is moving is left to its animation, which lands it at its place.
-        if (node.nonempty() && id === moving) continue;
         if (node.empty()) {
-          cy.add({ group: "nodes", data: { id }, position: centre });
-        } else if (id !== openId) {
-          node.position(centre);
+          cy.add({
+            group: "nodes",
+            data: { id },
+            position: centreOf(corner, size),
+          });
+        } else {
+          node.position(centreOf(corner, size));
         }
-        cy.getElementById(id).style({ width: size.width, height: size.height });
+        const drawn = sizesDrawn.current.get(id);
+        if (
+          !drawn ||
+          drawn.width !== size.width ||
+          drawn.height !== size.height
+        ) {
+          sizesDrawn.current.set(id, size);
+          cy.getElementById(id).style({
+            width: size.width,
+            height: size.height,
+          });
+          if (drawn && resizingId.current !== id) holdForChange(id);
+        }
       }
       cy.nodes().forEach((node) => {
-        if (!placed.has(node.id())) node.remove();
+        if (drawnAt.has(node.id())) return;
+        sizesDrawn.current.delete(node.id());
+        node.remove();
       });
       cy.edges().remove();
-      cy.add(linesOf(members, placed, pairs));
+      cy.add(linesOf(members, drawnAt, pairs));
     });
     // The lines the canvas draws, for the tests: the canvas draws them itself, so they are not in the DOM.
     cy.container()?.setAttribute("data-team-lines", String(cy.edges().length));
     cy.emit("render");
-  }, [members, shown, targets, base, pairs, sizeNowOf, movingId]);
+  }, [members, shown, placed, base, pairs, sizeNowOf]);
 
   // The lines of the selected member's line of work stay solid; the rest fade.
   useEffect(() => {
@@ -629,8 +679,6 @@ export function TeamCanvas({
     dropped.current = false;
     if (event.button !== 0) return;
     if ((event.target as Element).closest("button")) return;
-    // The open card holds its terminal: a drag from it would take the terminal's presses.
-    if (id === expandedId) return;
     const corner = base.get(id);
     if (!corner) return;
     const origin = { x: event.clientX, y: event.clientY };
@@ -685,7 +733,7 @@ export function TeamCanvas({
   };
 
   // A press on a card's right side, bottom or corner resizes it: the size follows the pointer in canvas units, and
-  // the store keeps the size it ends at. The card's centre moves with its corner, so the lines follow it.
+  // the store keeps the size it ends at. An open terminal's size is its own, and so is a card's.
   const startResize = (
     id: string,
     edge: "right" | "bottom" | "corner",
@@ -693,12 +741,17 @@ export function TeamCanvas({
   ) => {
     event.stopPropagation();
     if (event.button !== 0) return;
+    const { canvasMode: mode, openIds: opened } = useTeamStore.getState();
+    const terminal = mode === "expanded" || opened.includes(id);
+    const clamp = terminal ? clampTerminalSize : clampSize;
     const first = sizeNowOf(id);
     const origin = onCanvas(event.clientX, event.clientY);
     let last = first;
+    resizingId.current = id;
+    useTeamStore.getState().setMoving(id, true);
     const move = (moment: globalThis.PointerEvent) => {
       const at = onCanvas(moment.clientX, moment.clientY);
-      last = clampSize({
+      last = clamp({
         width:
           edge === "bottom" ? first.width : first.width + (at.x - origin.x),
         height:
@@ -710,7 +763,12 @@ export function TeamCanvas({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", release);
       window.removeEventListener("pointercancel", release);
-      useTeamStore.getState().setCardSize(id, last);
+      resizingId.current = null;
+      const store = useTeamStore.getState();
+      if (terminal) store.setTerminalSize(id, last);
+      else store.setCardSize(id, last);
+      // The terminal sends its final size now that the pointer has let go.
+      store.setMoving(id, false);
       setResizing(null);
     };
     window.addEventListener("pointermove", move);
@@ -820,9 +878,9 @@ export function TeamCanvas({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Where the held card would land: the spot under its parent, once the others have made room. The ghost is placed
-  // by the canvas's own render, so it follows the zoom and the pan without a new render.
-  const spot = targets !== base && dragId ? targets.get(dragId) : undefined;
+  // Where the held card would land: its place once the others have made room. The ghost is placed by the canvas's
+  // own render, so it follows the zoom and the pan without a new render.
+  const spot = targets !== base && dragId ? placed.get(dragId) : undefined;
   useEffect(() => {
     spotRef.current = spot ?? null;
     canvas.current?.emit("render");
@@ -830,20 +888,6 @@ export function TeamCanvas({
 
   return (
     <div className="relative size-full" aria-label={copy.team.mapLabel}>
-      <div className="absolute top-2 right-2 z-20">
-        <Button
-          size="sm"
-          variant="outline"
-          aria-pressed={canvasMode === "terminal"}
-          onClick={() =>
-            useTeamStore
-              .getState()
-              .setCanvasMode(canvasMode === "nodes" ? "terminal" : "nodes")
-          }
-        >
-          {copy.team.canvasMode.label}
-        </Button>
-      </div>
       {/* Cytoscape sets the position of its own container, so the box that sizes it is this one. */}
       <div className="absolute inset-0">
         <div ref={surface} className="size-full" />
@@ -871,6 +915,7 @@ export function TeamCanvas({
         </svg>
         {members.flatMap((member) => {
           if (!base.has(member.id)) return [];
+          const open = expandedMap || openIds.includes(member.id);
           return [
             <div
               key={member.id}
@@ -887,8 +932,8 @@ export function TeamCanvas({
                 event.stopPropagation();
               }}
               className={cn(
-                "group pointer-events-auto absolute top-0 left-0 origin-top-left",
-                member.id === expandedId && "z-10",
+                "group pointer-events-auto absolute top-0 left-0 origin-top-left transition-[width,height] duration-[280ms] ease-in-out motion-reduce:transition-none",
+                resizing?.id === member.id && "transition-none",
               )}
             >
               <TeamNodeCard
@@ -899,51 +944,47 @@ export function TeamCanvas({
                 expanded={expanded.includes(member.id)}
                 selected={member.id === selectedId}
                 dimmed={focus !== null && !focus.has(member.id)}
-                open={expandedId === member.id}
-                terminalVisible={terminalShown}
-                terminal={canvasMode === "terminal"}
-                onClose={() => useTeamStore.getState().closeTerminal()}
+                open={open}
+                canOpen={!open}
+                terminalVisible={onScreen.has(member.id)}
+                onClose={() => useTeamStore.getState().closeTerminal(member.id)}
                 onOpen={() => {
                   useTeamStore.getState().select(member.id);
                   openMember(member.id);
                 }}
               />
-              {expandedId !== member.id && (
-                <>
-                  <ResizeDot
-                    edge="right"
-                    onStart={(event) => startResize(member.id, "right", event)}
-                  />
-                  <ResizeDot
-                    edge="bottom"
-                    onStart={(event) => startResize(member.id, "bottom", event)}
-                  />
-                  <ResizeDot
-                    edge="corner"
-                    onStart={(event) => startResize(member.id, "corner", event)}
-                  />
-                  {member.kind === "agent" && (
-                    <HandleDot
-                      handle="top"
-                      onStart={(event) => startLink(member.id, "top", event)}
-                    />
-                  )}
-                  {member.orchestrator && (
-                    <HandleDot
-                      handle="bottom"
-                      onStart={(event) => startLink(member.id, "bottom", event)}
-                    />
-                  )}
-                  <HandleDot
-                    handle="left"
-                    onStart={(event) => startLink(member.id, "left", event)}
-                  />
-                  <HandleDot
-                    handle="right"
-                    onStart={(event) => startLink(member.id, "right", event)}
-                  />
-                </>
+              <ResizeDot
+                edge="right"
+                onStart={(event) => startResize(member.id, "right", event)}
+              />
+              <ResizeDot
+                edge="bottom"
+                onStart={(event) => startResize(member.id, "bottom", event)}
+              />
+              <ResizeDot
+                edge="corner"
+                onStart={(event) => startResize(member.id, "corner", event)}
+              />
+              {member.kind === "agent" && (
+                <HandleDot
+                  handle="top"
+                  onStart={(event) => startLink(member.id, "top", event)}
+                />
               )}
+              {member.orchestrator && (
+                <HandleDot
+                  handle="bottom"
+                  onStart={(event) => startLink(member.id, "bottom", event)}
+                />
+              )}
+              <HandleDot
+                handle="left"
+                onStart={(event) => startLink(member.id, "left", event)}
+              />
+              <HandleDot
+                handle="right"
+                onStart={(event) => startLink(member.id, "right", event)}
+              />
             </div>,
           ];
         })}

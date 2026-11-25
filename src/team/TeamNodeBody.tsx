@@ -35,7 +35,7 @@ function AgentBody({
   member: TeamAgent;
   visible: boolean;
 }) {
-  const moving = useTeamStore((state) => state.movingId === member.id);
+  const moving = useTeamStore((state) => state.movingIds.includes(member.id));
   const session = useTerminalStore((state) =>
     member.sessionId
       ? state.sessions.find((candidate) => candidate.id === member.sessionId)

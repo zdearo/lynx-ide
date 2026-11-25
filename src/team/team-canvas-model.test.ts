@@ -7,7 +7,6 @@ import {
   centredPan,
   fitView,
   isInView,
-  openSizeOf,
   CARD_DEFAULT_SIZE,
   CARD_MAX_SIZE,
   CARD_MIN_SIZE,
@@ -115,10 +114,6 @@ describe("a card's size", () => {
 
 describe("open card view", () => {
   const area = { width: 1000, height: 800 };
-
-  it("opens a card to 90% of the map, the modal's inset", () => {
-    expect(openSizeOf(area)).toEqual({ width: 900, height: 720 });
-  });
 
   it("centres a map point at zoom 1", () => {
     expect(centredPan({ x: 500, y: 400 }, area)).toEqual({ x: 0, y: 0 });

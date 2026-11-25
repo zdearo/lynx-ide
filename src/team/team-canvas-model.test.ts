@@ -3,12 +3,17 @@ import { describe, expect, it } from "vitest";
 import type { TeamMember } from "@/team/team-fixtures";
 import { TEAM_CARD_HEIGHT, TEAM_CARD_WIDTH } from "@/team/team-layout";
 import {
+  CARD_DEFAULT_SIZE,
+  CARD_MAX_SIZE,
+  CARD_MIN_SIZE,
   cardTransform,
   centreOf,
+  clampSize,
   cornerOf,
   focusOf,
   handleAnchor,
   OPPOSITE_HANDLE,
+  sizeOf,
 } from "@/team/team-canvas-model";
 
 const member = (id: string, parentId: string | null): TeamMember =>
@@ -75,5 +80,30 @@ describe("the handles of a card", () => {
       x: 10 + TEAM_CARD_WIDTH,
       y: 20 + TEAM_CARD_HEIGHT / 2,
     });
+  });
+});
+
+describe("a card's size", () => {
+  it("is held between the smallest and the largest a card may be", () => {
+    expect(clampSize({ width: 10, height: 10 })).toEqual(CARD_MIN_SIZE);
+    expect(clampSize({ width: 9999, height: 9999 })).toEqual(CARD_MAX_SIZE);
+    expect(clampSize({ width: 300.4, height: 150.6 })).toEqual({
+      width: 300,
+      height: 151,
+    });
+  });
+
+  it("is the default for a member the user has not resized", () => {
+    expect(sizeOf({}, "builder")).toEqual(CARD_DEFAULT_SIZE);
+    expect(sizeOf({ builder: { width: 300, height: 200 } }, "builder")).toEqual(
+      { width: 300, height: 200 },
+    );
+  });
+
+  it("keeps the centre and the corner of a resized card in step", () => {
+    const size = { width: 300, height: 200 };
+    const corner = { x: 10, y: 20 };
+    expect(cornerOf(centreOf(corner, size), size)).toEqual(corner);
+    expect(handleAnchor(corner, "right", size)).toEqual({ x: 310, y: 120 });
   });
 });

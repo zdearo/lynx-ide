@@ -2993,6 +2993,7 @@ export function installMockTauri(scenario: string): void {
           return null;
         }
         case "resize_terminal":
+          terminalResizes += 1;
           return null;
         case "plugin:notification|is_permission_granted":
           return true;
@@ -3011,6 +3012,8 @@ export function installMockTauri(scenario: string): void {
 
   // Lets the e2e wait for commands still in flight instead of sleeping.
   let pendingCommands = 0;
+  // Every size the page sent a process: the team's stage must send none when its modal opens or closes.
+  let terminalResizes = 0;
   const internals = (
     window as unknown as {
       __TAURI_INTERNALS__: { invoke: (...args: unknown[]) => Promise<unknown> };
@@ -3031,6 +3034,7 @@ export function installMockTauri(scenario: string): void {
     __lynxMock: {
       probe,
       pendingCommands: () => pendingCommands,
+      resizes: () => terminalResizes,
       /** The prompt file the last agent was given, and the command typed to start it. */
       lastAgentRun: () => ({
         prompt: lastAgentPrompt,

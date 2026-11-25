@@ -2,28 +2,45 @@ import type { WebglAddon } from "@xterm/addon-webgl";
 import type { Terminal } from "@xterm/xterm";
 
 /**
- * Browsers allow about sixteen WebGL contexts, and each one costs GPU memory. The
- * budget keeps WebGL on the terminals shown most recently and hands the rest to
- * xterm's DOM renderer. Switching among recent tabs stays instant, and a tab
- * that has fallen out of the budget gets its context back when it is shown again.
+ * Browsers allow about sixteen WebGL contexts, and each one costs GPU memory. The budget gives the contexts to the
+ * terminals seen on a screen most recently, and hands the rest to xterm's DOM renderer. A terminal that loses its
+ * context keeps running and keeps its scrollback, and it gets a context back when it is asked for again.
  */
 export class WebglBudget {
-  /** Slots holding a context or loading one, most recently shown first. */
+  /** Slots holding a context, or loading one. */
   private readonly holders: WebglRendererSlot[] = [];
+  /** When each terminal was last on a screen; the one seen least recently gives its context up first. */
+  private readonly seen = new Map<string, number>();
 
   constructor(private readonly size: number) {}
 
-  slotFor(terminal: Terminal): WebglRendererSlot {
-    return new WebglRendererSlot(terminal, this);
+  slotFor(terminal: Terminal, id: string): WebglRendererSlot {
+    return new WebglRendererSlot(terminal, this, id);
   }
 
-  /** Moves a slot to the front, releasing the least recently shown ones beyond the size. */
-  promote(slot: WebglRendererSlot): void {
-    this.forget(slot);
-    this.holders.unshift(slot);
-    while (this.holders.length > this.size) {
-      this.holders.pop()?.release();
+  /** Records that the terminal was on a screen at `time`. */
+  markSeen(id: string, time: number): void {
+    this.seen.set(id, time);
+  }
+
+  /**
+   * Gives the slot a context: a free one, or the context of the terminal seen least recently, when this one was seen
+   * more recently. Returns false when every holder was seen at least as recently, so the slot waits.
+   */
+  claim(slot: WebglRendererSlot): boolean {
+    if (this.holders.includes(slot)) return true;
+    if (this.holders.length < this.size) {
+      this.holders.push(slot);
+      return true;
     }
+    const oldest = this.holders.reduce((least, holder) =>
+      this.lastSeen(holder.id) < this.lastSeen(least.id) ? holder : least,
+    );
+    if (this.lastSeen(slot.id) <= this.lastSeen(oldest.id)) return false;
+    oldest.release();
+    this.forget(oldest);
+    this.holders.push(slot);
+    return true;
   }
 
   forget(slot: WebglRendererSlot): void {
@@ -35,9 +52,13 @@ export class WebglBudget {
   holding(): number {
     return this.holders.length;
   }
+
+  private lastSeen(id: string): number {
+    return this.seen.get(id) ?? 0;
+  }
 }
 
-/** The WebGL renderer of one terminal, drawn only while the budget has room for it. */
+/** The WebGL renderer of one terminal, drawn only while the budget gives it a context. */
 export class WebglRendererSlot {
   private state: "none" | "loading" | "attached" = "none";
   private addon: WebglAddon | null = null;
@@ -46,17 +67,18 @@ export class WebglRendererSlot {
   constructor(
     private readonly terminal: Terminal,
     private readonly budget: WebglBudget,
+    readonly id: string,
   ) {}
 
-  /** Called when this terminal becomes the visible one. */
+  /** Asks for a context. A terminal that holds one keeps it; otherwise it takes one when the budget gives it one. */
   async show(): Promise<void> {
     if (this.disposed) return;
     if (this.state !== "none") {
-      this.budget.promote(this);
+      this.budget.claim(this);
       return;
     }
+    if (!this.budget.claim(this)) return;
     this.state = "loading";
-    this.budget.promote(this);
 
     // Loaded on first use, so the startup bundle does not carry the addon.
     const { WebglAddon: Addon } = await import("@xterm/addon-webgl");
@@ -104,5 +126,5 @@ export class WebglRendererSlot {
   }
 }
 
-/** The budget the app uses: WebGL for the six terminals shown most recently. */
+/** The budget the app uses: WebGL for the six terminals seen on a screen most recently. */
 export const webglBudget = new WebglBudget(6);

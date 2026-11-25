@@ -28,6 +28,8 @@ interface TerminalViewProps {
   active: boolean;
   /** Whether this terminal takes the keyboard when it is shown: of several open at once, only the picked one does. */
   focused?: boolean;
+  /** Whether the terminal is on the team's screen now. Coming back asks for its GPU renderer again, so it counts as seen. */
+  inView?: boolean;
   /** The screen is fitted, but the process keeps its size until this is released (a card moving to its size). */
   resizeHeld?: boolean;
   onExit?: (exitCode: number | null) => void;
@@ -77,7 +79,7 @@ function mountTerminal(
     commands.resizeTerminal(terminalId, size.cols, size.rows),
   );
   terminal.open(container);
-  const webgl = webglBudget.slotFor(terminal);
+  const webgl = webglBudget.slotFor(terminal, terminalId);
 
   // A hidden container measures 0x0 and would collapse the terminal.
   // The size is always sent: the screen's own resize event only fires when its size changes, and a
@@ -130,6 +132,8 @@ function mountTerminal(
       terminal.resize(snapshot.cols, snapshot.rows);
       // The screen's own size may differ from the session's; the session takes the screen's size once the replay is parsed.
       gate.attach(snapshot, () => {
+        // The last piece of a replay can finish after the terminal was closed: a closed terminal sends no size.
+        if (disposed) return;
         fitIfVisible();
         mounted.replayed = true;
         onReplayed(mounted);
@@ -210,6 +214,7 @@ function TerminalViewBase({
   terminalId,
   active,
   focused = true,
+  inView = true,
   resizeHeld = false,
   onExit,
   className,
@@ -268,6 +273,13 @@ function TerminalViewBase({
       mountedRef.current = null;
     };
   }, [terminalId]);
+
+  // A terminal that comes back on the screen asks for its GPU renderer again: the budget then sees it as recent.
+  useEffect(() => {
+    if (!inView) return;
+    const mounted = mountedRef.current;
+    if (mounted) requestGpu(mounted);
+  }, [inView]);
 
   // A card moving to its size: the PTY keeps its size until it lands, then the screen's size is sent once.
   useEffect(() => {

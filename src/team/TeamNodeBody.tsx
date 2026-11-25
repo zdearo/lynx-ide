@@ -20,20 +20,26 @@ import { copy } from "@/ui-copy";
 export function TeamNodeBody({
   member,
   onScreen,
+  resizeLive,
 }: {
   member: TeamMember;
   onScreen: boolean;
+  resizeLive: boolean;
 }) {
   if (member.kind === "bot") return <BotChatBody member={member} />;
-  return <AgentBody member={member} onScreen={onScreen} />;
+  return (
+    <AgentBody member={member} onScreen={onScreen} resizeLive={resizeLive} />
+  );
 }
 
 function AgentBody({
   member,
   onScreen,
+  resizeLive,
 }: {
   member: TeamAgent;
   onScreen: boolean;
+  resizeLive: boolean;
 }) {
   const moving = useTeamStore((state) => state.movingIds.includes(member.id));
   // Of the open terminals, the picked one takes the keyboard.
@@ -74,6 +80,7 @@ function AgentBody({
         focused={focused}
         inView={onScreen}
         resizeHeld={moving}
+        resizeLive={resizeLive}
       />
     </div>
   );

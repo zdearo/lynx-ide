@@ -6635,15 +6635,76 @@ await session("?mock=full", 1400, 860, async (p) => {
   await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
   await p.locator('[data-team-id="builder"]').waitFor({ timeout: 15000 });
   await settle(p, 600);
+  const restored = await p.evaluate(
+    () =>
+      document.querySelector('[data-team-id="builder"]').parentElement.style
+        .width,
+  );
   check(
-    "the open terminal comes back after a reload, and the other cards stay closed",
+    "the open terminal comes back after a reload at its own size, and the other cards stay closed",
     (await p
       .locator('[data-team-id="builder"]')
       .getByRole("button", { name: "Close terminal", exact: true })
       .count()) === 1 &&
       (await p
         .getByRole("button", { name: "Close terminal", exact: true })
-        .count()) === 1,
+        .count()) === 1 &&
+      restored === "480px",
+    restored,
+  );
+});
+
+// The map fits again when the window is resized with a card off the screen; a card's link point is on its edge, and
+// the resize strip answers on both sides of it.
+await session("?mock=full", 1400, 860, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 300);
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
+  await p.locator('[data-team-id="reviewer"]').waitFor({ timeout: 15000 });
+  await settle(p, 600);
+  const box = await p.locator('[data-team-id="reviewer"]').boundingBox();
+  const at = (x, y) =>
+    p.evaluate(
+      ([x, y]) => {
+        const el = document.elementFromPoint(x, y);
+        if (el?.getAttribute("data-resize")) return "resize";
+        if (el?.getAttribute("data-handle")) return "link";
+        return "other";
+      },
+      [x, y],
+    );
+  const centre = box.y + box.height / 2;
+  const right = box.x + box.width;
+  const picked = {
+    up: await at(right, centre - 6),
+    mid: await at(right, centre),
+    down: await at(right, centre + 6),
+  };
+  check(
+    "the link point sits at the centre of the edge, and the resize strip answers beside it on both sides",
+    picked.up === "resize" && picked.mid === "link" && picked.down === "resize",
+    JSON.stringify(picked),
+  );
+  await p.setViewportSize({ width: 1000, height: 700 });
+  await settle(p, 900);
+  const outside = await p.evaluate(() => {
+    const map = document
+      .querySelector('[aria-label="Team map"]')
+      .getBoundingClientRect();
+    return [...document.querySelectorAll("[data-team-id]")].filter((el) => {
+      const r = el.parentElement.getBoundingClientRect();
+      return (
+        r.left < map.left - 1 ||
+        r.right > map.right + 1 ||
+        r.top < map.top - 1 ||
+        r.bottom > map.bottom + 1
+      );
+    }).length;
+  });
+  check(
+    "a narrower window fits the team again: no card is left off the map",
+    outside === 0,
+    `${outside} off the map`,
   );
 });
 

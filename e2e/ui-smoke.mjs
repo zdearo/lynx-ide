@@ -657,7 +657,11 @@ await session("?mock=full", 1200, 900, async (p) => {
   await p.keyboard.press("Escape");
   await settle(p, 300);
   // The tab bar's new terminal button sits at the top of the main area; the worktree rows have none.
+  // Radix hides the page while a dialog closes; the button is listed again once the close has finished.
   const launchers = p.getByRole("button", { name: "New terminal" });
+  for (let wait = 0; wait < 30 && (await launchers.count()) === 0; wait += 1) {
+    await settle(p, 100);
+  }
   let launcher = null;
   for (let index = 0; index < (await launchers.count()); index += 1) {
     const box = await launchers.nth(index).boundingBox();

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
@@ -18,7 +18,7 @@ import { runningLabelOf } from "@/team/team-live";
 import { TeamMemberContextMenu } from "@/team/TeamMemberMenu";
 import { TeamNodeBody } from "@/team/TeamNodeBody";
 import { TeamStatusIcon } from "@/team/TeamStatus";
-import { botOf, engineOf, useTeamStore } from "@/team/team-store";
+import { botOf, engineOf, openMember, useTeamStore } from "@/team/team-store";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
 
@@ -27,7 +27,7 @@ import { copy } from "@/ui-copy";
  * click (or the menu key) opens the member's actions. In terminal mode a card carries a button for its terminal.
  * An expanded card shows its terminal in place of its summary.
  */
-export function TeamNodeCard({
+function TeamNodeCardBase({
   member,
   hasChildren,
   expanded,
@@ -36,8 +36,6 @@ export function TeamNodeCard({
   dimmed,
   canOpen,
   terminalVisible,
-  onOpen,
-  onClose,
 }: {
   member: TeamMember;
   hasChildren: boolean;
@@ -51,10 +49,14 @@ export function TeamNodeCard({
   canOpen: boolean;
   /** Whether the open card's terminal is on the screen; off it, the terminal is not mounted. */
   terminalVisible: boolean;
-  onOpen: () => void;
-  onClose: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // The actions read the store, so the card needs nothing but its own state: a memoised card keeps its place.
+  const onOpen = () => {
+    useTeamStore.getState().select(member.id);
+    openMember(member.id);
+  };
+  const onClose = () => useTeamStore.getState().closeTerminal(member.id);
   // Closing the terminal leaves the focus on the card, which stays where it is.
   const close = () => {
     onClose();
@@ -274,3 +276,6 @@ export function TeamNodeCard({
     </ContextMenu>
   );
 }
+
+/** One member's card. Memoised: a glide re-renders the canvas on every frame, but a card only when its own props change. */
+export const TeamNodeCard = memo(TeamNodeCardBase);

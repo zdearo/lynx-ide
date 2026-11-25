@@ -24,7 +24,7 @@ export const CARD_MAX_SIZE: CardSize = { width: 560, height: 420 };
 /** A member's terminal on the map when it is open and was not resized: a terminal that reads well. */
 export const TERMINAL_DEFAULT_SIZE: CardSize = { width: 480, height: 300 };
 export const TERMINAL_MIN_SIZE: CardSize = { width: 320, height: 180 };
-export const TERMINAL_MAX_SIZE: CardSize = { width: 960, height: 720 };
+export const TERMINAL_MAX_SIZE: CardSize = { width: 1920, height: 1080 };
 
 function clampTo(size: CardSize, min: CardSize, max: CardSize): CardSize {
   return {

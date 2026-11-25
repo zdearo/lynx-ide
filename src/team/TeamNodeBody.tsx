@@ -36,6 +36,8 @@ function AgentBody({
   visible: boolean;
 }) {
   const moving = useTeamStore((state) => state.movingIds.includes(member.id));
+  // Of the open terminals, the picked one takes the keyboard.
+  const focused = useTeamStore((state) => state.selectedId === member.id);
   const session = useTerminalStore((state) =>
     member.sessionId
       ? state.sessions.find((candidate) => candidate.id === member.sessionId)
@@ -69,7 +71,12 @@ function AgentBody({
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <TerminalView terminalId={session.id} active resizeHeld={moving} />
+      <TerminalView
+        terminalId={session.id}
+        active
+        focused={focused}
+        resizeHeld={moving}
+      />
     </div>
   );
 }

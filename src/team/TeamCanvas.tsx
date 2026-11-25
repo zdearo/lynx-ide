@@ -41,7 +41,14 @@ import { pushApart, type PushItem } from "@/team/team-push";
 import { canOrchestrate, linkOf } from "@/team/team-hierarchy";
 import { cn } from "@/lib/utils";
 import { TeamNodeCard } from "@/team/TeamNodeCard";
-import { openMember, useTeamStore } from "@/team/team-store";
+import { openMember, useTeamStore, type CanvasMode } from "@/team/team-store";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useGlidedPositions } from "@/team/use-glided-positions";
 import { copy } from "@/ui-copy";
 
@@ -888,6 +895,26 @@ export function TeamCanvas({
 
   return (
     <div className="relative size-full" aria-label={copy.team.mapLabel}>
+      <div className="absolute top-2 left-2 z-20">
+        <Select
+          value={canvasMode}
+          onValueChange={(mode) =>
+            useTeamStore.getState().setCanvasMode(mode as CanvasMode)
+          }
+        >
+          <SelectTrigger size="sm" aria-label={copy.team.canvasMode.label}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="collapsed">
+              {copy.team.canvasMode.collapsed}
+            </SelectItem>
+            <SelectItem value="expanded">
+              {copy.team.canvasMode.expanded}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       {/* Cytoscape sets the position of its own container, so the box that sizes it is this one. */}
       <div className="absolute inset-0">
         <div ref={surface} className="size-full" />
@@ -946,6 +973,7 @@ export function TeamCanvas({
                 dimmed={focus !== null && !focus.has(member.id)}
                 open={open}
                 canOpen={!open}
+                closable={!expandedMap}
                 terminalVisible={onScreen.has(member.id)}
                 onClose={() => useTeamStore.getState().closeTerminal(member.id)}
                 onOpen={() => {

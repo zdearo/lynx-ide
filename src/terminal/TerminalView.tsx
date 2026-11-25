@@ -25,6 +25,8 @@ interface TerminalViewProps {
   terminalId: string;
   /** Only the visible terminal is fitted and focused. */
   active: boolean;
+  /** Whether this terminal takes the keyboard when it is shown: of several open at once, only the picked one does. */
+  focused?: boolean;
   /** The screen is fitted, but the process keeps its size until this is released (a card moving to its size). */
   resizeHeld?: boolean;
   onExit?: (exitCode: number | null) => void;
@@ -180,6 +182,7 @@ export const TerminalView = memo(TerminalViewBase);
 function TerminalViewBase({
   terminalId,
   active,
+  focused = true,
   resizeHeld = false,
   onExit,
   className,
@@ -188,6 +191,7 @@ function TerminalViewBase({
   const mountedRef = useRef<Mounted | null>(null);
   const onExitRef = useRef(onExit);
   const activeRef = useRef(active);
+  const focusedRef = useRef(focused);
   const settings = useTerminalConfig();
   const focusRequest = useTerminalStore((state) => state.focusRequest);
   const settingsRef = useRef(settings);
@@ -196,8 +200,9 @@ function TerminalViewBase({
   useEffect(() => {
     onExitRef.current = onExit;
     activeRef.current = active;
+    focusedRef.current = focused;
     settingsRef.current = settings;
-  }, [onExit, active, settings]);
+  }, [onExit, active, focused, settings]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -220,7 +225,7 @@ function TerminalViewBase({
       requestAnimationFrame(() => {
         if (activeRef.current) void mounted.webgl.show();
       });
-      if (activeRef.current) mounted.terminal.focus();
+      if (activeRef.current && focusedRef.current) mounted.terminal.focus();
     });
 
     return () => {
@@ -267,7 +272,7 @@ function TerminalViewBase({
     // Wait a frame so the container is laid out after becoming visible.
     const frame = requestAnimationFrame(() => {
       mountedRef.current?.refit();
-      mountedRef.current?.terminal.focus();
+      if (focusedRef.current) mountedRef.current?.terminal.focus();
       // The DOM view is usable at once; the GPU renderer follows a task later.
       setTimeout(() => void mountedRef.current?.webgl.show(), 0);
     });

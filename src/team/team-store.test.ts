@@ -12,6 +12,7 @@ import {
   statusOfWorker,
   useTeamStore,
   watchTeam,
+  isTerminalOpen,
 } from "@/team/team-store";
 import { requestCloseTerminal, resumeLine } from "@/terminal/terminal-actions";
 import { useTerminalStore } from "@/terminal/terminal-store";
@@ -1290,5 +1291,36 @@ describe("team sessions", () => {
       expect(await first).toBe(true);
       expect(terminal.create).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("team canvas modes", () => {
+  it("keeps the open terminals in the order they were opened, and closes them all when the mode changes", () => {
+    useTeamStore.setState({ canvasMode: "collapsed", openIds: [] });
+    const { openTerminal, closeTerminal, setCanvasMode } =
+      useTeamStore.getState();
+
+    openTerminal("builder");
+    openTerminal("reviewer");
+    openTerminal("builder");
+    expect(useTeamStore.getState().openIds).toEqual(["reviewer", "builder"]);
+
+    closeTerminal("reviewer");
+    expect(useTeamStore.getState().openIds).toEqual(["builder"]);
+
+    setCanvasMode("expanded");
+    expect(useTeamStore.getState()).toMatchObject({
+      canvasMode: "expanded",
+      openIds: [],
+    });
+  });
+
+  it("counts every terminal as open in the expanded map, and none but the opened ones in the collapsed one", () => {
+    useTeamStore.setState({ canvasMode: "expanded", openIds: [] });
+    expect(isTerminalOpen(useTeamStore.getState(), "lead")).toBe(true);
+
+    useTeamStore.setState({ canvasMode: "collapsed", openIds: ["builder"] });
+    expect(isTerminalOpen(useTeamStore.getState(), "builder")).toBe(true);
+    expect(isTerminalOpen(useTeamStore.getState(), "lead")).toBe(false);
   });
 });

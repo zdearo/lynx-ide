@@ -5,7 +5,7 @@ import { useBotsStore } from "@/bots/bots-store";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/error-message";
 import { TeamAddDialog } from "@/team/TeamAddDialog";
-import { TeamMap } from "@/team/TeamMap";
+import { TeamCanvas } from "@/team/TeamCanvas";
 import { TeamNodeSheet } from "@/team/TeamNodeSheet";
 import { TeamNotes } from "@/team/TeamNotes";
 import { useTeamMembers, useTeamStore } from "@/team/team-store";
@@ -57,7 +57,7 @@ function TeamViewBase() {
         {loaded &&
           (members.length > 0 ? (
             <>
-              <TeamMap
+              <TeamCanvas
                 members={members}
                 expanded={expanded}
                 selectedId={selectedId}

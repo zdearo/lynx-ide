@@ -1,12 +1,3 @@
-import {
-  Handle,
-  Position,
-  useUpdateNodeInternals,
-  type Node,
-  type NodeProps,
-} from "@xyflow/react";
-import { useEffect } from "react";
-
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
@@ -21,39 +12,31 @@ import { TEAM_CARD_HEIGHT, TEAM_CARD_WIDTH } from "@/team/team-layout";
 import { runningLabelOf } from "@/team/team-live";
 import { TeamMemberContextMenu } from "@/team/TeamMemberMenu";
 import { TeamStatusIcon } from "@/team/TeamStatus";
-import { botOf, engineOf, openMember, useTeamStore } from "@/team/team-store";
+import { botOf, engineOf, useTeamStore } from "@/team/team-store";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
 
-export interface TeamCardData extends Record<string, unknown> {
+/**
+ * One member on the map. A click picks it, a double click (or Enter) opens it, and the right click (or the menu
+ * key) opens the member's actions; the rest is in the sheet.
+ */
+export function TeamNodeCard({
+  member,
+  hasChildren,
+  expanded,
+  selected,
+  dimmed,
+  onOpen,
+}: {
   member: TeamMember;
   hasChildren: boolean;
   expanded: boolean;
-  /** Outside the selected member's line of work: drawn faded. */
+  selected: boolean;
   dimmed: boolean;
-}
-
-export type TeamCardNode = Node<TeamCardData, "member">;
-
-// The handles start a line: the top and bottom ones orchestrate, the side ones make a pair. They show with the mouse over the card or the focus inside it.
-const HANDLE =
-  "size-2! border-ring! bg-background! opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100";
-
-/**
- * One member on the map. Its top handle takes an orchestrator's line (it answers to it), its bottom handle,
- * only there with orchestrator mode on, gives one (it orchestrates the other). The side handles make pairs.
- * Right-click (or the menu key) opens the member's actions; the rest is in the sheet.
- */
-export function TeamNodeCard({ id, data, selected }: NodeProps<TeamCardNode>) {
-  const { member, hasChildren, expanded, dimmed } = data;
+  onOpen: () => void;
+}) {
   const status = copy.team.status[member.status];
   const bots = useBotsStore((state) => state.bots);
-  // React Flow measures a card's handles once, when it mounts: a handle that appears later (the bottom one, when
-  // the member becomes an orchestrator) is unknown to it until the card is measured again.
-  const updateNodeInternals = useUpdateNodeInternals();
-  useEffect(() => {
-    updateNodeInternals(id);
-  }, [id, member.kind, member.orchestrator, updateNodeInternals]);
   const bot = botOf(member, bots);
   const now = useNow();
   const running = useTerminalStore((state) =>
@@ -68,14 +51,14 @@ export function TeamNodeCard({ id, data, selected }: NodeProps<TeamCardNode>) {
           aria-label={copy.team.rowLabel(member.role, status, running)}
           data-team-id={member.id}
           tabIndex={0}
+          onClick={() => useTeamStore.getState().select(member.id)}
+          onDoubleClick={onOpen}
           onKeyDown={(event) => {
-            // React Flow would move a selected card with the arrows; here they belong to the card.
-            if (event.key.startsWith("Arrow")) event.stopPropagation();
             // Keys from the chevron belong to it, not to the card.
             if (event.target !== event.currentTarget) return;
             if (event.key === "Enter") {
               useTeamStore.getState().select(member.id);
-              openMember(member.id);
+              onOpen();
             } else if (
               event.key === "ContextMenu" ||
               (event.shiftKey && event.key === "F10")
@@ -113,36 +96,6 @@ export function TeamNodeCard({ id, data, selected }: NodeProps<TeamCardNode>) {
             dimmed && "opacity-80",
           )}
         >
-          {/* A bot is never a child, so no line comes in from above it. */}
-          {member.kind === "agent" && (
-            <Handle
-              id="top"
-              type="target"
-              position={Position.Top}
-              className={HANDLE}
-            />
-          )}
-          {member.orchestrator && (
-            <Handle
-              id="bottom"
-              type="source"
-              position={Position.Bottom}
-              className={HANDLE}
-            />
-          )}
-          <Handle
-            id="left"
-            type="target"
-            position={Position.Left}
-            className={HANDLE}
-          />
-          <Handle
-            id="right"
-            type="source"
-            position={Position.Right}
-            className={HANDLE}
-          />
-
           <div className="flex h-5 items-center gap-1.5">
             {hasChildren && (
               <TooltipIconButton
@@ -152,7 +105,7 @@ export function TeamNodeCard({ id, data, selected }: NodeProps<TeamCardNode>) {
                     : copy.team.expand(member.role)
                 }
                 aria-expanded={expanded}
-                className="nodrag size-5 shrink-0"
+                className="size-5 shrink-0"
                 onClick={(event) => {
                   event.stopPropagation();
                   void useTeamStore.getState().toggle(member.id);

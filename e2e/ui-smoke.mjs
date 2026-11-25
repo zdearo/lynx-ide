@@ -5655,6 +5655,53 @@ const mapZoom = (p) =>
       wrapper.getBoundingClientRect().width / parseFloat(wrapper.style.width)
     );
   });
+// Every card's box in model units, relative to the map: the zoom is taken out, so boxes compare across camera moves.
+const cardRects = (p) =>
+  p.evaluate(() => {
+    const map = document
+      .querySelector('[aria-label="Team map"]')
+      .getBoundingClientRect();
+    const out = {};
+    for (const el of document.querySelectorAll("[data-team-id]")) {
+      const wrapper = el.parentElement;
+      const r = wrapper.getBoundingClientRect();
+      const zoom = r.width / parseFloat(wrapper.style.width);
+      out[el.getAttribute("data-team-id")] = {
+        x: (r.left - map.left) / zoom,
+        y: (r.top - map.top) / zoom,
+        w: parseFloat(wrapper.style.width),
+        h: parseFloat(wrapper.style.height),
+      };
+    }
+    return out;
+  });
+// Whether two of the boxes overlap, with no gap between them.
+const anyOverlap = (rects) => {
+  const ids = Object.keys(rects);
+  return ids.some((a, i) =>
+    ids.slice(0, i).some((b) => {
+      const p = rects[a];
+      const q = rects[b];
+      return (
+        p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h
+      );
+    }),
+  );
+};
+// Where each card sits relative to one card: a card moves when its place relative to that one changes.
+const relativeTo = (rects, id) =>
+  Object.fromEntries(
+    Object.entries(rects).map(([key, box]) => [
+      key,
+      { x: box.x - rects[id].x, y: box.y - rects[id].y },
+    ]),
+  );
+const pickMode = async (p, label) => {
+  await p.getByRole("combobox", { name: "Map mode", exact: true }).click();
+  await p.getByRole("option", { name: label, exact: true }).click();
+  await settle(p, 900);
+  await untilStill(p);
+};
 // Waits until the cards stop gliding to their places: every card's transform reads the same twice, 100 ms apart.
 const untilStill = async (p) => {
   // A glide can wait a frame or more under load, so two equal reads only count after a short wait.
@@ -5750,10 +5797,16 @@ await session("?mock=full", 1400, 860, async (p) => {
     `${await teamNodes(p)} nodes, ${await teamEdges(p)} edges`,
   );
   check(
-    "the map starts in nodes mode: its terminal mode button is off",
+    "the header has open all and close all beside fit to screen",
     (await p
-      .getByRole("button", { name: "Terminal mode", exact: true })
-      .getAttribute("aria-pressed")) === "false",
+      .getByRole("button", { name: "Open all terminals", exact: true })
+      .count()) === 1 &&
+      (await p
+        .getByRole("button", { name: "Close all terminals", exact: true })
+        .count()) === 1 &&
+      (await p
+        .getByRole("combobox", { name: "Map mode", exact: true })
+        .count()) === 0,
   );
   // Nothing is picked when a worktree opens: pick the member that needs the user.
   await p.locator('[data-team-id="researcher"]').click();
@@ -5850,6 +5903,7 @@ await session("?mock=full", 1400, 860, async (p) => {
       .count()) === 1,
   );
 
+  const beforeOpen = await cardRects(p);
   await p.locator('[data-team-id="builder"]').click({ button: "right" });
   await settle(p, 200);
   check(
@@ -5873,41 +5927,54 @@ await session("?mock=full", 1400, 860, async (p) => {
   await settle(p, 400);
   const builder = p.locator('[data-team-id="builder"]');
   check(
-    "Open terminal opens the member's card in terminal mode, with its close button",
+    "Open terminal opens the member's terminal on the map, with its close button",
     (await builder
       .getByRole("button", { name: "Close terminal", exact: true })
-      .count()) === 1 &&
-      (await p
-        .getByRole("button", { name: "Terminal mode", exact: true })
-        .getAttribute("aria-pressed")) === "true",
+      .count()) === 1,
   );
   check(
     "the open card says the output is simulated",
     (await builder.getByText(/^Simulated output:/).count()) === 1,
   );
-  // The card grows to 90% of the map, centred, under a 36 px title bar: the modal's frame, now on the canvas.
-  const size = await p.evaluate(() => {
+  // The terminal is drawn at its own size, and the camera centres it on the map, under the card's 36 px title bar.
+  const placed = await p.evaluate(() => {
     const map = document
       .querySelector('[aria-label="Team map"]')
       .getBoundingClientRect();
     const root = document.querySelector('[data-team-id="builder"]');
     const box = root.getBoundingClientRect();
     return {
-      width: box.width / map.width,
-      height: box.height / map.height,
-      left: (box.left - map.left) / map.width,
-      top: (box.top - map.top) / map.height,
+      width: root.parentElement.style.width,
+      height: root.parentElement.style.height,
+      centreX: box.left + box.width / 2 - (map.left + map.width / 2),
+      centreY: box.top + box.height / 2 - (map.top + map.height / 2),
       header: root.firstElementChild.getBoundingClientRect().height,
     };
   });
   check(
-    "the open card covers about 90% of the map, centred, under a 36 px title bar",
-    Math.abs(size.width - 0.9) < 0.02 &&
-      Math.abs(size.height - 0.9) < 0.02 &&
-      Math.abs(size.left - 0.05) < 0.02 &&
-      Math.abs(size.top - 0.05) < 0.02 &&
-      size.header === 36,
-    JSON.stringify(size),
+    "the open terminal is 480 by 300, centred on the map, under a 36 px title bar",
+    placed.width === "480px" &&
+      placed.height === "300px" &&
+      Math.abs(placed.centreX) <= 3 &&
+      Math.abs(placed.centreY) <= 3 &&
+      placed.header === 36,
+    JSON.stringify(placed),
+  );
+  // Its neighbours make way for it: no two cards overlap, and some of them moved.
+  const opened = await cardRects(p);
+  const beforeRelative = relativeTo(beforeOpen, "builder");
+  const openedRelative = relativeTo(opened, "builder");
+  check(
+    "the open terminal pushes its neighbours aside: no two cards overlap, and some moved",
+    !anyOverlap(opened) &&
+      Object.keys(opened).some(
+        (id) =>
+          id !== "builder" &&
+          Math.abs(beforeRelative[id].x - openedRelative[id].x) +
+            Math.abs(beforeRelative[id].y - openedRelative[id].y) >
+            2,
+      ),
+    JSON.stringify(opened),
   );
   await settle(p, 300);
   await p.evaluate(axeSource);
@@ -5933,6 +6000,17 @@ await session("?mock=full", 1400, 860, async (p) => {
       { timeout: 3000 },
     )
     .catch(() => {});
+  await untilStill(p);
+  const closedRects = await cardRects(p);
+  const closedRelative = relativeTo(closedRects, "builder");
+  check(
+    "closing the terminal brings the neighbours back to their places",
+    Object.keys(beforeOpen).every(
+      (id) =>
+        Math.abs(beforeRelative[id].x - closedRelative[id].x) <= 3 &&
+        Math.abs(beforeRelative[id].y - closedRelative[id].y) <= 3,
+    ),
+  );
   check(
     "Escape closes the open card, and the focus goes back to it",
     (await builder
@@ -6301,7 +6379,7 @@ await session("?mock=full", 1400, 860, async (p) => {
         const start = performance.now();
         const tick = () => {
           rows.push([
-            parseFloat(wrapper.style.width),
+            parseFloat(getComputedStyle(wrapper).width),
             window.__lynxMock.resizes(),
           ]);
           if (performance.now() - start < 500) requestAnimationFrame(tick);
@@ -6326,21 +6404,17 @@ await session("?mock=full", 1400, 860, async (p) => {
     (await card(member).locator(".xterm").count()) === 1,
   );
   const geometry = await p.evaluate((id) => {
-    const map = document
-      .querySelector('[aria-label="Team map"]')
-      .getBoundingClientRect();
     const root = document.querySelector(`[data-team-id="${id}"]`);
-    const box = root.getBoundingClientRect();
     return {
-      width: box.width / map.width,
-      height: box.height / map.height,
+      width: root.parentElement.style.width,
+      height: root.parentElement.style.height,
       header: root.firstElementChild.getBoundingClientRect().height,
     };
   }, member);
   check(
-    "the open card covers about 90% of the map, under a 36 px title bar",
-    Math.abs(geometry.width - 0.9) < 0.02 &&
-      Math.abs(geometry.height - 0.9) < 0.02 &&
+    "the open terminal is 480 by 300, under a 36 px title bar",
+    geometry.width === "480px" &&
+      geometry.height === "300px" &&
       geometry.header === 36,
     JSON.stringify(geometry),
   );
@@ -6492,6 +6566,84 @@ await session("?mock=full", 1400, 860, async (p) => {
     "a line from that bottom handle to a top handle puts the member under it",
     tester.y > reviewer.y + 100,
     JSON.stringify({ reviewer, tester }),
+  );
+});
+
+// Open all and close all act on the worktree on the screen: every node opens its own terminal, the nodes do not overlap,
+// and closing them all brings the cards back to their places.
+await session("?mock=full", 1400, 860, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 300);
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
+  await settle(p, 600);
+  const closed = await cardRects(p);
+  await p
+    .getByRole("button", { name: "Open all terminals", exact: true })
+    .click();
+  await settle(p, 900);
+  await untilStill(p);
+  const opened = await cardRects(p);
+  check(
+    "open all opens every card's terminal, and no two cards overlap",
+    (await p
+      .getByRole("button", { name: "Open terminal", exact: true })
+      .count()) === 0 &&
+      Object.keys(opened).length === (await teamNodes(p)) &&
+      !anyOverlap(opened),
+    JSON.stringify(opened),
+  );
+  check(
+    "only the terminals on the screen are mounted",
+    (await p.locator(".xterm").count()) <= (await teamNodes(p)),
+  );
+  await p
+    .getByRole("button", { name: "Close all terminals", exact: true })
+    .click();
+  await settle(p, 900);
+  await untilStill(p);
+  const back = await cardRects(p);
+  check(
+    "close all closes every terminal, and each card is back at its place",
+    (await p
+      .getByRole("button", { name: "Close terminal", exact: true })
+      .count()) === 0 &&
+      Object.keys(closed).every(
+        (id) =>
+          Math.abs(closed[id].x - back[id].x) <= 3 &&
+          Math.abs(closed[id].y - back[id].y) <= 3,
+      ),
+    JSON.stringify(back),
+  );
+});
+
+// A node's open terminal is kept per member: it is open again after the map reloads.
+await session("?mock=full", 1400, 860, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 300);
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
+  await p.locator('[data-team-id="builder"]').waitFor({ timeout: 15000 });
+  await settle(p, 600);
+  await p
+    .locator('[data-team-id="builder"]')
+    .getByRole("button", { name: "Open terminal", exact: true })
+    .click();
+  await settle(p, 500);
+  await p.reload();
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 300);
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
+  await p.locator('[data-team-id="builder"]').waitFor({ timeout: 15000 });
+  await settle(p, 600);
+  check(
+    "the open terminal comes back after a reload, and the other cards stay closed",
+    (await p
+      .locator('[data-team-id="builder"]')
+      .getByRole("button", { name: "Close terminal", exact: true })
+      .count()) === 1 &&
+      (await p
+        .getByRole("button", { name: "Close terminal", exact: true })
+        .count()) === 1,
   );
 });
 

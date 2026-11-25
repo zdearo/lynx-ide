@@ -133,7 +133,7 @@ export function TerminalWorkspace({
               <div
                 key={session.id}
                 className={
-                  shown ? "absolute inset-0" : "absolute inset-0 hidden"
+                  shown ? "absolute inset-0" : "absolute inset-0 invisible"
                 }
               >
                 <TerminalView terminalId={session.id} active={shown} />

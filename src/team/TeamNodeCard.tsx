@@ -187,7 +187,7 @@ function TeamNodeCardBase({
             }
           }}
           className={cn(
-            "group size-full flex flex-col gap-1.5 overflow-hidden rounded-lg border bg-card p-3 text-ui text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            "group size-full flex flex-col gap-2.5 overflow-hidden rounded-lg border bg-card p-3 text-ui text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
             selected ? "border-ring" : "border-border",
             dimmed && "opacity-80",
             open && "gap-0 p-0",
@@ -224,41 +224,34 @@ function TeamNodeCardBase({
             <>
               {title}
 
-              <div className="flex h-4 items-center gap-1.5 text-meta text-muted-foreground">
-                <TeamStatusIcon status={member.status} />
-                <span className="truncate">{status}</span>
-                {(member.status === "needsYou" || running !== null) && (
-                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                    {member.status === "needsYou" && (
-                      <span className="rounded-sm bg-muted px-1.5 text-attention">
-                        {copy.team.needsYouBadge}
-                      </span>
-                    )}
-                    {running !== null && <span>{running}</span>}
-                  </span>
-                )}
-              </div>
-
-              <p className="truncate text-nested text-muted-foreground">
+              <p className="line-clamp-2 text-nested text-muted-foreground">
                 {hasTask(member) ? member.task : copy.team.noTask}
               </p>
 
-              <div className="mt-auto flex h-6 items-center gap-1.5 text-meta tabular-nums">
-                {(member.added > 0 || member.removed > 0) && (
-                  <>
-                    <span className="text-diff-added">+{member.added}</span>
-                    <span className="text-diff-removed">−{member.removed}</span>
-                  </>
-                )}
-                {member.orchestrator && (
-                  <span className="ml-auto text-muted-foreground">
-                    {copy.team.orchestratorBadge}
+              {/* Status on the left, the time and the diff on the right, as in the reference: no tags. */}
+              <div className="mt-auto flex h-6 items-center gap-1.5 text-meta text-muted-foreground">
+                <TeamStatusIcon status={member.status} />
+                <span className="min-w-0 truncate">{status}</span>
+                {member.status === "needsYou" && (
+                  <span className="shrink-0 rounded-sm bg-muted px-1.5 text-attention">
+                    {copy.team.needsYouBadge}
                   </span>
                 )}
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono tabular-nums">
+                  {(member.added > 0 || member.removed > 0) && (
+                    <>
+                      <span className="text-diff-added">+{member.added}</span>
+                      <span className="text-diff-removed">
+                        −{member.removed}
+                      </span>
+                    </>
+                  )}
+                  {running !== null && <span>{running}</span>}
+                </span>
                 {canOpen && (
                   <TooltipIconButton
                     label={copy.team.openTerminal}
-                    className="ml-auto size-6 shrink-0 text-muted-foreground"
+                    className="size-6 shrink-0 text-muted-foreground"
                     onClick={(event) => {
                       event.stopPropagation();
                       onOpen();

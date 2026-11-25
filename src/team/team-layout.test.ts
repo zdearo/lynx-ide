@@ -206,19 +206,19 @@ describe("teamLayout", () => {
       Object.fromEntries([...positions].map(([id, { x, y }]) => [id, [x, y]]));
 
     expect(asPairs(teamLayout(TREE, expanded, NO_EXTRA_ROWS))).toEqual({
-      lead: [-112, 0],
-      builder: [-368, 176],
-      researcher: [-112, 176],
-      tester: [144, 176],
-      "login-tests": [-368, 352],
+      lead: [-132, 0],
+      builder: [-428, 188],
+      researcher: [-132, 188],
+      tester: [164, 188],
+      "login-tests": [-428, 376],
     });
     expect(
       asPairs(teamLayout(TREE, [TEAM_ROOT_ID], { researcher: 1 })),
     ).toEqual({
-      lead: [-112, 0],
-      builder: [-240, 176],
-      tester: [16, 176],
-      researcher: [-112, 352],
+      lead: [-132, 0],
+      builder: [-280, 188],
+      tester: [16, 188],
+      researcher: [-132, 376],
     });
     expect(
       asPairs(
@@ -232,21 +232,21 @@ describe("teamLayout", () => {
         ),
       ),
     ).toEqual({
-      lead: [-112, 0],
-      tester: [-368, 176],
-      builder: [-112, 176],
-      researcher: [144, 176],
+      lead: [-132, 0],
+      tester: [-428, 188],
+      builder: [-132, 188],
+      researcher: [164, 188],
     });
     // The Reviewer is paired with Builder, so it joins the tree and sits beside it.
     expect(
       asPairs(teamLayout(TEAM_MEMBERS, expanded, NO_EXTRA_ROWS, {}, pairs)),
     ).toEqual({
-      lead: [-112, 0],
-      builder: [-560, 176],
-      reviewer: [-304, 176],
-      researcher: [-48, 176],
-      tester: [208, 176],
-      "login-tests": [-560, 352],
+      lead: [-132, 0],
+      builder: [-650, 188],
+      reviewer: [-354, 188],
+      researcher: [-58, 188],
+      tester: [238, 188],
+      "login-tests": [-650, 376],
     });
   });
 

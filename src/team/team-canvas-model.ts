@@ -17,8 +17,8 @@ export const CARD_DEFAULT_SIZE: CardSize = {
   width: TEAM_CARD_WIDTH,
   height: TEAM_CARD_HEIGHT,
 };
-/** The smallest a card may be resized to: a title, a status line and a task still fit. */
-export const CARD_MIN_SIZE: CardSize = { width: 180, height: 96 };
+/** The smallest a card may be resized to: a title, a summary and a footer still fit (the padding gives way first). */
+export const CARD_MIN_SIZE: CardSize = { width: 200, height: 120 };
 /** The largest a card may be resized to. */
 export const CARD_MAX_SIZE: CardSize = { width: 560, height: 420 };
 /** A member's terminal on the map when it is open and was not resized: a terminal that reads well. */

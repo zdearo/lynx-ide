@@ -2,8 +2,8 @@ import type { TeamMember } from "@/team/team-fixtures";
 import { partnersOf, type TeamPair } from "@/team/team-pairs";
 
 /** Card size in flow pixels. The cards are drawn at this size, so the layout places them without measuring. */
-export const TEAM_CARD_WIDTH = 224;
-export const TEAM_CARD_HEIGHT = 112;
+export const TEAM_CARD_WIDTH = 264;
+export const TEAM_CARD_HEIGHT = 124;
 const GAP_X = 32;
 const GAP_Y = 64;
 /** The gap between two rows of cards: the lines between rows run in it. */

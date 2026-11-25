@@ -30,6 +30,11 @@ export class WebglBudget {
     const index = this.holders.indexOf(slot);
     if (index !== -1) this.holders.splice(index, 1);
   }
+
+  /** How many terminals hold a WebGL context now: for measuring the budget. */
+  holding(): number {
+    return this.holders.length;
+  }
 }
 
 /** The WebGL renderer of one terminal, drawn only while the budget has room for it. */

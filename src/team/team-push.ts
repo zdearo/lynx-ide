@@ -11,41 +11,45 @@ export interface PushItem {
 }
 
 /**
- * Moves the nodes apart until none overlaps another, with PUSH_GAP between them. The first item stays where it is,
- * and each later one moves out of every item before it that it overlaps: to the right of it when it sits in that
- * item's row, under it otherwise.
- * It is pure: the caller pushes from the layout each time, so a node that closes lets its neighbours go back.
+ * Lays the nodes out so none overlaps another, with PUSH_GAP between them. The nodes the layout puts at the same height
+ * are one row: each row is packed from left to right, a node that overlaps the one before it moving to its right. A row
+ * that changed is then centred on where it was, so its neighbours make room on both sides. Rows stack from the top,
+ * and a row that grew moves the rows under it down. It is pure: the caller computes it from the layout each time, so
+ * closing a terminal brings the cards back to their places.
  */
 export function pushApart(
   items: readonly PushItem[],
+  gap = PUSH_GAP,
 ): Map<string, TeamPosition> {
-  const boxes = items.map(({ id, corner, size }) => ({
-    id,
-    x: corner.x,
-    y: corner.y,
-    w: size.width,
-    h: size.height,
-  }));
-  for (let round = 0; round < 50; round++) {
-    let moved = false;
-    for (let i = 1; i < boxes.length; i++) {
-      const a = boxes[i];
-      for (let j = 0; j < i; j++) {
-        const b = boxes[j];
-        const overlaps =
-          a.x < b.x + b.w + PUSH_GAP &&
-          b.x < a.x + a.w + PUSH_GAP &&
-          a.y < b.y + b.h + PUSH_GAP &&
-          b.y < a.y + a.h + PUSH_GAP;
-        if (!overlaps) continue;
-        // A node that starts in the upper half of the other one goes to its right, a node below it goes under it. The
-        // move only ever goes forward, so a row packed with open terminals cannot send a node back and forth.
-        if (a.y < b.y + b.h / 2) a.x = b.x + b.w + PUSH_GAP;
-        else a.y = b.y + b.h + PUSH_GAP;
-        moved = true;
-      }
-    }
-    if (!moved) break;
+  const rows = new Map<number, PushItem[]>();
+  for (const item of items) {
+    rows.set(item.corner.y, [...(rows.get(item.corner.y) ?? []), item]);
   }
-  return new Map(boxes.map((box) => [box.id, { x: box.x, y: box.y }]));
+  const placed = new Map<string, TeamPosition>();
+  // The lowest bottom of the rows above, with the gap: no row starts above it.
+  let floor = -Infinity;
+  for (const y of [...rows.keys()].sort((a, b) => a - b)) {
+    const row = [...rows.get(y)!].sort((a, b) => a.corner.x - b.corner.x);
+    const top = Math.max(y, floor);
+    const xs = new Map<string, number>();
+    let right = -Infinity;
+    let moved = false;
+    for (const item of row) {
+      const x = Math.max(item.corner.x, right + gap);
+      xs.set(item.id, x);
+      if (x !== item.corner.x) moved = true;
+      right = x + item.size.width;
+    }
+    const originalRight = Math.max(
+      ...row.map((item) => item.corner.x + item.size.width),
+    );
+    const shift = moved ? (originalRight - right) / 2 : 0;
+    let bottom = -Infinity;
+    for (const item of row) {
+      placed.set(item.id, { x: (xs.get(item.id) ?? 0) + shift, y: top });
+      bottom = Math.max(bottom, top + item.size.height);
+    }
+    floor = Math.max(floor, bottom + gap);
+  }
+  return placed;
 }

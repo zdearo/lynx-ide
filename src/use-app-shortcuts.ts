@@ -29,7 +29,10 @@ export function useAppShortcuts(
       const action = matchShortcut(event);
       if (!action) return;
       // With the team's modal open, its close button is the way out: the shortcut would close a session behind it.
-      if (action === "closeTerminal" && useTeamStore.getState().terminalOpen) {
+      if (
+        action === "closeTerminal" &&
+        useTeamStore.getState().openIds.length > 0
+      ) {
         return;
       }
       event.preventDefault();

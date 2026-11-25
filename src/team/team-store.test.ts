@@ -930,7 +930,7 @@ describe("team sessions", () => {
       }),
     );
 
-    expect(store().terminalOpen).toBe(false);
+    expect(store().openIds).toEqual([]);
   });
 
   it("clears the pick and closes the terminal dialog when the worktree changes", async () => {
@@ -940,7 +940,7 @@ describe("team sessions", () => {
 
     useWorkspaceStore.setState({ selectedWorktreePath: DOCS });
 
-    expect(store()).toMatchObject({ selectedId: null, terminalOpen: false });
+    expect(store()).toMatchObject({ selectedId: null, openIds: [] });
   });
 
   it("shows an agent's status from its session, and follows the terminal as it changes", async () => {

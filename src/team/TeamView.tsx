@@ -8,7 +8,11 @@ import { TeamAddDialog } from "@/team/TeamAddDialog";
 import { TeamCanvas } from "@/team/TeamCanvas";
 import { TeamNodeSheet } from "@/team/TeamNodeSheet";
 import { TeamNotes } from "@/team/TeamNotes";
-import { useTeamMembers, useTeamStore } from "@/team/team-store";
+import {
+  isTerminalOpen,
+  useTeamMembers,
+  useTeamStore,
+} from "@/team/team-store";
 import { copy } from "@/ui-copy";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
@@ -27,13 +31,11 @@ function TeamViewBase() {
   const pairs = useTeamStore((state) => state.pairs);
   const extraRows = useTeamStore((state) => state.extraRows);
   const siblingOrder = useTeamStore((state) => state.siblingOrder);
-  const canvasMode = useTeamStore((state) => state.canvasMode);
-  const terminalOpen = useTeamStore((state) => state.terminalOpen);
-  const terminalFor = useTeamStore((state) => state.terminalFor);
   const selected = members.find((member) => member.id === selectedId);
-  // The picked member's terminal is open on its card: the panel waits, hidden, so it does not cover the terminal.
-  const terminalShowing =
-    canvasMode === "terminal" && terminalOpen && terminalFor === selectedId;
+  // The picked member's terminal is open on its node: the panel waits, hidden, so it does not cover the terminal.
+  const terminalShowing = useTeamStore(
+    (state) => selectedId !== null && isTerminalOpen(state, selectedId),
+  );
   const loadBots = useBotsStore((state) => state.load);
 
   // The bot members draw their avatar and engine from the Bots list, which the Bots view may not have loaded.

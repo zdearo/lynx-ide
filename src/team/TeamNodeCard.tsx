@@ -3,9 +3,12 @@ import { useEffect, useRef } from "react";
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { CaretRightIcon, XIcon } from "@/components/icons/line-icons";
+import {
+  CaretRightIcon,
+  TerminalWindowIcon,
+  XIcon,
+} from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
-import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
@@ -31,7 +34,7 @@ export function TeamNodeCard({
   open,
   selected,
   dimmed,
-  terminal,
+  canOpen,
   terminalVisible,
   onOpen,
   onClose,
@@ -44,7 +47,8 @@ export function TeamNodeCard({
   open: boolean;
   selected: boolean;
   dimmed: boolean;
-  terminal: boolean;
+  /** Whether the card offers its terminal: a card whose terminal is not open on the map. */
+  canOpen: boolean;
   /** Whether the open card's terminal is on the screen; off it, the terminal is not mounted. */
   terminalVisible: boolean;
   onOpen: () => void;
@@ -249,18 +253,17 @@ export function TeamNodeCard({
                     {copy.team.orchestratorBadge}
                   </span>
                 )}
-                {terminal && (
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    className="ml-auto"
+                {canOpen && (
+                  <TooltipIconButton
+                    label={copy.team.openTerminal}
+                    className="ml-auto size-6 shrink-0 text-muted-foreground"
                     onClick={(event) => {
                       event.stopPropagation();
                       onOpen();
                     }}
                   >
-                    {copy.team.openTerminal}
-                  </Button>
+                    <TerminalWindowIcon />
+                  </TooltipIconButton>
                 )}
               </div>
             </>

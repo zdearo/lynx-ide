@@ -37,7 +37,7 @@ import { useWorkspaceStore } from "@/workspace/workspace-store";
 import { copy } from "@/ui-copy";
 
 /** The team map's mode: the cards alone, or the cards with a terminal for each member. */
-export type CanvasMode = "nodes" | "terminal";
+export type CanvasMode = "collapsed" | "expanded";
 
 /** A worktree's central area: its terminals, or the team. */
 export type TeamMode = "terminal" | "team";
@@ -120,13 +120,14 @@ interface TeamState {
   modeByWorktree: Record<string, TeamMode>;
   /** Fits the drawn map on screen. Set while the map is on screen, null otherwise. */
   fitMap: (() => void) | null;
-  /** The map's mode: the cards, or the cards with their terminals. Terminal mode lets a card open its terminal. */
+  /** The map's mode: each card opens its own terminal, or every member's terminal is open. */
   canvasMode: CanvasMode;
-  /** The card moving to or from its terminal size, if any: its terminal holds the process's size until it lands. */
-  movingId: string | null;
-  /** The member whose terminal the dialog shows. Kept after the dialog closes, so focus can go back to its card. */
-  terminalFor: string | null;
-  terminalOpen: boolean;
+  /** The members whose terminal is open on the collapsed map, in the order they were opened. */
+  openIds: string[];
+  /** The size of each open terminal the user resized, by id. A terminal not listed has the default size. */
+  terminalSizes: Record<string, CardSize>;
+  /** The members whose node is changing size, or being resized: their terminals hold the process's size until it lands. */
+  movingIds: string[];
   /** Whether the add-member dialog is open. */
   addOpen: boolean;
   /** True while the add flow starts an agent's terminal. The team stays on screen then. */
@@ -136,8 +137,10 @@ interface TeamState {
   load: () => Promise<void>;
   setMode: (path: string, mode: TeamMode) => void;
   openTerminal: (id: string) => void;
+  closeTerminal: (id: string) => void;
   setCanvasMode: (mode: CanvasMode) => void;
-  closeTerminal: () => void;
+  setTerminalSize: (id: string, size: CardSize) => void;
+  setMoving: (id: string, moving: boolean) => void;
   select: (id: string | null) => void;
   /** Opens or closes a member's branch in the backend. Shows nothing until the team is read again. */
   toggle: (id: string) => Promise<void>;
@@ -445,6 +448,14 @@ export function engineOf(
 }
 
 /** Opens a member's terminal, or a bot's chat, on its card; the member is picked too, as the card's double click does. */
+/** Whether a member's terminal is open on the map: every one is, in the expanded map. */
+export function isTerminalOpen(
+  state: Pick<TeamState, "canvasMode" | "openIds">,
+  id: string,
+): boolean {
+  return state.canvasMode === "expanded" || state.openIds.includes(id);
+}
+
 export function openMember(id: string) {
   const store = useTeamStore.getState();
   store.select(id);
@@ -545,10 +556,10 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   siblingOrder: {},
   modeByWorktree: {},
   fitMap: null,
-  canvasMode: "nodes",
-  movingId: null,
-  terminalFor: null,
-  terminalOpen: false,
+  canvasMode: "collapsed",
+  openIds: [],
+  terminalSizes: {},
+  movingIds: [],
   addOpen: false,
   addingSession: false,
 
@@ -559,14 +570,12 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       if (sequence !== latestLoad) return;
       const { loaded, members: before } = get();
       set((state) => teamOf(snapshot, state.selectedId, state.members));
-      // A modal whose member left the team has nothing to show.
-      const { terminalOpen, terminalFor, members } = get();
-      if (
-        terminalOpen &&
-        !members.some((member) => member.id === terminalFor)
-      ) {
-        set({ terminalOpen: false });
-      }
+      // A terminal open on a member who left the team has nothing to show.
+      const { openIds, members } = get();
+      const kept = openIds.filter((id) =>
+        members.some((member) => member.id === id),
+      );
+      if (kept.length !== openIds.length) set({ openIds: kept });
       // The first read has no earlier team, so no member can have left it.
       if (loaded) closeVanishedSessions(before, get().members);
       // A read makes the team ready for the sessions that waited for it.
@@ -578,18 +587,30 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   setMode: (path, mode) =>
     set((state) => ({
       modeByWorktree: { ...state.modeByWorktree, [path]: mode },
-      // Leaving the team (or coming back to it) closes its terminal dialog.
-      terminalOpen: false,
+      // Leaving the team (or coming back to it) closes its open terminals.
+      openIds: [],
     })),
+  // The newest one goes last, so the order is the order they were opened in.
   openTerminal: (id) =>
-    set({ terminalFor: id, terminalOpen: true, canvasMode: "terminal" }),
-  // Leaving terminal mode closes the card that was open.
-  setCanvasMode: (canvasMode) =>
     set((state) => ({
-      canvasMode,
-      terminalOpen: canvasMode === "terminal" ? state.terminalOpen : false,
+      openIds: [...state.openIds.filter((open) => open !== id), id],
     })),
-  closeTerminal: () => set({ terminalOpen: false }),
+  closeTerminal: (id) =>
+    set((state) => ({
+      openIds: state.openIds.filter((open) => open !== id),
+    })),
+  // Switching the mode closes the terminals opened on the collapsed map.
+  setCanvasMode: (canvasMode) => set({ canvasMode, openIds: [] }),
+  setTerminalSize: (id, size) =>
+    set((state) => ({
+      terminalSizes: { ...state.terminalSizes, [id]: size },
+    })),
+  setMoving: (id, moving) =>
+    set((state) => ({
+      movingIds: moving
+        ? [...state.movingIds.filter((moved) => moved !== id), id]
+        : state.movingIds.filter((moved) => moved !== id),
+    })),
   select: (selectedId) => set({ selectedId }),
   toggle: async (id) => {
     const open = get().expanded.includes(id);
@@ -754,7 +775,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 // The pick and an open terminal belong to the team on screen: a worktree switch leaves neither behind.
 useWorkspaceStore.subscribe((state, previous) => {
   if (state.selectedWorktreePath !== previous.selectedWorktreePath) {
-    useTeamStore.setState({ selectedId: null, terminalOpen: false });
+    useTeamStore.setState({ selectedId: null, openIds: [] });
   }
 });
 
@@ -810,16 +831,20 @@ useTerminalStore.subscribe((state, previous) => {
       .map((session) => session.id),
   );
   if (closed.size === 0) return;
-  // The modal shows the terminal of its member: when that session closes, there is nothing left to show in it.
-  const { terminalOpen, terminalFor, members } = useTeamStore.getState();
-  const shown = members.find((member) => member.id === terminalFor);
-  if (
-    terminalOpen &&
-    shown?.kind === "agent" &&
-    shown.sessionId !== null &&
-    closed.has(shown.sessionId)
-  ) {
-    useTeamStore.setState({ terminalOpen: false });
+  // A terminal on the map shows its member's session: when that session closes, nothing is left to show in it.
+  const { openIds, members } = useTeamStore.getState();
+  const gone = openIds.filter((id) => {
+    const member = members.find((candidate) => candidate.id === id);
+    return (
+      member?.kind === "agent" &&
+      member.sessionId !== null &&
+      closed.has(member.sessionId)
+    );
+  });
+  if (gone.length > 0) {
+    useTeamStore.setState({
+      openIds: openIds.filter((id) => !gone.includes(id)),
+    });
   }
   for (const member of useTeamStore.getState().members) {
     if (member.kind !== "agent" || !member.sessionId) continue;

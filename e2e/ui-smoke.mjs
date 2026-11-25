@@ -5866,7 +5866,7 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
 });
 
-// A member's terminal lives in its card, in terminal mode: it is mounted only while the card is on the screen, and its
+// A member's terminal lives in its card, in terminal mode: it stays mounted once it is open, on the screen or not, and its
 // process gets the card's size once the card has landed. A bot's chat and an agent with no session are drawn in the card.
 await session("?mock=full", 1400, 860, async (p) => {
   const card = (id) => p.locator(`[data-team-id="${id}"]`);
@@ -6023,7 +6023,7 @@ await session("?mock=full", 1400, 860, async (p) => {
     JSON.stringify(geometry),
   );
 
-  // Panned away, the card's terminal is not mounted; brought back, it is attached again to its session. The map is
+  // Panned away, the card's terminal stays mounted and keeps its session; brought back, it is still the same terminal. The map is
   // dragged along its bottom edge, where no card is.
   const mapBox = await map.boundingBox();
   const bottom = mapBox.y + mapBox.height - 4;
@@ -6039,8 +6039,8 @@ await session("?mock=full", 1400, 860, async (p) => {
   await p.mouse.up();
   await settle(p, 400);
   check(
-    "a terminal whose card is off the screen is unmounted, and attached again when it comes back",
-    awayCount === 0 && (await p.locator(".xterm").count()) === 1,
+    "a terminal whose card is off the screen stays mounted, and is the same one when it comes back",
+    awayCount === 1 && (await p.locator(".xterm").count()) === 1,
     `${awayCount} off screen`,
   );
 
@@ -6197,9 +6197,11 @@ await session("?mock=full", 1400, 860, async (p) => {
       !anyOverlap(opened),
     JSON.stringify(opened),
   );
+  const mounted = await p.locator(".xterm").count();
   check(
-    "only the terminals on the screen are mounted",
-    (await p.locator(".xterm").count()) <= (await teamNodes(p)),
+    "every open terminal stays mounted, one per card",
+    mounted > 0 && mounted <= (await teamNodes(p)),
+    String(mounted),
   );
   await p
     .getByRole("button", { name: "Close all terminals", exact: true })

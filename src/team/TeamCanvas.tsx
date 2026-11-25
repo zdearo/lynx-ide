@@ -7,6 +7,7 @@ import {
   useState,
   type PointerEvent,
 } from "react";
+import { webglBudget } from "@/terminal/terminal-renderer";
 
 import type { TeamMember } from "@/team/team-fixtures";
 import {
@@ -480,7 +481,8 @@ export function TeamCanvas({
           pan,
         );
       }
-      // Each open terminal is mounted only while it is on the screen.
+      // Each open terminal stays mounted. The ones on the screen are seen now: the WebGL budget gives its contexts to the
+      // terminals seen most recently, whether they are on the screen or not.
       const seen = new Set<string>();
       for (const id of openRef.current) {
         const node = cy.getElementById(id);
@@ -503,8 +505,17 @@ export function TeamCanvas({
         seen.size === onScreenRef.current.size &&
         [...seen].every((id) => onScreenRef.current.has(id));
       if (!unchanged) {
+        const previous = onScreenRef.current;
         onScreenRef.current = seen;
         setOnScreen(seen);
+        const now = performance.now();
+        for (const id of new Set([...previous, ...seen])) {
+          const member = latest.current.members.find(
+            (candidate) => candidate.id === id,
+          );
+          const sessionId = member?.kind === "agent" ? member.sessionId : null;
+          if (sessionId) webglBudget.markSeen(sessionId, now);
+        }
       }
       const spotNow = spotRef.current;
       if (ghost.current && spotNow) {
@@ -991,7 +1002,7 @@ export function TeamCanvas({
                 dimmed={focus !== null && !focus.has(member.id)}
                 open={open}
                 canOpen={!open}
-                terminalVisible={onScreen.has(member.id)}
+                onScreen={onScreen.has(member.id)}
               />
               <ResizeDot
                 edge="right"

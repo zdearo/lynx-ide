@@ -35,7 +35,7 @@ function TeamNodeCardBase({
   selected,
   dimmed,
   canOpen,
-  terminalVisible,
+  onScreen,
 }: {
   member: TeamMember;
   hasChildren: boolean;
@@ -48,7 +48,7 @@ function TeamNodeCardBase({
   /** Whether the card offers its terminal: a card whose terminal is not open on the map. */
   canOpen: boolean;
   /** Whether the open card's terminal is on the screen; off it, the terminal is not mounted. */
-  terminalVisible: boolean;
+  onScreen: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   // The actions read the store, so the card needs nothing but its own state: a memoised card keeps its place.
@@ -214,10 +214,7 @@ function TeamNodeCardBase({
                 className="flex min-h-0 flex-1 flex-col"
                 onPointerDown={(event) => event.stopPropagation()}
               >
-                <TeamNodeBody
-                  member={member}
-                  terminalVisible={terminalVisible}
-                />
+                <TeamNodeBody member={member} onScreen={onScreen} />
               </div>
             </>
           ) : (

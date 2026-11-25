@@ -82,6 +82,7 @@ function packBlock(
   order: SiblingOrder,
   pairs: readonly TeamPair[],
   readingOrder: ReadonlyMap<string, number>,
+  openWidths: Readonly<Record<string, number>>,
 ): Map<string, number> {
   const centres = new Map<string, number>();
   for (const row of [...block.rows.keys()].sort((a, b) => a - b)) {
@@ -96,7 +97,12 @@ function packBlock(
       ]);
     }
     for (const [parentId, group] of siblings) {
-      const middle = parentId === null ? 0 : (centres.get(parentId) ?? 0);
+      // An open parent grows from its corner, so its centre is half its growth to the right of the closed one.
+      const middle =
+        parentId === null
+          ? 0
+          : (centres.get(parentId) ?? 0) +
+            ((openWidths[parentId] ?? TEAM_CARD_WIDTH) - TEAM_CARD_WIDTH) / 2;
       group.forEach((member, index) => {
         wanted.set(member.id, middle + (index - (group.length - 1) / 2) * STEP);
       });
@@ -147,6 +153,7 @@ export function teamLayout(
   extraRows: Readonly<Record<string, number>>,
   order: SiblingOrder = {},
   pairs: readonly TeamPair[] = [],
+  openWidths: Readonly<Record<string, number>> = {},
 ): Map<string, TeamPosition> {
   const childrenOf = new Map<string, TeamMember[]>();
   for (const member of members) {
@@ -204,7 +211,7 @@ export function teamLayout(
   const positions = new Map<string, TeamPosition>();
   let rightEdge = 0;
   blocks.forEach((block, index) => {
-    const centres = packBlock(block, order, pairs, readingOrder);
+    const centres = packBlock(block, order, pairs, readingOrder, openWidths);
     // Whole pixels, so the gap between two blocks is exact and not rounded away.
     const lefts = new Map<string, { x: number; y: number }>();
     for (const [id, centre] of centres) {

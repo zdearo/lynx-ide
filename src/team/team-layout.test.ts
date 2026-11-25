@@ -447,3 +447,28 @@ describe("members that answer to no one", () => {
     ).toEqual({});
   });
 });
+
+describe("an open parent", () => {
+  it("moves its children by half its growth, so they stay centred under its real centre", () => {
+    const closed = teamLayout(TEAM_MEMBERS, [TEAM_ROOT_ID], NO_EXTRA_ROWS);
+    const open = teamLayout(
+      TEAM_MEMBERS,
+      [TEAM_ROOT_ID],
+      NO_EXTRA_ROWS,
+      {},
+      [],
+      { [TEAM_ROOT_ID]: 480 },
+    );
+    const shift = (480 - TEAM_CARD_WIDTH) / 2;
+    const children = TEAM_MEMBERS.filter(
+      (member) => member.parentId === TEAM_ROOT_ID,
+    ).map((member) => member.id);
+    expect(children.length).toBeGreaterThan(0);
+    for (const id of children) {
+      expect(
+        Math.abs(centre(at(open, id)) - centre(at(closed, id)) - shift),
+      ).toBeLessThanOrEqual(1);
+    }
+    expect(at(open, TEAM_ROOT_ID)).toEqual(at(closed, TEAM_ROOT_ID));
+  });
+});

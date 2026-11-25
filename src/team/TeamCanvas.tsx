@@ -295,9 +295,22 @@ export function TeamCanvas({
     [openIds, resizing, cardSizes, terminalSizes],
   );
 
+  // The width of each open terminal: the layout centres the cards under an open node on its real centre.
+  const openWidths = useMemo(
+    () =>
+      Object.fromEntries(
+        openIds.map((id) => [
+          id,
+          sizeOf(terminalSizes, id, TERMINAL_DEFAULT_SIZE).width,
+        ]),
+      ),
+    [openIds, terminalSizes],
+  );
+
   const base = useMemo(
-    () => teamLayout(members, expanded, extraRows, siblingOrder, pairs),
-    [members, expanded, extraRows, siblingOrder, pairs],
+    () =>
+      teamLayout(members, expanded, extraRows, siblingOrder, pairs, openWidths),
+    [members, expanded, extraRows, siblingOrder, pairs, openWidths],
   );
   // The row the held card is over. While it is not its own, the others already take the places they would have
   // on release, and go back if it returns.
@@ -308,7 +321,7 @@ export function TeamCanvas({
     if (!dragId || !drag) return { targets: base, order: siblingOrder };
     const rowsNow = moved ? { ...extraRows, [dragId]: rows } : extraRows;
     const rowLayout = moved
-      ? teamLayout(members, expanded, rowsNow, siblingOrder, pairs)
+      ? teamLayout(members, expanded, rowsNow, siblingOrder, pairs, openWidths)
       : base;
     // Sideways, the card goes after the siblings on its row that are to its left.
     const next = siblingOrderAt(
@@ -322,7 +335,14 @@ export function TeamCanvas({
     return next === siblingOrder
       ? { targets: rowLayout, order: next }
       : {
-          targets: teamLayout(members, expanded, rowsNow, next, pairs),
+          targets: teamLayout(
+            members,
+            expanded,
+            rowsNow,
+            next,
+            pairs,
+            openWidths,
+          ),
           order: next,
         };
   }, [
@@ -336,6 +356,7 @@ export function TeamCanvas({
     siblingOrder,
     pairs,
     base,
+    openWidths,
   ]);
   // The layout pushed apart: an open terminal takes its room and the cards beside it make way. The held card is
   // placed first, then the open terminals in the order they were opened, then the rest. The push is computed from the

@@ -36,6 +36,9 @@ import { useResumableStore } from "@/workspace/resumable-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import { copy } from "@/ui-copy";
 
+/** The team map's mode: the cards alone, or the cards with a terminal for each member. */
+export type CanvasMode = "nodes" | "terminal";
+
 /** A worktree's central area: its terminals, or the team. */
 export type TeamMode = "terminal" | "team";
 
@@ -117,6 +120,8 @@ interface TeamState {
   modeByWorktree: Record<string, TeamMode>;
   /** Fits the drawn map on screen. Set while the map is on screen, null otherwise. */
   fitMap: (() => void) | null;
+  /** The map's mode: the cards, or the cards with their terminals. Terminal mode lets a card open its terminal. */
+  canvasMode: CanvasMode;
   /** The member whose terminal the dialog shows. Kept after the dialog closes, so focus can go back to its card. */
   terminalFor: string | null;
   terminalOpen: boolean;
@@ -129,6 +134,7 @@ interface TeamState {
   load: () => Promise<void>;
   setMode: (path: string, mode: TeamMode) => void;
   openTerminal: (id: string) => void;
+  setCanvasMode: (mode: CanvasMode) => void;
   closeTerminal: () => void;
   select: (id: string | null) => void;
   /** Opens or closes a member's branch in the backend. Shows nothing until the team is read again. */
@@ -559,6 +565,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   siblingOrder: {},
   modeByWorktree: {},
   fitMap: null,
+  canvasMode: "nodes",
   terminalFor: null,
   terminalOpen: false,
   addOpen: false,
@@ -593,7 +600,14 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       // Leaving the team (or coming back to it) closes its terminal dialog.
       terminalOpen: false,
     })),
-  openTerminal: (id) => set({ terminalFor: id, terminalOpen: true }),
+  openTerminal: (id) =>
+    set({ terminalFor: id, terminalOpen: true, canvasMode: "terminal" }),
+  // Leaving terminal mode closes the card that was open.
+  setCanvasMode: (canvasMode) =>
+    set((state) => ({
+      canvasMode,
+      terminalOpen: canvasMode === "terminal" ? state.terminalOpen : false,
+    })),
   closeTerminal: () => set({ terminalOpen: false }),
   select: (selectedId) => set({ selectedId }),
   toggle: async (id) => {

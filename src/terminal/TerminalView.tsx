@@ -25,11 +25,6 @@ interface TerminalViewProps {
   terminalId: string;
   /** Only the visible terminal is fitted and focused. */
   active: boolean;
-  /**
-   * `flow` is a terminal tab: hidden when inactive, fitted when it becomes active. `stage` is a terminal kept on the
-   * team's stage: inactive it stays laid out and is only made invisible, so opening it changes no size.
-   */
-  placement?: "flow" | "stage";
   onExit?: (exitCode: number | null) => void;
   className?: string;
 }
@@ -180,7 +175,6 @@ export const TerminalView = memo(TerminalViewBase);
 function TerminalViewBase({
   terminalId,
   active,
-  placement = "flow",
   onExit,
   className,
 }: TerminalViewProps) {
@@ -255,26 +249,20 @@ function TerminalViewBase({
     if (!active) return;
     // Wait a frame so the container is laid out after becoming visible.
     const frame = requestAnimationFrame(() => {
-      // A stage is laid out already, so becoming active changes no size and sends no resize.
-      if (placement === "flow") mountedRef.current?.refit();
+      mountedRef.current?.refit();
       mountedRef.current?.terminal.focus();
       // The DOM view is usable at once; the GPU renderer follows a task later.
       setTimeout(() => void mountedRef.current?.webgl.show(), 0);
     });
     return () => cancelAnimationFrame(frame);
-  }, [active, placement]);
+  }, [active]);
 
   return (
     // The padding lives out here: xterm sizes itself from its parent's box and
     // would count padding on that parent as room it does not have. Its colour is
     // the terminal's, so a light scheme does not sit inside a dark frame.
     <div
-      className={cn(
-        "size-full py-2 pl-2",
-        !active &&
-          (placement === "stage" ? "invisible pointer-events-none" : "hidden"),
-        className,
-      )}
+      className={cn("size-full py-2 pl-2", !active && "hidden", className)}
       style={{ backgroundColor: resolveTerminalTheme(settings).background }}
     >
       {/* WebGL draws the text on a canvas, so the applied font is mirrored here for the page to read. */}

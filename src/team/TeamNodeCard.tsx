@@ -1,41 +1,52 @@
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
-import { CaretRightIcon } from "@/components/icons/line-icons";
+import { CaretRightIcon, XIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
+import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
+import type { CardSize } from "@/team/team-canvas-model";
 import type { TeamMember } from "@/team/team-fixtures";
 import { hasTask } from "@/team/team-hierarchy";
-import type { CardSize } from "@/team/team-canvas-model";
 import { runningLabelOf } from "@/team/team-live";
 import { TeamMemberContextMenu } from "@/team/TeamMemberMenu";
+import { TeamNodeBody } from "@/team/TeamNodeBody";
 import { TeamStatusIcon } from "@/team/TeamStatus";
 import { botOf, engineOf, useTeamStore } from "@/team/team-store";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { copy } from "@/ui-copy";
 
 /**
- * One member on the map. A click picks it, a double click (or Enter) opens it, and the right click (or the menu
- * key) opens the member's actions; the rest is in the sheet.
+ * One member on the map. A click picks it, a double click (or Enter) opens its terminal in the card, and the right
+ * click (or the menu key) opens the member's actions. In terminal mode a card carries a button for its terminal.
+ * An expanded card shows its terminal in place of its summary.
  */
 export function TeamNodeCard({
   member,
   hasChildren,
   expanded,
+  open,
   selected,
   dimmed,
   size,
+  terminal,
   onOpen,
+  onClose,
 }: {
   member: TeamMember;
   hasChildren: boolean;
+  /** Whether its own members are listed under it. */
   expanded: boolean;
+  /** Whether its terminal is open in the card. */
+  open: boolean;
   selected: boolean;
   dimmed: boolean;
   size: CardSize;
+  terminal: boolean;
   onOpen: () => void;
+  onClose: () => void;
 }) {
   const status = copy.team.status[member.status];
   const bots = useBotsStore((state) => state.bots);
@@ -43,6 +54,47 @@ export function TeamNodeCard({
   const now = useNow();
   const running = useTerminalStore((state) =>
     runningLabelOf(member, state.sessions, now),
+  );
+
+  const title = (
+    <div className="flex h-5 items-center gap-1.5">
+      {hasChildren && (
+        <TooltipIconButton
+          label={
+            expanded
+              ? copy.team.collapse(member.role)
+              : copy.team.expand(member.role)
+          }
+          aria-expanded={expanded}
+          className="size-5 shrink-0"
+          onClick={(event) => {
+            event.stopPropagation();
+            void useTeamStore.getState().toggle(member.id);
+          }}
+        >
+          <CaretRightIcon
+            className={cn("transition-transform", expanded && "rotate-90")}
+          />
+        </TooltipIconButton>
+      )}
+      {member.kind === "bot" ? (
+        <BotAvatar
+          name={member.role}
+          color={bot?.color ?? "graphite"}
+          size="xs"
+        />
+      ) : (
+        <AgentBrandIcon
+          harness={member.harness}
+          className="size-3.5 shrink-0"
+        />
+      )}
+      <span className="min-w-0 flex-1 truncate font-medium">{member.role}</span>
+      {/* Capped at 60% of the row: a long model name is cut, and the role keeps the rest. */}
+      <span className="min-w-0 max-w-[60%] truncate text-meta text-muted-foreground">
+        {engineOf(member, bots)}
+      </span>
+    </div>
   );
 
   return (
@@ -93,87 +145,83 @@ export function TeamNodeCard({
           }}
           style={{ width: size.width, height: size.height }}
           className={cn(
-            "group flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-ui text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            "group flex flex-col gap-1.5 overflow-hidden rounded-lg border bg-card p-3 text-ui text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
             selected ? "border-ring" : "border-border",
             dimmed && "opacity-80",
+            open && "gap-0 p-0",
           )}
         >
-          <div className="flex h-5 items-center gap-1.5">
-            {hasChildren && (
-              <TooltipIconButton
-                label={
-                  expanded
-                    ? copy.team.collapse(member.role)
-                    : copy.team.expand(member.role)
-                }
-                aria-expanded={expanded}
-                className="size-5 shrink-0"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void useTeamStore.getState().toggle(member.id);
-                }}
+          {open ? (
+            <>
+              <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
+                {title}
+                <TooltipIconButton
+                  label={copy.team.closeTerminal}
+                  className="ml-auto shrink-0"
+                  onClick={onClose}
+                >
+                  <XIcon />
+                </TooltipIconButton>
+              </div>
+              {/* A press in the body is for the terminal or the chat, not a drag of the card. */}
+              <div
+                className="flex min-h-0 flex-1 flex-col"
+                onPointerDown={(event) => event.stopPropagation()}
               >
-                <CaretRightIcon
-                  className={cn(
-                    "transition-transform",
-                    expanded && "rotate-90",
-                  )}
-                />
-              </TooltipIconButton>
-            )}
-            {member.kind === "bot" ? (
-              <BotAvatar
-                name={member.role}
-                color={bot?.color ?? "graphite"}
-                size="xs"
-              />
-            ) : (
-              <AgentBrandIcon
-                harness={member.harness}
-                className="size-3.5 shrink-0"
-              />
-            )}
-            <span className="min-w-0 flex-1 truncate font-medium">
-              {member.role}
-            </span>
-            {/* Capped at 60% of the row: a long model name is cut, and the role keeps the rest. */}
-            <span className="min-w-0 max-w-[60%] truncate text-meta text-muted-foreground">
-              {engineOf(member, bots)}
-            </span>
-          </div>
+                <TeamNodeBody member={member} />
+              </div>
+            </>
+          ) : (
+            <>
+              {title}
 
-          <div className="flex h-4 items-center gap-1.5 text-meta text-muted-foreground">
-            <TeamStatusIcon status={member.status} />
-            <span className="truncate">{status}</span>
-            {(member.status === "needsYou" || running !== null) && (
-              <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                {member.status === "needsYou" && (
-                  <span className="rounded-sm bg-muted px-1.5 text-attention">
-                    {copy.team.needsYouBadge}
+              <div className="flex h-4 items-center gap-1.5 text-meta text-muted-foreground">
+                <TeamStatusIcon status={member.status} />
+                <span className="truncate">{status}</span>
+                {(member.status === "needsYou" || running !== null) && (
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                    {member.status === "needsYou" && (
+                      <span className="rounded-sm bg-muted px-1.5 text-attention">
+                        {copy.team.needsYouBadge}
+                      </span>
+                    )}
+                    {running !== null && <span>{running}</span>}
                   </span>
                 )}
-                {running !== null && <span>{running}</span>}
-              </span>
-            )}
-          </div>
+              </div>
 
-          <p className="truncate text-nested text-muted-foreground">
-            {hasTask(member) ? member.task : copy.team.noTask}
-          </p>
+              <p className="truncate text-nested text-muted-foreground">
+                {hasTask(member) ? member.task : copy.team.noTask}
+              </p>
 
-          <div className="flex h-4 items-center gap-1.5 text-meta tabular-nums">
-            {(member.added > 0 || member.removed > 0) && (
-              <>
-                <span className="text-diff-added">+{member.added}</span>
-                <span className="text-diff-removed">−{member.removed}</span>
-              </>
-            )}
-            {member.orchestrator && (
-              <span className="ml-auto text-muted-foreground">
-                {copy.team.orchestratorBadge}
-              </span>
-            )}
-          </div>
+              <div className="mt-auto flex h-6 items-center gap-1.5 text-meta tabular-nums">
+                {(member.added > 0 || member.removed > 0) && (
+                  <>
+                    <span className="text-diff-added">+{member.added}</span>
+                    <span className="text-diff-removed">−{member.removed}</span>
+                  </>
+                )}
+                {member.orchestrator && (
+                  <span className="ml-auto text-muted-foreground">
+                    {copy.team.orchestratorBadge}
+                  </span>
+                )}
+                {terminal && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="ml-auto"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpen();
+                    }}
+                  >
+                    {copy.team.openTerminal}
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </ContextMenuTrigger>
       <TeamMemberContextMenu member={member} hasChildren={hasChildren} />

@@ -1,5 +1,4 @@
 import { lazy, Suspense, useEffect } from "react";
-import { useShallow } from "zustand/react/shallow";
 
 import { FolderSimpleIcon } from "@phosphor-icons/react";
 
@@ -23,19 +22,8 @@ import { startPreset } from "@/terminal/terminal-actions";
 import { TerminalTabs } from "@/terminal/TerminalTabs";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalView } from "@/terminal/TerminalView";
-import { TeamInert, TeamModal } from "@/team/TeamModal";
 import { TeamTopBar } from "@/team/TeamTopBar";
-import {
-  modalSessionId,
-  stageSessionIds,
-  teamModeOf,
-  useTeamStore,
-} from "@/team/team-store";
-import {
-  sessionPlacement,
-  sessionWrapperClass,
-  stageIdOf,
-} from "@/team/team-stage";
+import { teamModeOf, useTeamStore } from "@/team/team-store";
 import { copy } from "@/ui-copy";
 import {
   useSelectedWorktree,
@@ -79,13 +67,6 @@ export function TerminalWorkspace({
   const browserOpen = useBrowserStore((state) => state.open);
   const teamMode =
     useTeamStore((state) => teamModeOf(state.modeByWorktree, path)) === "team";
-  // The team's agents keep their terminals mounted on the stage; the modal shows the one of its open member.
-  const stagedIds = useTeamStore(
-    useShallow((state) => (teamMode ? stageSessionIds(state, path) : [])),
-  );
-  const modalId = useTeamStore((state) =>
-    teamMode ? modalSessionId(state, path) : null,
-  );
   // In the Bots view the main area is the chat with the picked bot; the terminals stay mounted, hidden.
   const botsView = useNavigationStore((state) => state.activeView === "bots");
   const bot = useBotsStore(selectedBotOf);
@@ -124,15 +105,13 @@ export function TerminalWorkspace({
           onToggleRightPanel={onToggleRightPanel}
         />
       ) : teamMode ? (
-        <TeamInert>
-          <TeamTopBar
-            path={path}
-            sidebarVisible={sidebarVisible}
-            rightPanelOpen={rightPanelOpen}
-            onToggleSidebar={onToggleSidebar}
-            onToggleRightPanel={onToggleRightPanel}
-          />
-        </TeamInert>
+        <TeamTopBar
+          path={path}
+          sidebarVisible={sidebarVisible}
+          rightPanelOpen={rightPanelOpen}
+          onToggleSidebar={onToggleSidebar}
+          onToggleRightPanel={onToggleRightPanel}
+        />
       ) : (
         <TerminalTabs
           showLocation={!sidebarVisible}
@@ -143,34 +122,24 @@ export function TerminalWorkspace({
       )}
       {!botsView && !teamMode && path && <FileTabs worktreePath={path} />}
       <div className="relative min-h-0 flex-1">
-        {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. */}
-        {sessions.map((session) => {
-          const placement = sessionPlacement(
-            teamMode,
-            stagedIds.includes(session.id),
-          );
-          const onStage = placement === "stage";
-          const shown =
-            placement === "tabs" &&
-            session.id === activeId &&
-            !openFile &&
-            !browserOpen &&
-            !botsView;
-          return (
-            // A hidden session must leave the layout too: its box would still take the clicks meant for the visible one.
-            <div
-              key={session.id}
-              id={onStage ? stageIdOf(session.id) : undefined}
-              className={sessionWrapperClass(placement, shown)}
-            >
-              <TerminalView
-                terminalId={session.id}
-                active={onStage ? session.id === modalId : shown}
-                placement={onStage ? "stage" : "flow"}
-              />
-            </div>
-          );
-        })}
+        {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. In team mode the
+            team's cards draw their terminals instead, so a session has one view at a time. */}
+        {!teamMode &&
+          sessions.map((session) => {
+            const shown =
+              session.id === activeId && !openFile && !browserOpen && !botsView;
+            return (
+              // A hidden session must leave the layout too: its box would still take the clicks meant for the visible one.
+              <div
+                key={session.id}
+                className={
+                  shown ? "absolute inset-0" : "absolute inset-0 hidden"
+                }
+              >
+                <TerminalView terminalId={session.id} active={shown} />
+              </div>
+            );
+          })}
         {botsView && <BotArea />}
         {!botsView && loaded && repoCount === 0 && <Welcome />}
         {!botsView && path && openFile && (
@@ -187,7 +156,6 @@ export function TerminalWorkspace({
             </Suspense>
           </div>
         )}
-        {!botsView && teamMode && <TeamModal />}
         {!botsView &&
           loaded &&
           selected &&

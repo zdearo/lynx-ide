@@ -1,5 +1,12 @@
 import cytoscape from "cytoscape";
-import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 
 import type { TeamMember } from "@/team/team-fixtures";
 import {
@@ -27,6 +34,7 @@ import {
 import { isValidConnection, pairKey, type TeamPair } from "@/team/team-pairs";
 import { canOrchestrate, linkOf } from "@/team/team-hierarchy";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { TeamNodeCard } from "@/team/TeamNodeCard";
 import { openMember, useTeamStore } from "@/team/team-store";
 import { useGlidedPositions } from "@/team/use-glided-positions";
@@ -223,8 +231,32 @@ export function TeamCanvas({
     size: CardSize;
   } | null>(null);
   const cardSizes = useTeamStore((state) => state.cardSizes);
-  const sizeNowOf = (id: string): CardSize =>
-    resizing?.id === id ? resizing.size : sizeOf(cardSizes, id);
+  const canvasMode = useTeamStore((state) => state.canvasMode);
+  const terminalOpen = useTeamStore((state) => state.terminalOpen);
+  const terminalFor = useTeamStore((state) => state.terminalFor);
+  // The card whose terminal is open, in terminal mode. It grows to the size the modal had: 90% of the area.
+  const expandedId =
+    canvasMode === "terminal" && terminalOpen ? terminalFor : null;
+  // The map's own area, measured as it changes: an open card is 90% of it in each direction.
+  const [area, setArea] = useState<CardSize | null>(null);
+  const expansion = useMemo<CardSize | null>(
+    () =>
+      area
+        ? {
+            width: Math.round(area.width * 0.9),
+            height: Math.round(area.height * 0.9),
+          }
+        : null,
+    [area],
+  );
+  const sizeNowOf = useCallback(
+    (id: string): CardSize => {
+      if (id === expandedId && expansion) return expansion;
+      if (resizing?.id === id) return resizing.size;
+      return sizeOf(cardSizes, id);
+    },
+    [expandedId, expansion, resizing, cardSizes],
+  );
   // Read by the canvas's render, which is set up once and outlives every size change.
   const sizesNow = useRef<(id: string) => CardSize>(() => CARD_DEFAULT_SIZE);
 
@@ -296,6 +328,11 @@ export function TeamCanvas({
       autoungrabify: true,
     });
     canvas.current = cy;
+    const observer = new ResizeObserver(() => {
+      const box = element.getBoundingClientRect();
+      setArea({ width: box.width, height: box.height });
+    });
+    observer.observe(element);
 
     // Each card follows the canvas: its corner in the canvas's units, scaled and moved by the same zoom and pan.
     const place = () => {
@@ -346,6 +383,7 @@ export function TeamCanvas({
     return () => {
       useTeamStore.setState({ fitMap: null });
       canvas.current = null;
+      observer.disconnect();
       cy.destroy();
     };
   }, []);
@@ -361,8 +399,7 @@ export function TeamCanvas({
     }
     cy.batch(() => {
       for (const [id, corner] of placed) {
-        const size =
-          resizing?.id === id ? resizing.size : sizeOf(cardSizes, id);
+        const size = sizeNowOf(id);
         const centre = centreOf(corner, size);
         const node = cy.getElementById(id);
         if (node.empty()) {
@@ -379,7 +416,20 @@ export function TeamCanvas({
       cy.add(linesOf(members, placed, pairs));
     });
     cy.emit("render");
-  }, [members, shown, targets, base, pairs, resizing, cardSizes]);
+  }, [members, shown, targets, base, pairs, sizeNowOf]);
+
+  // Opening a card's terminal grows it to the modal's size and centres the map on it at zoom 1; closing it lets the
+  // map fit the team again.
+  useEffect(() => {
+    const cy = canvas.current;
+    if (!cy) return;
+    if (expandedId) {
+      cy.zoom(1);
+      cy.center(cy.getElementById(expandedId));
+    } else {
+      useTeamStore.getState().fitMap?.();
+    }
+  }, [expandedId, expansion]);
 
   useEffect(() => {
     sizesNow.current = sizeNowOf;
@@ -431,6 +481,8 @@ export function TeamCanvas({
     dropped.current = false;
     if (event.button !== 0) return;
     if ((event.target as Element).closest("button")) return;
+    // The open card holds its terminal: a drag from it would take the terminal's presses.
+    if (id === expandedId) return;
     const corner = base.get(id);
     if (!corner) return;
     const origin = { x: event.clientX, y: event.clientY };
@@ -627,6 +679,21 @@ export function TeamCanvas({
 
   return (
     <div className="relative size-full" aria-label={copy.team.mapLabel}>
+      <div className="absolute top-2 right-2 z-20">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() =>
+            useTeamStore
+              .getState()
+              .setCanvasMode(canvasMode === "nodes" ? "terminal" : "nodes")
+          }
+        >
+          {canvasMode === "nodes"
+            ? copy.team.canvasMode.terminal
+            : copy.team.canvasMode.nodes}
+        </Button>
+      </div>
       {/* Cytoscape sets the position of its own container, so the box that sizes it is this one. */}
       <div className="absolute inset-0">
         <div ref={surface} className="size-full" />
@@ -668,7 +735,10 @@ export function TeamCanvas({
                 dropped.current = false;
                 event.stopPropagation();
               }}
-              className="group pointer-events-auto absolute top-0 left-0 origin-top-left"
+              className={cn(
+                "group pointer-events-auto absolute top-0 left-0 origin-top-left",
+                member.id === expandedId && "z-10",
+              )}
             >
               <TeamNodeCard
                 member={member}
@@ -679,23 +749,30 @@ export function TeamCanvas({
                 selected={member.id === selectedId}
                 dimmed={focus !== null && !focus.has(member.id)}
                 size={sizeNowOf(member.id)}
+                open={expandedId === member.id}
+                terminal={canvasMode === "terminal"}
+                onClose={() => useTeamStore.getState().closeTerminal()}
                 onOpen={() => {
                   useTeamStore.getState().select(member.id);
                   openMember(member.id);
                 }}
               />
-              <ResizeDot
-                edge="right"
-                onStart={(event) => startResize(member.id, "right", event)}
-              />
-              <ResizeDot
-                edge="bottom"
-                onStart={(event) => startResize(member.id, "bottom", event)}
-              />
-              <ResizeDot
-                edge="corner"
-                onStart={(event) => startResize(member.id, "corner", event)}
-              />
+              {expandedId !== member.id && (
+                <>
+                  <ResizeDot
+                    edge="right"
+                    onStart={(event) => startResize(member.id, "right", event)}
+                  />
+                  <ResizeDot
+                    edge="bottom"
+                    onStart={(event) => startResize(member.id, "bottom", event)}
+                  />
+                  <ResizeDot
+                    edge="corner"
+                    onStart={(event) => startResize(member.id, "corner", event)}
+                  />
+                </>
+              )}
               {member.kind === "agent" && (
                 <HandleDot
                   handle="top"

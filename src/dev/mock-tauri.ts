@@ -44,6 +44,7 @@ import {
   type TeamMember as MockTeamMember,
 } from "@/team/team-fixtures";
 import { canOrchestrate } from "@/team/team-hierarchy";
+import { useTeamStore } from "@/team/team-store";
 import { isValidConnection, pairKey, type TeamPair } from "@/team/team-pairs";
 
 type Args = Record<string, unknown>;
@@ -3035,6 +3036,14 @@ export function installMockTauri(scenario: string): void {
       probe,
       pendingCommands: () => pendingCommands,
       resizes: () => terminalResizes,
+      /** The team's pairs and each member's orchestrator, as the e2e checks a line it drew or removed. */
+      teamLines: () => {
+        const { members, pairs } = useTeamStore.getState();
+        return {
+          pairs: pairs.map(({ from, to }) => [from, to]),
+          parents: Object.fromEntries(members.map((m) => [m.id, m.parentId])),
+        };
+      },
       /** The prompt file the last agent was given, and the command typed to start it. */
       lastAgentRun: () => ({
         prompt: lastAgentPrompt,

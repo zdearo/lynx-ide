@@ -8,7 +8,7 @@ import { useNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
 import type { TeamMember } from "@/team/team-fixtures";
 import { hasTask } from "@/team/team-hierarchy";
-import { TEAM_CARD_HEIGHT, TEAM_CARD_WIDTH } from "@/team/team-layout";
+import type { CardSize } from "@/team/team-canvas-model";
 import { runningLabelOf } from "@/team/team-live";
 import { TeamMemberContextMenu } from "@/team/TeamMemberMenu";
 import { TeamStatusIcon } from "@/team/TeamStatus";
@@ -26,6 +26,7 @@ export function TeamNodeCard({
   expanded,
   selected,
   dimmed,
+  size,
   onOpen,
 }: {
   member: TeamMember;
@@ -33,6 +34,7 @@ export function TeamNodeCard({
   expanded: boolean;
   selected: boolean;
   dimmed: boolean;
+  size: CardSize;
   onOpen: () => void;
 }) {
   const status = copy.team.status[member.status];
@@ -89,7 +91,7 @@ export function TeamNodeCard({
               );
             }
           }}
-          style={{ width: TEAM_CARD_WIDTH, height: TEAM_CARD_HEIGHT }}
+          style={{ width: size.width, height: size.height }}
           className={cn(
             "group flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-ui text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
             selected ? "border-ring" : "border-border",

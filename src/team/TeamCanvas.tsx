@@ -8,7 +8,11 @@ import {
   cornerOf,
   focusOf,
   handleAnchor,
+  CARD_DEFAULT_SIZE,
+  clampSize,
   OPPOSITE_HANDLE,
+  sizeOf,
+  type CardSize,
   type HandleName,
 } from "@/team/team-canvas-model";
 import {
@@ -151,6 +155,30 @@ function HandleDot({
   );
 }
 
+const RESIZE_PLACE: Record<"right" | "bottom" | "corner", string> = {
+  right: "top-0 -right-1 h-full w-2 cursor-ew-resize",
+  bottom: "-bottom-1 left-0 h-2 w-full cursor-ns-resize",
+  corner: "-right-1.5 -bottom-1.5 size-4 cursor-nwse-resize",
+};
+
+/** A card's edge that resizes it: an invisible strip on its border, so the card keeps its look. */
+function ResizeDot({
+  edge,
+  onStart,
+}: {
+  edge: "right" | "bottom" | "corner";
+  onStart: (event: PointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      aria-hidden
+      data-resize={edge}
+      onPointerDown={onStart}
+      className={cn("pointer-events-auto absolute", RESIZE_PLACE[edge])}
+    />
+  );
+}
+
 /**
  * The team as a canvas. Cytoscape draws the lines and takes the pan, the zoom and the hit tests on empty space. The
  * cards are DOM laid over it, moved by the same pan and zoom, so a card keeps its own buttons and menus. A card taken
@@ -189,6 +217,16 @@ export function TeamCanvas({
   } | null>(null);
   // A drop is followed by a click on the same card, which must not select it.
   const dropped = useRef(false);
+  // The card being resized and the size it has now; the store keeps the size it ends at.
+  const [resizing, setResizing] = useState<{
+    id: string;
+    size: CardSize;
+  } | null>(null);
+  const cardSizes = useTeamStore((state) => state.cardSizes);
+  const sizeNowOf = (id: string): CardSize =>
+    resizing?.id === id ? resizing.size : sizeOf(cardSizes, id);
+  // Read by the canvas's render, which is set up once and outlives every size change.
+  const sizesNow = useRef<(id: string) => CardSize>(() => CARD_DEFAULT_SIZE);
 
   const base = useMemo(
     () => teamLayout(members, expanded, extraRows, siblingOrder, pairs),
@@ -267,7 +305,11 @@ export function TeamCanvas({
         const node = cy.getElementById(id);
         if (node.empty()) continue;
         const { x, y } = node.position();
-        card.style.transform = cardTransform(cornerOf({ x, y }), zoom, pan);
+        card.style.transform = cardTransform(
+          cornerOf({ x, y }, sizesNow.current(id)),
+          zoom,
+          pan,
+        );
       }
       const spotNow = spotRef.current;
       if (ghost.current && spotNow) {
@@ -319,13 +361,16 @@ export function TeamCanvas({
     }
     cy.batch(() => {
       for (const [id, corner] of placed) {
-        const centre = centreOf(corner);
+        const size =
+          resizing?.id === id ? resizing.size : sizeOf(cardSizes, id);
+        const centre = centreOf(corner, size);
         const node = cy.getElementById(id);
         if (node.empty()) {
           cy.add({ group: "nodes", data: { id }, position: centre });
         } else {
           node.position(centre);
         }
+        cy.getElementById(id).style({ width: size.width, height: size.height });
       }
       cy.nodes().forEach((node) => {
         if (!placed.has(node.id())) node.remove();
@@ -334,7 +379,11 @@ export function TeamCanvas({
       cy.add(linesOf(members, placed, pairs));
     });
     cy.emit("render");
-  }, [members, shown, targets, base, pairs]);
+  }, [members, shown, targets, base, pairs, resizing, cardSizes]);
+
+  useEffect(() => {
+    sizesNow.current = sizeNowOf;
+  });
 
   // The lines of the selected member's line of work stay solid; the rest fade.
   useEffect(() => {
@@ -428,6 +477,40 @@ export function TeamCanvas({
       setDrag(null);
     };
     // On the window, not the card: a fast pointer that leaves the card still moves it, and no capture retargets the click.
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+  };
+
+  // A press on a card's right side, bottom or corner resizes it: the size follows the pointer in canvas units, and
+  // the store keeps the size it ends at. The card's centre moves with its corner, so the lines follow it.
+  const startResize = (
+    id: string,
+    edge: "right" | "bottom" | "corner",
+    event: PointerEvent<HTMLDivElement>,
+  ) => {
+    event.stopPropagation();
+    if (event.button !== 0) return;
+    const first = sizeNowOf(id);
+    const origin = onCanvas(event.clientX, event.clientY);
+    let last = first;
+    const move = (moment: globalThis.PointerEvent) => {
+      const at = onCanvas(moment.clientX, moment.clientY);
+      last = clampSize({
+        width:
+          edge === "bottom" ? first.width : first.width + (at.x - origin.x),
+        height:
+          edge === "right" ? first.height : first.height + (at.y - origin.y),
+      });
+      setResizing({ id, size: last });
+    };
+    const release = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+      useTeamStore.getState().setCardSize(id, last);
+      setResizing(null);
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", release);
     window.addEventListener("pointercancel", release);
@@ -595,10 +678,23 @@ export function TeamCanvas({
                 expanded={expanded.includes(member.id)}
                 selected={member.id === selectedId}
                 dimmed={focus !== null && !focus.has(member.id)}
+                size={sizeNowOf(member.id)}
                 onOpen={() => {
                   useTeamStore.getState().select(member.id);
                   openMember(member.id);
                 }}
+              />
+              <ResizeDot
+                edge="right"
+                onStart={(event) => startResize(member.id, "right", event)}
+              />
+              <ResizeDot
+                edge="bottom"
+                onStart={(event) => startResize(member.id, "bottom", event)}
+              />
+              <ResizeDot
+                edge="corner"
+                onStart={(event) => startResize(member.id, "corner", event)}
               />
               {member.kind === "agent" && (
                 <HandleDot

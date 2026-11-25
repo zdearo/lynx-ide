@@ -27,6 +27,7 @@ import {
 import { teamBackend, onTeamChanged } from "@/team/team-backend";
 import { isDrawn } from "@/team/team-hierarchy";
 import type { SiblingOrder } from "@/team/team-layout";
+import type { CardSize } from "@/team/team-canvas-model";
 import { activityOf } from "@/team/team-live";
 import type { TeamPair } from "@/team/team-pairs";
 import { requestCloseTerminal, resumeLine } from "@/terminal/terminal-actions";
@@ -109,6 +110,8 @@ interface TeamState {
   selectedId: string | null;
   /** How many rows each member sits below its default row, by id. */
   extraRows: Record<string, number>;
+  /** The size of each card the user resized, by id. A card not listed has the default size. */
+  cardSizes: Record<string, CardSize>;
   /** The left-to-right order of each member's own members, once the user has moved one sideways. */
   siblingOrder: SiblingOrder;
   modeByWorktree: Record<string, TeamMode>;
@@ -137,6 +140,7 @@ interface TeamState {
   /** Puts a member under an orchestrator, or under no one (null). */
   setParent: (id: string, parentId: string | null) => Promise<void>;
   setExtraRows: (id: string, rows: number) => void;
+  setCardSize: (id: string, size: CardSize) => void;
   setSiblingOrder: (order: SiblingOrder) => void;
   setAddOpen: (open: boolean) => void;
   /** Adds a member to the worktree on the sidebar and picks it. False when it was refused, and the dialog keeps what was typed. */
@@ -551,6 +555,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   // The mock opens on its seeded pick; the real app starts with nothing picked.
   selectedId: isMockBackend() ? TEAM_NEEDS_YOU_ID : null,
   extraRows: {},
+  cardSizes: {},
   siblingOrder: {},
   modeByWorktree: {},
   fitMap: null,
@@ -647,6 +652,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     set((state) => ({
       extraRows: { ...state.extraRows, [id]: Math.max(0, rows) },
     })),
+  setCardSize: (id, size) =>
+    set((state) => ({ cardSizes: { ...state.cardSizes, [id]: size } })),
   setSiblingOrder: (siblingOrder) => set({ siblingOrder }),
   setAddOpen: (addOpen) => set({ addOpen }),
   addMember: async (draft) => {

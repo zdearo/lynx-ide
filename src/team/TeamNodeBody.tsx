@@ -19,21 +19,21 @@ import { copy } from "@/ui-copy";
  */
 export function TeamNodeBody({
   member,
-  terminalVisible,
+  onScreen,
 }: {
   member: TeamMember;
-  terminalVisible: boolean;
+  onScreen: boolean;
 }) {
   if (member.kind === "bot") return <BotChatBody member={member} />;
-  return <AgentBody member={member} visible={terminalVisible} />;
+  return <AgentBody member={member} onScreen={onScreen} />;
 }
 
 function AgentBody({
   member,
-  visible,
+  onScreen,
 }: {
   member: TeamAgent;
-  visible: boolean;
+  onScreen: boolean;
 }) {
   const moving = useTeamStore((state) => state.movingIds.includes(member.id));
   // Of the open terminals, the picked one takes the keyboard.
@@ -65,16 +65,14 @@ function AgentBody({
     return <ClosedAgentBody member={member} />;
   }
 
-  // Off the screen the terminal is not mounted: the process runs on, and its screen comes back on attach.
-  if (!visible) {
-    return <div className="flex min-h-0 flex-1 flex-col bg-background" />;
-  }
+  // An open terminal stays mounted, on or off the screen: the screen only says which ones are in view.
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       <TerminalView
         terminalId={session.id}
         active
         focused={focused}
+        inView={onScreen}
         resizeHeld={moving}
       />
     </div>

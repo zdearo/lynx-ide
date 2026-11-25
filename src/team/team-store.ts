@@ -563,6 +563,44 @@ let latestLoad = 0;
 const revivingIds = new Set<string>();
 
 /** The team on screen. Its members and lines come from the backend; the rest is the screen's own state. */
+/** How many terminals open per frame when they are opened all at once: each one mounts a terminal, and a frame holds one. */
+export const OPEN_PER_FRAME = 1;
+
+// The terminals still to open by "open all", and the frame that opens the next batch.
+let opening: string[] = [];
+let openingFrame: number | null = null;
+// The terminals open when the app last closed: they reopen a few per frame once the team is on screen.
+let restoring: string[] = readOpenIds();
+
+function cancelOpening() {
+  if (openingFrame !== null) cancelAnimationFrame(openingFrame);
+  openingFrame = null;
+  opening = [];
+}
+
+function openNextBatch() {
+  openingFrame = null;
+  const batch = opening.splice(0, OPEN_PER_FRAME);
+  useTeamStore.setState((state) => {
+    const fresh = batch.filter(
+      (id) =>
+        !state.openIds.includes(id) &&
+        state.members.some((member) => member.id === id),
+    );
+    return fresh.length > 0 ? { openIds: [...state.openIds, ...fresh] } : {};
+  });
+  if (opening.length > 0) openingFrame = requestAnimationFrame(openNextBatch);
+}
+
+/** Reopens the terminals of the last session, a few per frame, once the team is on the screen. */
+export function restoreOpenTerminals() {
+  if (restoring.length === 0) return;
+  cancelOpening();
+  opening = restoring;
+  restoring = [];
+  openingFrame = requestAnimationFrame(openNextBatch);
+}
+
 export const useTeamStore = create<TeamState>((set, get) => ({
   loaded: false,
   members: [],
@@ -576,7 +614,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   siblingOrder: {},
   modeByWorktree: {},
   fitMap: null,
-  openIds: readOpenIds(),
+  openIds: [],
   terminalSizes: {},
   movingIds: [],
   addOpen: false,
@@ -611,28 +649,25 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     set((state) => ({
       openIds: [...state.openIds.filter((open) => open !== id), id],
     })),
-  closeTerminal: (id) =>
+  closeTerminal: (id) => {
+    opening = opening.filter((pending) => pending !== id);
     set((state) => ({
       openIds: state.openIds.filter((open) => open !== id),
-    })),
+    }));
+  },
   // Every terminal of the worktree on the screen, and none of it: the others keep their own state.
-  openAll: () =>
-    set((state) => ({
-      openIds: [
-        ...state.openIds.filter(
-          (id) =>
-            !membersOfWorktree(
-              state.members,
-              useWorkspaceStore.getState().selectedWorktreePath,
-            ).some((member) => member.id === id),
-        ),
-        ...membersOfWorktree(
-          state.members,
-          useWorkspaceStore.getState().selectedWorktreePath,
-        ).map((member) => member.id),
-      ],
-    })),
-  closeAll: () =>
+  // A few terminals open per frame: opening them all in one frame would mount them all in one frame.
+  openAll: () => {
+    cancelOpening();
+    opening = membersOfWorktree(
+      get().members,
+      useWorkspaceStore.getState().selectedWorktreePath,
+    ).map((member) => member.id);
+    // The first batch waits for the next frame: opened inside the click, it would share the click's frame.
+    openingFrame = requestAnimationFrame(openNextBatch);
+  },
+  closeAll: () => {
+    cancelOpening();
     set((state) => {
       const shown = new Set(
         membersOfWorktree(
@@ -641,7 +676,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         ).map((member) => member.id),
       );
       return { openIds: state.openIds.filter((id) => !shown.has(id)) };
-    }),
+    });
+  },
   setTerminalSize: (id, size) =>
     set((state) => ({
       terminalSizes: { ...state.terminalSizes, [id]: size },
@@ -885,6 +921,13 @@ useTerminalStore.subscribe((state, previous) => {
 });
 
 // The open terminals are kept as they change, so a reload brings them back.
+// Saved once the terminals are all open: a partial list written in between would lose the ones still to come.
 useTeamStore.subscribe((state, previous) => {
-  if (state.openIds !== previous.openIds) saveOpenIds(state.openIds);
+  if (
+    state.openIds !== previous.openIds &&
+    restoring.length === 0 &&
+    opening.length === 0
+  ) {
+    saveOpenIds(state.openIds);
+  }
 });

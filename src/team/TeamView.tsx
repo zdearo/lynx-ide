@@ -7,7 +7,11 @@ import { errorMessage } from "@/lib/error-message";
 import { TeamAddDialog } from "@/team/TeamAddDialog";
 import { TeamCanvas } from "@/team/TeamCanvas";
 import { TeamNotes } from "@/team/TeamNotes";
-import { useTeamMembers, useTeamStore } from "@/team/team-store";
+import {
+  restoreOpenTerminals,
+  useTeamMembers,
+  useTeamStore,
+} from "@/team/team-store";
 import { copy } from "@/ui-copy";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
@@ -27,6 +31,11 @@ function TeamViewBase() {
   const extraRows = useTeamStore((state) => state.extraRows);
   const siblingOrder = useTeamStore((state) => state.siblingOrder);
   const loadBots = useBotsStore((state) => state.load);
+
+  // The terminals saved as open reopen once the team is loaded, a few per frame.
+  useEffect(() => {
+    if (loaded) restoreOpenTerminals();
+  }, [loaded]);
 
   // The bot members draw their avatar and engine from the Bots list, which the Bots view may not have loaded.
   useEffect(() => {

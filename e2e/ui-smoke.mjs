@@ -6116,6 +6116,251 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
 });
 
+// The team's terminal modal runs on the stage: an agent's terminal stays mounted there, so opening and closing the modal
+// sends no resize and keeps the same terminal element. A bot's chat and an agent with no session are drawn in its body.
+await session("?mock=full", 1400, 860, async (p) => {
+  const modal = p.locator('[role="dialog"][aria-modal="true"]');
+  const resizes = () => p.evaluate(() => window.__lynxMock.resizes());
+  const openCard = (id) =>
+    p.locator(`[data-team-id="${id}"]`).first().dblclick();
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 300);
+  const beforeTeam = await resizes();
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
+  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
+  await settle(p, 600);
+  const staged = await p.locator('[id^="team-stage-"]').count();
+  const sent = (await resizes()) - beforeTeam;
+  // A fit sends the size twice: once from the terminal's own resize event, once from the fit itself (pre-existing).
+  check(
+    "entering the team sends each staged terminal its size, once or twice, and nothing else",
+    staged > 0 && sent >= staged && sent <= 2 * staged,
+    `${sent} resizes for ${staged} staged terminals`,
+  );
+
+  // The first member whose terminal is on the stage: its modal names that stage in aria-owns.
+  const ids = [
+    ...new Set(
+      await p
+        .locator("[data-team-id]")
+        .evaluateAll((els) => els.map((el) => el.getAttribute("data-team-id"))),
+    ),
+  ];
+  let member = null;
+  for (const id of ids) {
+    await openCard(id);
+    await settle(p, 300);
+    if (
+      (await modal.count()) === 1 &&
+      (await modal.getAttribute("aria-owns")) !== null
+    ) {
+      member = id;
+      break;
+    }
+    const close = modal.getByRole("button", {
+      name: /^Close (terminal|chat)$/,
+    });
+    if ((await close.count()) === 1) await close.click();
+    await settle(p, 200);
+  }
+  check(
+    "a team member's terminal opens in the modal, which names its stage",
+    member !== null,
+  );
+  if (member === null) return;
+
+  const stage = await modal.getAttribute("aria-owns");
+  await p
+    .waitForFunction(
+      (owns) => document.getElementById(owns)?.querySelector(".xterm") != null,
+      stage,
+      { timeout: 5000 },
+    )
+    .catch(() => {});
+  await p.evaluate((owns) => {
+    window.__stageXterm = document
+      .getElementById(owns)
+      ?.querySelector(".xterm");
+  }, stage);
+  check(
+    "opening the modal focuses the member's terminal",
+    await p.evaluate(() => document.activeElement?.closest(".xterm") != null),
+  );
+
+  await p.keyboard.press("Escape");
+  await settle(p, 300);
+  check(
+    "Escape inside the terminal belongs to the agent: the modal stays open",
+    (await modal.count()) === 1,
+  );
+  await p.keyboard.press("Shift+Escape");
+  await settle(p, 300);
+  check(
+    "Shift+Escape closes the modal from inside the terminal",
+    (await modal.count()) === 0,
+  );
+  await p
+    .waitForFunction(
+      (id) => document.activeElement?.getAttribute("data-team-id") === id,
+      member,
+      { timeout: 3000 },
+    )
+    .catch(() => {});
+  check(
+    "closing the modal gives the focus back to the member's card",
+    (await p.evaluate(() =>
+      document.activeElement?.getAttribute("data-team-id"),
+    )) === member,
+  );
+
+  const beforeOpen = await resizes();
+  await openCard(member);
+  await settle(p, 300);
+  const sameElement = await p.evaluate(
+    (owns) =>
+      document.getElementById(owns)?.querySelector(".xterm") ===
+      window.__stageXterm,
+    stage,
+  );
+  check(
+    "reopening the modal sends no resize, and shows the same terminal element",
+    (await resizes()) === beforeOpen && sameElement,
+  );
+
+  const geometry = await p.evaluate((owns) => {
+    const frame = document.querySelector('[role="dialog"][aria-modal="true"]');
+    const header = frame.firstElementChild.getBoundingClientRect();
+    const box = frame.getBoundingClientRect();
+    const stageBox = document.getElementById(owns).getBoundingClientRect();
+    return {
+      header: header.height,
+      top: stageBox.top - header.bottom,
+      left: stageBox.left - box.left,
+      right: box.right - stageBox.right,
+      bottom: box.bottom - stageBox.bottom,
+    };
+  }, stage);
+  check(
+    "the stage is the modal's body, under a 36 px title bar",
+    geometry.header === 36 &&
+      Object.entries(geometry).every(
+        ([key, value]) => key === "header" || Math.abs(value) <= 0.5,
+      ),
+    JSON.stringify(geometry),
+  );
+
+  const aria = await p.evaluate(() => {
+    const frame = document.querySelector('[role="dialog"][aria-modal="true"]');
+    return {
+      name:
+        document.getElementById(frame.getAttribute("aria-labelledby"))
+          ?.textContent ?? "",
+      described:
+        (
+          document.getElementById(frame.getAttribute("aria-describedby"))
+            ?.textContent ?? ""
+        ).length > 0,
+      owns: document.getElementById(frame.getAttribute("aria-owns")) !== null,
+      inert: document.querySelectorAll("[inert]").length,
+    };
+  });
+  check(
+    "the modal is a named dialog that owns its stage, and the rest of the screen is inert",
+    aria.name.length > 0 && aria.described && aria.owns && aria.inert >= 2,
+    JSON.stringify(aria),
+  );
+
+  await p.evaluate(axeSource);
+  const violations = await p.evaluate(async () => {
+    const result = await axe.run(document, {
+      runOnly: ["wcag2a", "wcag2aa"],
+    });
+    return result.violations.map((v) => `${v.id} (${v.nodes.length})`);
+  });
+  check(
+    "axe: no WCAG A/AA violations with the modal open",
+    violations.length === 0,
+    violations.join(" || "),
+  );
+
+  await modal
+    .getByRole("button", { name: "Close terminal", exact: true })
+    .focus();
+  await p.keyboard.press("Escape");
+  await settle(p, 300);
+  check(
+    "Escape from the title bar closes the modal",
+    (await modal.count()) === 0,
+  );
+
+  await openCard(member);
+  await settle(p, 300);
+  const main = await p.locator("main").boundingBox();
+  await p.mouse.click(main.x + 20, main.y + 60);
+  await settle(p, 300);
+  check(
+    "a click on the backdrop closes the modal",
+    (await modal.count()) === 0,
+  );
+
+  await openCard(member);
+  await settle(p, 300);
+  const beforeClose = await resizes();
+  await modal
+    .getByRole("button", { name: "Close terminal", exact: true })
+    .click();
+  await settle(p, 300);
+  check(
+    "closing the modal with its X sends no resize",
+    (await resizes()) === beforeClose && (await modal.count()) === 0,
+  );
+
+  // A bot's chat, and an agent with no session, are drawn in the modal's body: nothing is staged behind them.
+  await p.getByRole("button", { name: /^docs\/readme/ }).click();
+  await settle(p, 300);
+  await worktreeMode(p, /^docs\/readme/, "Switch to team").click();
+  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
+  await settle(p, 600);
+  await openCard("docs-lead");
+  await settle(p, 400);
+  check(
+    "a bot's chat opens in the modal's body, with no stage",
+    (await modal.count()) === 1 &&
+      (await modal.getAttribute("aria-owns")) === null &&
+      (await modal
+        .getByRole("button", { name: "Close chat", exact: true })
+        .count()) === 1,
+  );
+  await modal.getByRole("button", { name: "Close chat", exact: true }).click();
+  await settle(p, 300);
+
+  const docsIds = [
+    ...new Set(
+      await p
+        .locator("[data-team-id]")
+        .evaluateAll((els) => els.map((el) => el.getAttribute("data-team-id"))),
+    ),
+  ].filter((id) => id !== "docs-lead");
+  let sessionless = null;
+  for (const id of docsIds) {
+    await openCard(id);
+    await settle(p, 300);
+    if ((await p.getByText(/^Simulated output:/).count()) === 1) {
+      sessionless = id;
+      break;
+    }
+    const close = modal.getByRole("button", {
+      name: /^Close (terminal|chat)$/,
+    });
+    if ((await close.count()) === 1) await close.click();
+    await settle(p, 200);
+  }
+  check(
+    "an agent with no session shows its simulated output in the modal, with no stage",
+    sessionless !== null && (await modal.getAttribute("aria-owns")) === null,
+  );
+});
+
 // A member made an orchestrator from its menu, after its card is drawn, gets a bottom handle that starts a line.
 await session("?mock=full", 1400, 860, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();

@@ -5707,16 +5707,16 @@ await session("?mock=full", 1400, 860, async (p) => {
   await p.mouse.move(cx, cy);
   await p.mouse.down();
   await p.mouse.move(cx + 10, cy + 40 * zoom, { steps: 4 });
-  await p.mouse.move(cx, cy + 176 * zoom, { steps: 10 });
+  await p.mouse.move(cx, cy + 188 * zoom, { steps: 10 });
   await p.mouse.up();
   await untilStill(p);
   const reviewerAfter = await cardAt(p, "researcher");
   check(
     "dragging a card down snaps it one row lower",
-    Math.abs(reviewerAfter.y - reviewerBefore.y - 176) < 2,
+    Math.abs(reviewerAfter.y - reviewerBefore.y - 188) < 2,
     JSON.stringify({ reviewerBefore, reviewerAfter, zoom }),
   );
-  // The cards it left on the row sit side by side again: 224 px wide and 32 apart, no gap where it was.
+  // The cards it left on the row sit side by side again: 264 px wide and 32 apart, no gap where it was.
   const stayed = [];
   for (const id of ["builder", "reviewer", "tester"]) {
     stayed.push(await cardAt(p, id));
@@ -5725,7 +5725,7 @@ await session("?mock=full", 1400, 860, async (p) => {
   check(
     "the cards it left behind close up around the gap",
     stayed.every(
-      (card, i) => i === 0 || Math.abs(card.x - stayed[i - 1].x - 256) < 2,
+      (card, i) => i === 0 || Math.abs(card.x - stayed[i - 1].x - 296) < 2,
     ),
     JSON.stringify(stayed),
   );

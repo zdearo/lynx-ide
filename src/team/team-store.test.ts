@@ -10,8 +10,6 @@ import {
   membersOfWorktree,
   statusOfSession,
   statusOfWorker,
-  modalSessionId,
-  stageSessionIds,
   useTeamStore,
   watchTeam,
 } from "@/team/team-store";
@@ -922,25 +920,7 @@ describe("team sessions", () => {
     expect(member("builder")?.status).toBe("done");
   });
 
-  it("gives the modal's session only for an open agent of the selected worktree", async () => {
-    await loadTeam(teamWithSessions({ builder: "s1" }));
-    expect(modalSessionId(store(), AUTH)).toBeNull();
-
-    store().openTerminal("builder");
-
-    expect(modalSessionId(store(), AUTH)).toBe("s1");
-    expect(modalSessionId(store(), DOCS)).toBeNull();
-  });
-
-  it("gives the stage the sessions of the agents in a worktree's team, and no bot or session-less member", async () => {
-    await loadTeam(teamWithSessions({ builder: "s1", reviewer: "s2" }));
-
-    expect(stageSessionIds(store(), AUTH)).toEqual(["s1", "s2"]);
-    expect(stageSessionIds(store(), DOCS)).toEqual([]);
-    expect(stageSessionIds(store(), null)).toEqual([]);
-  });
-
-  it("closes the modal when the member it shows leaves the team", async () => {
+  it("closes the terminal when the member it shows leaves the team", async () => {
     await loadTeam(teamWithSessions({ builder: "s1" }));
     store().openTerminal("builder");
 

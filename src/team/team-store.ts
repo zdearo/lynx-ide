@@ -419,30 +419,6 @@ async function adoptSession(
   }
 }
 
-/** The session of the member the modal shows, or null when no agent's terminal is open. Its view is on the stage. */
-export function modalSessionId(
-  state: Pick<TeamState, "members" | "terminalFor" | "terminalOpen">,
-  worktree: string | null,
-): string | null {
-  if (!state.terminalOpen) return null;
-  const member = membersOfWorktree(state.members, worktree).find(
-    (candidate) => candidate.id === state.terminalFor,
-  );
-  return member?.kind === "agent" ? member.sessionId : null;
-}
-
-/** The sessions of the agents in a worktree's team. Each one's view is kept on the team's stage. */
-export function stageSessionIds(
-  state: Pick<TeamState, "members">,
-  worktree: string | null,
-): string[] {
-  return membersOfWorktree(state.members, worktree).flatMap((member) =>
-    member.kind === "agent" && member.sessionId !== null
-      ? [member.sessionId]
-      : [],
-  );
-}
-
 /** The bot a bot member is, from the Bots list. Undefined while the list is not loaded, or the bot is gone. */
 export function botOf(
   member: TeamMember,

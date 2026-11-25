@@ -35,7 +35,6 @@ export function TeamNodeCard({
   selected,
   dimmed,
   canOpen,
-  closable,
   terminalVisible,
   onOpen,
   onClose,
@@ -50,8 +49,6 @@ export function TeamNodeCard({
   dimmed: boolean;
   /** Whether the card offers its terminal: a card whose terminal is not open on the map. */
   canOpen: boolean;
-  /** Whether an open terminal can be closed from its card: the expanded map keeps every terminal open. */
-  closable: boolean;
   /** Whether the open card's terminal is on the screen; off it, the terminal is not mounted. */
   terminalVisible: boolean;
   onOpen: () => void;
@@ -197,20 +194,18 @@ export function TeamNodeCard({
           {open ? (
             <>
               <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
-                {title}
-                {closable && (
-                  <TooltipIconButton
-                    label={
-                      member.kind === "bot"
-                        ? copy.team.closeChat
-                        : copy.team.closeTerminal
-                    }
-                    className="ml-auto shrink-0"
-                    onClick={close}
-                  >
-                    <XIcon />
-                  </TooltipIconButton>
-                )}
+                {title}(
+                <TooltipIconButton
+                  label={
+                    member.kind === "bot"
+                      ? copy.team.closeChat
+                      : copy.team.closeTerminal
+                  }
+                  className="ml-auto shrink-0"
+                  onClick={close}
+                >
+                  <XIcon />
+                </TooltipIconButton>
               </div>
               {/* A press in the body is for the terminal or the chat, not a drag of the card. */}
               <div

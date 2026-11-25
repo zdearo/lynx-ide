@@ -37,7 +37,6 @@ import { useWorkspaceStore } from "@/workspace/workspace-store";
 import { copy } from "@/ui-copy";
 
 /** The team map's mode: the cards alone, or the cards with a terminal for each member. */
-export type CanvasMode = "collapsed" | "expanded";
 
 /** A worktree's central area: its terminals, or the team. */
 export type TeamMode = "terminal" | "team";
@@ -120,9 +119,7 @@ interface TeamState {
   modeByWorktree: Record<string, TeamMode>;
   /** Fits the drawn map on screen. Set while the map is on screen, null otherwise. */
   fitMap: (() => void) | null;
-  /** The map's mode: each card opens its own terminal, or every member's terminal is open. */
-  canvasMode: CanvasMode;
-  /** The members whose terminal is open on the collapsed map, in the order they were opened. */
+  /** The members whose terminal is open on the map, in the order they were opened. Kept per member, across reloads. */
   openIds: string[];
   /** The size of each open terminal the user resized, by id. A terminal not listed has the default size. */
   terminalSizes: Record<string, CardSize>;
@@ -138,7 +135,8 @@ interface TeamState {
   setMode: (path: string, mode: TeamMode) => void;
   openTerminal: (id: string) => void;
   closeTerminal: (id: string) => void;
-  setCanvasMode: (mode: CanvasMode) => void;
+  openAll: () => void;
+  closeAll: () => void;
   setTerminalSize: (id: string, size: CardSize) => void;
   setMoving: (id: string, moving: boolean) => void;
   select: (id: string | null) => void;
@@ -448,12 +446,34 @@ export function engineOf(
 }
 
 /** Opens a member's terminal, or a bot's chat, on its card; the member is picked too, as the card's double click does. */
-/** Whether a member's terminal is open on the map: every one is, in the expanded map. */
+/** Whether a member's terminal is open on the map. */
 export function isTerminalOpen(
-  state: Pick<TeamState, "canvasMode" | "openIds">,
+  state: Pick<TeamState, "openIds">,
   id: string,
 ): boolean {
-  return state.canvasMode === "expanded" || state.openIds.includes(id);
+  return state.openIds.includes(id);
+}
+
+// The open terminals are kept per member in this viewer's browser: a convenience, so the map comes back as it was.
+const OPEN_KEY = "lynx.team.open";
+
+function readOpenIds(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(OPEN_KEY) ?? "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((id) => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOpenIds(openIds: readonly string[]) {
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify(openIds));
+  } catch {
+    // Not remembering is fine.
+  }
 }
 
 export function openMember(id: string) {
@@ -556,8 +576,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   siblingOrder: {},
   modeByWorktree: {},
   fitMap: null,
-  canvasMode: "collapsed",
-  openIds: [],
+  openIds: readOpenIds(),
   terminalSizes: {},
   movingIds: [],
   addOpen: false,
@@ -587,10 +606,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   setMode: (path, mode) =>
     set((state) => ({
       modeByWorktree: { ...state.modeByWorktree, [path]: mode },
-      // Leaving the team (or coming back to it) closes its open terminals.
-      openIds: [],
     })),
-  // The newest one goes last, so the order is the order they were opened in.
   openTerminal: (id) =>
     set((state) => ({
       openIds: [...state.openIds.filter((open) => open !== id), id],
@@ -599,8 +615,33 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     set((state) => ({
       openIds: state.openIds.filter((open) => open !== id),
     })),
-  // Switching the mode closes the terminals opened on the collapsed map.
-  setCanvasMode: (canvasMode) => set({ canvasMode, openIds: [] }),
+  // Every terminal of the worktree on the screen, and none of it: the others keep their own state.
+  openAll: () =>
+    set((state) => ({
+      openIds: [
+        ...state.openIds.filter(
+          (id) =>
+            !membersOfWorktree(
+              state.members,
+              useWorkspaceStore.getState().selectedWorktreePath,
+            ).some((member) => member.id === id),
+        ),
+        ...membersOfWorktree(
+          state.members,
+          useWorkspaceStore.getState().selectedWorktreePath,
+        ).map((member) => member.id),
+      ],
+    })),
+  closeAll: () =>
+    set((state) => {
+      const shown = new Set(
+        membersOfWorktree(
+          state.members,
+          useWorkspaceStore.getState().selectedWorktreePath,
+        ).map((member) => member.id),
+      );
+      return { openIds: state.openIds.filter((id) => !shown.has(id)) };
+    }),
   setTerminalSize: (id, size) =>
     set((state) => ({
       terminalSizes: { ...state.terminalSizes, [id]: size },
@@ -775,7 +816,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 // The pick and an open terminal belong to the team on screen: a worktree switch leaves neither behind.
 useWorkspaceStore.subscribe((state, previous) => {
   if (state.selectedWorktreePath !== previous.selectedWorktreePath) {
-    useTeamStore.setState({ selectedId: null, openIds: [] });
+    useTeamStore.setState({ selectedId: null });
   }
 });
 
@@ -831,21 +872,6 @@ useTerminalStore.subscribe((state, previous) => {
       .map((session) => session.id),
   );
   if (closed.size === 0) return;
-  // A terminal on the map shows its member's session: when that session closes, nothing is left to show in it.
-  const { openIds, members } = useTeamStore.getState();
-  const gone = openIds.filter((id) => {
-    const member = members.find((candidate) => candidate.id === id);
-    return (
-      member?.kind === "agent" &&
-      member.sessionId !== null &&
-      closed.has(member.sessionId)
-    );
-  });
-  if (gone.length > 0) {
-    useTeamStore.setState({
-      openIds: openIds.filter((id) => !gone.includes(id)),
-    });
-  }
   for (const member of useTeamStore.getState().members) {
     if (member.kind !== "agent" || !member.sessionId) continue;
     if (!closed.has(member.sessionId) || dismissedMemberIds.has(member.id)) {
@@ -856,4 +882,9 @@ useTerminalStore.subscribe((state, previous) => {
     dismissedMemberIds.add(member.id);
     void dismissClosedAgent(member.id);
   }
+});
+
+// The open terminals are kept as they change, so a reload brings them back.
+useTeamStore.subscribe((state, previous) => {
+  if (state.openIds !== previous.openIds) saveOpenIds(state.openIds);
 });

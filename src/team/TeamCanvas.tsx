@@ -283,6 +283,7 @@ export function TeamCanvas({
   const cardSizes = useTeamStore((state) => state.cardSizes);
   const terminalSizes = useTeamStore((state) => state.terminalSizes);
   const openIds = useTeamStore((state) => state.openIds);
+  const openingPending = useTeamStore((state) => state.openingPending);
   // The terminals open on the map, in the order they were opened.
   const openList = openIds;
   const sizeNowOf = useCallback(
@@ -551,6 +552,8 @@ export function TeamCanvas({
   // fits the team. The cards move and grow over the same time, so the camera goes where they end.
   const openedBefore = useRef<readonly string[]>([]);
   useEffect(() => {
+    // A batch is still opening terminals: the camera waits for all of them, and the last change counts.
+    if (openingPending > 0) return;
     const cy = canvas.current;
     const element = surface.current;
     const before = openedBefore.current;
@@ -594,7 +597,7 @@ export function TeamCanvas({
       max: cy.maxZoom(),
     });
     viewTo(view.zoom, view.pan);
-  }, [openList]);
+  }, [openList, openingPending]);
 
   // The newest open terminal keeps the centre of the screen when the map's area changes.
   useEffect(() => {

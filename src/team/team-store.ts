@@ -121,6 +121,8 @@ interface TeamState {
   fitMap: (() => void) | null;
   /** The members whose terminal is open on the map, in the order they were opened. Kept per member, across reloads. */
   openIds: string[];
+  /** Terminals still to open by a batch (open all, or the restore on load). The camera waits for them. */
+  openingPending: number;
   /** The size of each open terminal the user resized, by id. A terminal not listed has the default size. */
   terminalSizes: Record<string, CardSize>;
   /** The members whose node is changing size, or being resized: their terminals hold the process's size until it lands. */
@@ -576,6 +578,7 @@ function cancelOpening() {
   if (openingFrame !== null) cancelAnimationFrame(openingFrame);
   openingFrame = null;
   opening = [];
+  useTeamStore.setState({ openingPending: 0 });
 }
 
 function openNextBatch() {
@@ -587,7 +590,10 @@ function openNextBatch() {
         !state.openIds.includes(id) &&
         state.members.some((member) => member.id === id),
     );
-    return fresh.length > 0 ? { openIds: [...state.openIds, ...fresh] } : {};
+    return {
+      openingPending: opening.length,
+      ...(fresh.length > 0 ? { openIds: [...state.openIds, ...fresh] } : {}),
+    };
   });
   if (opening.length > 0) openingFrame = requestAnimationFrame(openNextBatch);
 }
@@ -598,6 +604,7 @@ export function restoreOpenTerminals() {
   cancelOpening();
   opening = restoring;
   restoring = [];
+  useTeamStore.setState({ openingPending: opening.length });
   openingFrame = requestAnimationFrame(openNextBatch);
 }
 
@@ -615,6 +622,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   modeByWorktree: {},
   fitMap: null,
   openIds: [],
+  openingPending: 0,
   terminalSizes: {},
   movingIds: [],
   addOpen: false,
@@ -663,6 +671,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       get().members,
       useWorkspaceStore.getState().selectedWorktreePath,
     ).map((member) => member.id);
+    set({ openingPending: opening.length });
     // The first batch waits for the next frame: opened inside the click, it would share the click's frame.
     openingFrame = requestAnimationFrame(openNextBatch);
   },

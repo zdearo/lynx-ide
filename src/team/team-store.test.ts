@@ -1361,6 +1361,21 @@ describe("team open terminals", () => {
     expect(store().openIds).toEqual(["docs-lead"]);
   });
 
+  it("counts the terminals still to open while a batch runs", async () => {
+    await loadTeam();
+    useWorkspaceStore.setState({ selectedWorktreePath: AUTH });
+    useTeamStore.setState({ openIds: [] });
+    const shown = membersOfWorktree(store().members, AUTH).map(
+      (member) => member.id,
+    );
+    const frames = stubFrames();
+
+    store().openAll();
+    expect(store().openingPending).toBe(shown.length);
+    frames.runAll();
+    expect(store().openingPending).toBe(0);
+  });
+
   it("opens the terminals one batch per frame, and closing one before its turn keeps it closed", async () => {
     await loadTeam();
     useWorkspaceStore.setState({ selectedWorktreePath: AUTH });

@@ -6,19 +6,14 @@ import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/error-message";
 import { TeamAddDialog } from "@/team/TeamAddDialog";
 import { TeamCanvas } from "@/team/TeamCanvas";
-import { TeamNodeSheet } from "@/team/TeamNodeSheet";
 import { TeamNotes } from "@/team/TeamNotes";
-import {
-  isTerminalOpen,
-  useTeamMembers,
-  useTeamStore,
-} from "@/team/team-store";
+import { useTeamMembers, useTeamStore } from "@/team/team-store";
 import { copy } from "@/ui-copy";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 /**
- * The team of the worktree on the sidebar, as an org chart. The picked member opens in a panel over the map; Escape
- * clears the pick. The terminal modal is drawn beside this view, not inside it.
+ * The team of the worktree on the sidebar, as an org chart. Escape clears the pick. The terminal modal is drawn
+ * beside this view, not inside it.
  */
 export const TeamView = memo(TeamViewBase);
 
@@ -31,11 +26,6 @@ function TeamViewBase() {
   const pairs = useTeamStore((state) => state.pairs);
   const extraRows = useTeamStore((state) => state.extraRows);
   const siblingOrder = useTeamStore((state) => state.siblingOrder);
-  const selected = members.find((member) => member.id === selectedId);
-  // The picked member's terminal is open on its node: the panel waits, hidden, so it does not cover the terminal.
-  const terminalShowing = useTeamStore(
-    (state) => selectedId !== null && isTerminalOpen(state, selectedId),
-  );
   const loadBots = useBotsStore((state) => state.load);
 
   // The bot members draw their avatar and engine from the Bots list, which the Bots view may not have loaded.
@@ -73,14 +63,6 @@ function TeamViewBase() {
                 siblingOrder={siblingOrder}
                 pairs={pairs}
               />
-              {selected && (
-                <TeamNodeSheet
-                  key={selected.id}
-                  member={selected}
-                  members={members}
-                  hidden={terminalShowing}
-                />
-              )}
             </>
           ) : (
             <TeamEmpty hasWorktree={worktree !== null} />

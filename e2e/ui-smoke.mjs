@@ -5808,99 +5808,23 @@ await session("?mock=full", 1400, 860, async (p) => {
         .getByRole("combobox", { name: "Map mode", exact: true })
         .count()) === 0,
   );
-  // Nothing is picked when a worktree opens: pick the member that needs the user.
+  // A click picks a member: its card is selected, and no panel opens over the map.
   await p.locator('[data-team-id="researcher"]').click();
   await settle(p, 300);
   check(
-    "the member that needs the user opens in a panel, which shows the question and no Reply",
+    "a click picks the member: its card is selected, and no panel opens",
     (await p
-      .getByRole("dialog", { name: "Researcher · OpenCode", exact: true })
-      .count()) === 1 &&
-      (await p.getByText("which OAuth lib?", { exact: true }).count()) === 1 &&
-      (await p.getByRole("button", { name: "Reply", exact: true }).count()) ===
-        0,
+      .locator('[data-team-id="researcher"][data-selected="true"]')
+      .count()) === 1 && (await p.getByRole("dialog").count()) === 0,
   );
-
   await p.keyboard.press("Escape");
   await settle(p, 200);
   check(
-    "Escape closes the panel, and the focus goes back to the member's card",
-    (await p.getByRole("dialog").count()) === 0 &&
+    "Escape clears the pick, and the focus stays on the member's card",
+    (await p.locator('[data-selected="true"]').count()) === 0 &&
       (await p.evaluate(() =>
         document.activeElement?.getAttribute("data-team-id"),
       )) === "researcher",
-  );
-
-  await p.locator('[data-team-id="builder"]').click();
-  await settle(p, 200);
-  const builderPanel = p.getByRole("dialog", {
-    name: "Builder · Codex",
-    exact: true,
-  });
-  check(
-    "a click picks the member: its panel opens without being modal, and its card is selected",
-    (await builderPanel.count()) === 1 &&
-      (await builderPanel.getAttribute("aria-modal")) === null &&
-      (await p
-        .locator('[data-team-id="builder"][data-selected="true"]')
-        .count()) === 1,
-  );
-  const place = await p.evaluate(() => {
-    const panel = document
-      .querySelector('[role="dialog"]:not([aria-modal])')
-      ?.getBoundingClientRect();
-    const map = document
-      .querySelector('[aria-label="Team map"]')
-      ?.getBoundingClientRect();
-    return panel && map
-      ? {
-          right: map.right - panel.right,
-          top: panel.top - map.top,
-          width: panel.width,
-          height: panel.height,
-          mapHeight: map.height,
-        }
-      : null;
-  });
-  check(
-    "the panel sits at the top right of the map, 320 px wide, and leaves most of the map open",
-    place !== null &&
-      Math.abs(place.right - 12) <= 2 &&
-      Math.abs(place.top - 12) <= 2 &&
-      Math.abs(place.width - 320) <= 2 &&
-      place.height < place.mapHeight * 0.8,
-    JSON.stringify(place),
-  );
-  check(
-    "the panel shows the task state, the latest activity and the diff, and not the task text",
-    (await builderPanel.getByText("login form", { exact: true }).count()) ===
-      0 &&
-      (await builderPanel.getByText("Done when", { exact: true }).count()) ===
-        0 &&
-      (await builderPanel.getByText(/^editing LoginForm\.tsx · /).count()) ===
-        1 &&
-      (await builderPanel.getByText("+120", { exact: true }).count()) === 1,
-  );
-  check(
-    "the panel only shows the member: no task editing, no message form, no waits-for switch",
-    (await builderPanel
-      .getByRole("button", { name: "Edit task", exact: true })
-      .count()) === 0 &&
-      (await builderPanel
-        .getByRole("button", { name: "Send", exact: true })
-        .count()) === 0 &&
-      (await builderPanel.getByRole("switch").count()) === 0,
-  );
-
-  await builderPanel
-    .getByRole("button", { name: "Reviewer", exact: true })
-    .click();
-  await settle(p, 200);
-  check(
-    "a relation picks the member it names",
-    (await p
-      .getByRole("dialog", { name: "Reviewer · Claude Code", exact: true })
-      .count()) === 1,
   );
 
   const beforeOpen = await cardRects(p);
@@ -6198,22 +6122,6 @@ await session("?mock=full", 1400, 860, async (p) => {
 
   await p.locator('[data-team-id="builder"]').click();
   await settle(p, 200);
-  await p
-    .getByRole("dialog", { name: "Builder · Codex", exact: true })
-    .getByRole("button", { name: "Changes", exact: true })
-    .click();
-  await settle(p, 300);
-  // The right panel is code-split, so its tabs appear when its first open has loaded them: wait for them.
-  await p
-    .getByRole("tab", { name: "Changes", exact: true, selected: true })
-    .waitFor({ timeout: 3000 })
-    .catch(() => {});
-  check(
-    "the panel's Changes button opens the Changes tab of the right panel",
-    (await p
-      .getByRole("tab", { name: "Changes", exact: true, selected: true })
-      .count()) === 1,
-  );
 
   await settle(p, 300);
   await p.evaluate(axeSource);
@@ -6224,7 +6132,7 @@ await session("?mock=full", 1400, 860, async (p) => {
     );
   });
   check(
-    "axe: no WCAG A/AA violations with the map and the panel open",
+    "axe: no WCAG A/AA violations with the map open",
     axe.length === 0,
     axe.join(" || "),
   );
@@ -6750,13 +6658,9 @@ await session("?mock=full", 1000, 860, async (p) => {
   await p.locator('[data-team-id="researcher"]').click();
   await settle(p, 300);
   check(
-    "a narrow window shows the team as the map, with the question in the panel and no Reply",
+    "a narrow window shows the team as the map, with no panel over it",
     (await p.locator('[aria-label="Team map"] [data-team-id]').count()) === 6 &&
-      (await p
-        .getByRole("dialog", { name: "Researcher · OpenCode", exact: true })
-        .count()) === 1 &&
-      (await p.getByRole("button", { name: "Reply", exact: true }).count()) ===
-        0,
+      (await p.getByRole("dialog").count()) === 0,
   );
   check(
     "no horizontal scroll with the team in a narrow window",

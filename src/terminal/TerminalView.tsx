@@ -20,6 +20,7 @@ import { useTerminalStore } from "@/terminal/terminal-store";
 import { terminalExitHub } from "@/terminal/terminal-event-hub";
 import { attachTerminalOutput } from "@/terminal/terminal-output-stream";
 import { TerminalStreamGate } from "@/terminal/terminal-stream-gate";
+import { queueTerminalFrame } from "@/terminal/terminal-frame-queue";
 
 interface TerminalViewProps {
   terminalId: string;
@@ -41,6 +42,8 @@ interface Mounted {
   holdResize: (held: boolean) => void;
   /** WebGL is attached only while this terminal is the visible one. */
   webgl: WebglRendererSlot;
+  /** Whether the snapshot is applied; the GPU renderer waits for it, so the replay is drawn by the DOM view. */
+  replayed: boolean;
   dispose: () => void;
 }
 
@@ -53,6 +56,7 @@ function mountTerminal(
   terminalId: string,
   onExit: (exitCode: number | null) => void,
   getSettings: () => TerminalConfig,
+  onReplayed: (mounted: Mounted) => void,
 ): Mounted {
   const settings = getSettings();
   const terminal = new Terminal({
@@ -91,12 +95,13 @@ function mountTerminal(
   let disposed = false;
 
   const gate = new TerminalStreamGate(
-    (data) => terminal.write(data),
+    (data, done) => terminal.write(data, done),
     (exitCode) => {
       const status = exitCode === null ? "" : ` with code ${exitCode}`;
       terminal.write(`\r\n\x1b[2m[process exited${status}]\x1b[0m\r\n`);
       onExit(exitCode);
     },
+    queueTerminalFrame,
   );
 
   // Exit is an event, so it is subscribed before attaching: attaching is what returns the snapshot.
@@ -104,7 +109,15 @@ function mountTerminal(
     gate.pushExit(payload.exitCode),
   );
 
+  // The snapshot is asked for one frame at a time: sessions asking together would decode their replays in one frame.
+  let cancelAttach = () => {};
   exit.ready
+    .then(
+      () =>
+        new Promise<void>((resolve) => {
+          cancelAttach = queueTerminalFrame(resolve);
+        }),
+    )
     .then(() =>
       unwrap(
         attachTerminalOutput(terminalId, (chunk) => gate.pushOutput(chunk)),
@@ -115,9 +128,12 @@ function mountTerminal(
       // The output was drawn at the session's size: the screen takes that size before replaying it, or the
       // lines wrap at the wrong column, even while the container is hidden.
       terminal.resize(snapshot.cols, snapshot.rows);
-      gate.attach(snapshot);
-      // The screen's own size may differ from the session's; the session takes the screen's size.
-      fitIfVisible();
+      // The screen's own size may differ from the session's; the session takes the screen's size once the replay is parsed.
+      gate.attach(snapshot, () => {
+        fitIfVisible();
+        mounted.replayed = true;
+        onReplayed(mounted);
+      });
     })
     .catch((error: unknown) => {
       if (disposed) return;
@@ -158,7 +174,7 @@ function mountTerminal(
   };
   container.addEventListener("mouseup", copyOnRelease);
 
-  return {
+  const mounted: Mounted = {
     terminal,
     refit: fitIfVisible,
     holdResize: (next) => {
@@ -167,8 +183,11 @@ function mountTerminal(
       if (!next) fitIfVisible();
     },
     webgl,
+    replayed: false,
     dispose() {
       disposed = true;
+      cancelAttach();
+      gate.dispose();
       observer.disconnect();
       input.dispose();
       resize.dispose();
@@ -180,6 +199,7 @@ function mountTerminal(
       terminal.dispose();
     },
   };
+  return mounted;
 }
 
 /** Shows one backend terminal session. The session outlives the view. */
@@ -204,6 +224,12 @@ function TerminalViewBase({
   const settingsRef = useRef(settings);
   const heldRef = useRef(resizeHeld);
 
+  // The GPU renderer starts once the replay is parsed, in a frame of its own, and only while the terminal is shown.
+  const requestGpu = (mounted: Mounted) =>
+    queueTerminalFrame(() => {
+      if (mounted.replayed && activeRef.current) void mounted.webgl.show();
+    });
+
   useEffect(() => {
     onExitRef.current = onExit;
     activeRef.current = active;
@@ -216,27 +242,28 @@ function TerminalViewBase({
     if (!container) return;
 
     let cancelled = false;
+    // The work of this terminal, one piece per frame; the last one queued is the one cancelled with it.
+    let cancelWork = () => {};
     void terminalFontsReady().then(() => {
       if (cancelled) return;
-      const mounted = mountTerminal(
-        container,
-        terminalId,
-        (code) => onExitRef.current?.(code),
-        () => settingsRef.current,
-      );
-      mountedRef.current = mounted;
-      mounted.holdResize(heldRef.current);
-      // The tab may have become active while the fonts were loading.
-      // WebGL is wanted for every mounted terminal; the budget decides which keep it.
-      // It is requested after the first frame, so creating a tab is not slowed by the GPU.
-      requestAnimationFrame(() => {
-        if (activeRef.current) void mounted.webgl.show();
+      cancelWork = queueTerminalFrame(() => {
+        if (cancelled) return;
+        const mounted = mountTerminal(
+          container,
+          terminalId,
+          (code) => onExitRef.current?.(code),
+          () => settingsRef.current,
+          requestGpu,
+        );
+        mountedRef.current = mounted;
+        mounted.holdResize(heldRef.current);
+        if (activeRef.current && focusedRef.current) mounted.terminal.focus();
       });
-      if (activeRef.current && focusedRef.current) mounted.terminal.focus();
     });
 
     return () => {
       cancelled = true;
+      cancelWork();
       mountedRef.current?.dispose();
       mountedRef.current = null;
     };
@@ -276,14 +303,19 @@ function TerminalViewBase({
 
   useEffect(() => {
     if (!active) return;
+    let cancelShow = () => {};
     // Wait a frame so the container is laid out after becoming visible.
     const frame = requestAnimationFrame(() => {
       mountedRef.current?.refit();
       if (focusedRef.current) mountedRef.current?.terminal.focus();
-      // The DOM view is usable at once; the GPU renderer follows a task later.
-      setTimeout(() => void mountedRef.current?.webgl.show(), 0);
+      // The DOM view is usable at once; the GPU renderer follows in a frame of its own, with the other terminals' work.
+      const mounted = mountedRef.current;
+      if (mounted) cancelShow = requestGpu(mounted);
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelShow();
+    };
   }, [active]);
 
   return (

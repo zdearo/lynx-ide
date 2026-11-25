@@ -33,7 +33,7 @@ describe("pushApart", () => {
     expect(placed.get("next")).toEqual({ x: 480 + PUSH_GAP, y: 0 });
   });
 
-  it("pushes a card below a terminal down when that is the least move", () => {
+  it("pushes a card below a terminal under it", () => {
     const placed = pushApart([
       item("terminal", 0, 0, 480, 300),
       item("below", 0, 176, 224, 112),
@@ -63,5 +63,32 @@ describe("pushApart", () => {
         expect(overlaps).toBe(false);
       }
     }
+  });
+
+  it("settles a card wedged between two terminals in one row, instead of swapping it between them", () => {
+    const items = [
+      item("left", 0, 176, 480, 300),
+      item("right", 256, 176, 480, 300),
+      item("between", 128, 176, 224, 112),
+    ];
+    const placed = pushApart(items);
+    const boxes = items.map((node) => ({
+      ...placed.get(node.id)!,
+      w: node.size.width,
+      h: node.size.height,
+    }));
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = 0; j < i; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        const overlaps =
+          a.x < b.x + b.w + PUSH_GAP &&
+          b.x < a.x + a.w + PUSH_GAP &&
+          a.y < b.y + b.h + PUSH_GAP &&
+          b.y < a.y + a.h + PUSH_GAP;
+        expect(overlaps).toBe(false);
+      }
+    }
+    expect(placed.get("left")).toEqual({ x: 0, y: 176 });
   });
 });

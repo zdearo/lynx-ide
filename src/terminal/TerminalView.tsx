@@ -25,6 +25,8 @@ interface TerminalViewProps {
   terminalId: string;
   /** Only the visible terminal is fitted and focused. */
   active: boolean;
+  /** The screen is fitted, but the process keeps its size until this is released (a card moving to its size). */
+  resizeHeld?: boolean;
   onExit?: (exitCode: number | null) => void;
   className?: string;
 }
@@ -33,6 +35,8 @@ interface Mounted {
   terminal: Terminal;
   /** Fits the screen to its box and tells the process the size, even when it did not change. */
   refit: () => void;
+  /** Keeps the process's size while held; releasing sends the screen's latest size. */
+  holdResize: (held: boolean) => void;
   /** WebGL is attached only while this terminal is the visible one. */
   webgl: WebglRendererSlot;
   dispose: () => void;
@@ -152,6 +156,7 @@ function mountTerminal(
   return {
     terminal,
     refit: fitIfVisible,
+    holdResize: (held) => sendSize.hold(held),
     webgl,
     dispose() {
       disposed = true;
@@ -175,6 +180,7 @@ export const TerminalView = memo(TerminalViewBase);
 function TerminalViewBase({
   terminalId,
   active,
+  resizeHeld = false,
   onExit,
   className,
 }: TerminalViewProps) {
@@ -185,6 +191,7 @@ function TerminalViewBase({
   const settings = useTerminalConfig();
   const focusRequest = useTerminalStore((state) => state.focusRequest);
   const settingsRef = useRef(settings);
+  const heldRef = useRef(resizeHeld);
 
   useEffect(() => {
     onExitRef.current = onExit;
@@ -206,6 +213,7 @@ function TerminalViewBase({
         () => settingsRef.current,
       );
       mountedRef.current = mounted;
+      mounted.holdResize(heldRef.current);
       // The tab may have become active while the fonts were loading.
       // WebGL is wanted for every mounted terminal; the budget decides which keep it.
       // It is requested after the first frame, so creating a tab is not slowed by the GPU.
@@ -221,6 +229,15 @@ function TerminalViewBase({
       mountedRef.current = null;
     };
   }, [terminalId]);
+
+  // A card moving to its size: the PTY keeps its size until it lands, then the screen's size is sent once.
+  useEffect(() => {
+    heldRef.current = resizeHeld;
+    const mounted = mountedRef.current;
+    if (!mounted) return;
+    mounted.holdResize(resizeHeld);
+    if (!resizeHeld) mounted.refit();
+  }, [resizeHeld]);
 
   // Settings changed while terminals are open: restyle them in place.
   useEffect(() => {

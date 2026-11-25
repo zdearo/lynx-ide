@@ -122,6 +122,8 @@ interface TeamState {
   fitMap: (() => void) | null;
   /** The map's mode: the cards, or the cards with their terminals. Terminal mode lets a card open its terminal. */
   canvasMode: CanvasMode;
+  /** The card moving to or from its terminal size, if any: its terminal holds the process's size until it lands. */
+  movingId: string | null;
   /** The member whose terminal the dialog shows. Kept after the dialog closes, so focus can go back to its card. */
   terminalFor: string | null;
   terminalOpen: boolean;
@@ -566,6 +568,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   modeByWorktree: {},
   fitMap: null,
   canvasMode: "nodes",
+  movingId: null,
   terminalFor: null,
   terminalOpen: false,
   addOpen: false,

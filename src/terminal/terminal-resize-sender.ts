@@ -3,6 +3,13 @@ export interface TerminalSize {
   rows: number;
 }
 
+/** A terminal's size sender: call it with each size, and hold it while the process must keep its size. */
+export interface ResizeSender {
+  (size: TerminalSize): void;
+  /** While held, sizes are kept and nothing is sent; releasing sends the latest one. */
+  hold(held: boolean): void;
+}
+
 /**
  * Sends a terminal's size to its process one request at a time, and only the latest size while
  * one is in flight. Backend commands run in parallel, so two quick resizes could land out of
@@ -10,13 +17,14 @@ export interface TerminalSize {
  */
 export function createResizeSender(
   send: (size: TerminalSize) => Promise<unknown>,
-): (size: TerminalSize) => void {
+): ResizeSender {
   let sending = false;
+  let held = false;
   let latest: TerminalSize | null = null;
 
   async function drain() {
     sending = true;
-    while (latest) {
+    while (latest && !held) {
       const size = latest;
       latest = null;
       try {
@@ -28,8 +36,13 @@ export function createResizeSender(
     sending = false;
   }
 
-  return (size) => {
+  const resize = ((size: TerminalSize) => {
     latest = size;
-    if (!sending) void drain();
+    if (!sending && !held) void drain();
+  }) as ResizeSender;
+  resize.hold = (next: boolean) => {
+    held = next;
+    if (!held && !sending) void drain();
   };
+  return resize;
 }

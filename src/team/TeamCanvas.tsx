@@ -14,11 +14,16 @@ import {
   centreOf,
   cornerOf,
   focusOf,
-  handleAnchor,
-  CARD_DEFAULT_SIZE,
+  boxOf,
+  centredPan,
   clampSize,
+  fitView,
+  handleAnchor,
+  isInView,
   OPPOSITE_HANDLE,
+  openSizeOf,
   sizeOf,
+  type Box,
   type CardSize,
   type HandleName,
 } from "@/team/team-canvas-model";
@@ -44,6 +49,9 @@ import { copy } from "@/ui-copy";
 const FIT_PADDING = 40;
 /** How far the pointer must move before a press on a card is a drag, in screen pixels. */
 const DRAG_THRESHOLD = 4;
+/** How long opening or closing a card's terminal takes, in ms, and the curve it follows. */
+const CARD_OPEN_MS = 280;
+const CARD_OPEN_EASING = "ease-in-out" as const;
 
 /**
  * A computed colour of a design token. Cytoscape cannot read CSS variables, so the token is resolved by the browser
@@ -234,6 +242,7 @@ export function TeamCanvas({
   const canvasMode = useTeamStore((state) => state.canvasMode);
   const terminalOpen = useTeamStore((state) => state.terminalOpen);
   const terminalFor = useTeamStore((state) => state.terminalFor);
+  const movingId = useTeamStore((state) => state.movingId);
   // The card whose terminal is open, in terminal mode. It grows to the size the modal had: 90% of the area.
   const expandedId =
     canvasMode === "terminal" && terminalOpen ? terminalFor : null;
@@ -257,8 +266,11 @@ export function TeamCanvas({
     },
     [expandedId, expansion, resizing, cardSizes],
   );
-  // Read by the canvas's render, which is set up once and outlives every size change.
-  const sizesNow = useRef<(id: string) => CardSize>(() => CARD_DEFAULT_SIZE);
+  // Read by the canvas's render, which is set up once and outlives every change: the card that is open, and whether
+  // its terminal is on the screen (a terminal off the screen is not mounted).
+  const openRef = useRef<string | null>(null);
+  const terminalVisible = useRef(true);
+  const [terminalShown, setTerminalShown] = useState(true);
 
   const base = useMemo(
     () => teamLayout(members, expanded, extraRows, siblingOrder, pairs),
@@ -338,15 +350,38 @@ export function TeamCanvas({
     const place = () => {
       const zoom = cy.zoom();
       const pan = cy.pan();
+      // The canvas sizes each card, so a resize or an animation moves its contents along.
       for (const [id, card] of cards.current) {
         const node = cy.getElementById(id);
         if (node.empty()) continue;
         const { x, y } = node.position();
+        const size = { width: node.width(), height: node.height() };
+        card.style.width = `${size.width}px`;
+        card.style.height = `${size.height}px`;
         card.style.transform = cardTransform(
-          cornerOf({ x, y }, sizesNow.current(id)),
+          cornerOf({ x, y }, size),
           zoom,
           pan,
         );
+      }
+      const openNode = openRef.current
+        ? cy.getElementById(openRef.current)
+        : null;
+      const onScreen =
+        !openNode ||
+        openNode.empty() ||
+        isInView(
+          boxOf(openNode.position(), {
+            width: openNode.width(),
+            height: openNode.height(),
+          }),
+          zoom,
+          pan,
+          { width: element.clientWidth, height: element.clientHeight },
+        );
+      if (onScreen !== terminalVisible.current) {
+        terminalVisible.current = onScreen;
+        setTerminalShown(onScreen);
       }
       const spotNow = spotRef.current;
       if (ghost.current && spotNow) {
@@ -388,10 +423,91 @@ export function TeamCanvas({
     };
   }, []);
 
+  // Opening a card's terminal grows the card to the size of the modal and centres the map on it; closing it lands the
+  // card in its place and fits the map. Cytoscape moves the cards, and the DOM cards follow its render. The canvas's
+  // sync below leaves a moving card alone until it has landed.
+  useEffect(() => {
+    const previous = openRef.current;
+    openRef.current = expandedId;
+    const cy = canvas.current;
+    const element = surface.current;
+    if (!cy || !element || previous === expandedId) return;
+    const measured = element.getBoundingClientRect();
+    const area = { width: measured.width, height: measured.height };
+    const duration = window.matchMedia("(prefers-reduced-motion: reduce)")
+      .matches
+      ? 0
+      : CARD_OPEN_MS;
+    const motion = { duration, easing: CARD_OPEN_EASING, queue: false };
+    const viewTo = (zoom: number, pan: { x: number; y: number }) => {
+      cy.stop();
+      if (duration === 0) cy.viewport({ zoom, pan });
+      else cy.animate({ zoom, pan }, motion);
+    };
+    // The card takes its size and place. While it moves, its terminal keeps the process's size (see TerminalView).
+    const moveCard = (id: string, size: CardSize, centre: TeamPosition) => {
+      const node = cy.getElementById(id);
+      if (node.empty()) return;
+      node.stop();
+      if (duration === 0) {
+        node.position(centre);
+        node.style({ width: size.width, height: size.height });
+        return;
+      }
+      useTeamStore.setState({ movingId: id });
+      node.animate(
+        { position: centre, style: { width: size.width, height: size.height } },
+        {
+          ...motion,
+          complete: () => {
+            if (useTeamStore.getState().movingId === id) {
+              useTeamStore.setState({ movingId: null });
+            }
+          },
+        },
+      );
+    };
+
+    // The card that was open goes back to its place first.
+    let landed: Box | null = null;
+    if (previous) {
+      const corner = latest.current.base.get(previous);
+      if (corner) {
+        const size = sizeOf(useTeamStore.getState().cardSizes, previous);
+        const centre = centreOf(corner, size);
+        moveCard(previous, size, centre);
+        landed = boxOf(centre, size);
+      }
+    }
+    if (expandedId) {
+      const node = cy.getElementById(expandedId);
+      if (!node.empty()) {
+        const centre = node.position();
+        moveCard(expandedId, openSizeOf(area), centre);
+        viewTo(1, centredPan(centre, area));
+      }
+      return;
+    }
+    // Closing: the map fits the team, with the card at the place it lands.
+    const boxes: Box[] = landed ? [landed] : [];
+    cy.nodes().forEach((node) => {
+      if (node.id() === previous) return;
+      boxes.push(
+        boxOf(node.position(), { width: node.width(), height: node.height() }),
+      );
+    });
+    const view = fitView(boxes, area, FIT_PADDING, {
+      min: cy.minZoom(),
+      max: cy.maxZoom(),
+    });
+    viewTo(view.zoom, view.pan);
+  }, [expandedId]);
+
   // The canvas takes where the cards are drawn: one node per card, and the lines between them.
   useEffect(() => {
     const cy = canvas.current;
     if (!cy) return;
+    const moving = useTeamStore.getState().movingId;
     const placed = new Map<string, TeamPosition>();
     for (const member of members) {
       const corner = shown.get(member.id) ?? targets.get(member.id);
@@ -402,6 +518,8 @@ export function TeamCanvas({
         const size = sizeNowOf(id);
         const centre = centreOf(corner, size);
         const node = cy.getElementById(id);
+        // The card that is moving is left to its animation, which lands it at its place.
+        if (node.nonempty() && id === moving) continue;
         if (node.empty()) {
           cy.add({ group: "nodes", data: { id }, position: centre });
         } else {
@@ -416,24 +534,7 @@ export function TeamCanvas({
       cy.add(linesOf(members, placed, pairs));
     });
     cy.emit("render");
-  }, [members, shown, targets, base, pairs, sizeNowOf]);
-
-  // Opening a card's terminal grows it to the modal's size and centres the map on it at zoom 1; closing it lets the
-  // map fit the team again.
-  useEffect(() => {
-    const cy = canvas.current;
-    if (!cy) return;
-    if (expandedId) {
-      cy.zoom(1);
-      cy.center(cy.getElementById(expandedId));
-    } else {
-      useTeamStore.getState().fitMap?.();
-    }
-  }, [expandedId, expansion]);
-
-  useEffect(() => {
-    sizesNow.current = sizeNowOf;
-  });
+  }, [members, shown, targets, base, pairs, sizeNowOf, movingId]);
 
   // The lines of the selected member's line of work stay solid; the rest fade.
   useEffect(() => {
@@ -498,6 +599,8 @@ export function TeamCanvas({
         return;
       }
       moving = true;
+      // A drag is not text: a selection the press began is dropped.
+      window.getSelection()?.removeAllRanges();
       const at = onCanvas(moment.clientX, moment.clientY);
       setDrag({
         id,
@@ -605,7 +708,8 @@ export function TeamCanvas({
     if (event.button !== 0 || !cy) return;
     const node = cy.getElementById(from);
     if (node.empty()) return;
-    const anchor = handleAnchor(cornerOf(node.position()), handle);
+    const size = { width: node.width(), height: node.height() };
+    const anchor = handleAnchor(cornerOf(node.position(), size), handle, size);
     const drawTo = (clientX: number, clientY: number) => {
       linkDraw.current = { anchor, point: onCanvas(clientX, clientY) };
       cy.emit("render");
@@ -748,8 +852,8 @@ export function TeamCanvas({
                 expanded={expanded.includes(member.id)}
                 selected={member.id === selectedId}
                 dimmed={focus !== null && !focus.has(member.id)}
-                size={sizeNowOf(member.id)}
                 open={expandedId === member.id}
+                terminalVisible={terminalShown}
                 terminal={canvasMode === "terminal"}
                 onClose={() => useTeamStore.getState().closeTerminal()}
                 onOpen={() => {
@@ -771,28 +875,28 @@ export function TeamCanvas({
                     edge="corner"
                     onStart={(event) => startResize(member.id, "corner", event)}
                   />
+                  {member.kind === "agent" && (
+                    <HandleDot
+                      handle="top"
+                      onStart={(event) => startLink(member.id, "top", event)}
+                    />
+                  )}
+                  {member.orchestrator && (
+                    <HandleDot
+                      handle="bottom"
+                      onStart={(event) => startLink(member.id, "bottom", event)}
+                    />
+                  )}
+                  <HandleDot
+                    handle="left"
+                    onStart={(event) => startLink(member.id, "left", event)}
+                  />
+                  <HandleDot
+                    handle="right"
+                    onStart={(event) => startLink(member.id, "right", event)}
+                  />
                 </>
               )}
-              {member.kind === "agent" && (
-                <HandleDot
-                  handle="top"
-                  onStart={(event) => startLink(member.id, "top", event)}
-                />
-              )}
-              {member.orchestrator && (
-                <HandleDot
-                  handle="bottom"
-                  onStart={(event) => startLink(member.id, "bottom", event)}
-                />
-              )}
-              <HandleDot
-                handle="left"
-                onStart={(event) => startLink(member.id, "left", event)}
-              />
-              <HandleDot
-                handle="right"
-                onStart={(event) => startLink(member.id, "right", event)}
-              />
             </div>,
           ];
         })}

@@ -22,13 +22,7 @@ import { runningLabelOf } from "@/team/team-live";
 import { talksToOf } from "@/team/team-talks";
 import { TeamMemberMenu } from "@/team/TeamMemberMenu";
 import { TeamStatusIcon } from "@/team/TeamStatus";
-import {
-  botOf,
-  engineOf,
-  openMember,
-  roleOf,
-  useTeamStore,
-} from "@/team/team-store";
+import { botOf, engineOf, roleOf, useTeamStore } from "@/team/team-store";
 import { copy } from "@/ui-copy";
 
 /**
@@ -198,9 +192,6 @@ export function TeamNodeSheet({
       )}
 
       <div className="flex items-center gap-1.5">
-        <Button size="sm" onClick={() => openMember(member.id)}>
-          {member.kind === "bot" ? copy.team.openChat : copy.team.openTerminal}
-        </Button>
         {/* A bot has no worktree, so there are no changes to show for it. */}
         {member.kind === "agent" && (
           <Button

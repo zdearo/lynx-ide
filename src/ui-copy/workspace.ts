@@ -120,7 +120,6 @@ export const workspaceCopy = {
   },
 
   agent: {
-    title: "Agents",
     status: {
       working: "working",
       needsYou: "needs you",
@@ -133,8 +132,6 @@ export const workspaceCopy = {
     },
     exited: (code: number | null) =>
       code === null ? "exited" : `exited with code ${code}`,
-    label: (title: string, status: string) => `${title}, ${status}`,
-    close: (title: string) => `Close ${title}`,
   },
 
   worktree: {

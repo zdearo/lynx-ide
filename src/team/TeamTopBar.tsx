@@ -1,10 +1,11 @@
 import { memo } from "react";
 import {
+  ArrowsInIcon,
   ArrowsOutIcon,
   SidebarSimpleIcon,
   TerminalIcon,
 } from "@phosphor-icons/react";
-import { PlusIcon } from "@/components/icons/line-icons";
+import { PlusIcon, TerminalWindowIcon } from "@/components/icons/line-icons";
 import { TooltipIconButton } from "@/components/TooltipIconButton";
 import { shortcutLabel } from "@/platform-shortcuts";
 import { TeamSummary } from "@/team/TeamStatus";
@@ -70,6 +71,20 @@ function TeamTopBarBase({
           onClick={() => useTeamStore.getState().setAddOpen(true)}
         >
           <PlusIcon />
+        </TooltipIconButton>
+        <TooltipIconButton
+          label={copy.team.openAll}
+          disabled={!path}
+          onClick={() => useTeamStore.getState().openAll()}
+        >
+          <TerminalWindowIcon />
+        </TooltipIconButton>
+        <TooltipIconButton
+          label={copy.team.closeAll}
+          disabled={!path}
+          onClick={() => useTeamStore.getState().closeAll()}
+        >
+          <ArrowsInIcon />
         </TooltipIconButton>
         <TooltipIconButton
           label={copy.team.fit}

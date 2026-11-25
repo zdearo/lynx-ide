@@ -41,14 +41,7 @@ import { pushApart, type PushItem } from "@/team/team-push";
 import { canOrchestrate, linkOf } from "@/team/team-hierarchy";
 import { cn } from "@/lib/utils";
 import { TeamNodeCard } from "@/team/TeamNodeCard";
-import { openMember, useTeamStore, type CanvasMode } from "@/team/team-store";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { openMember, useTeamStore } from "@/team/team-store";
 import { useGlidedPositions } from "@/team/use-glided-positions";
 import { copy } from "@/ui-copy";
 
@@ -290,23 +283,17 @@ export function TeamCanvas({
 
   const cardSizes = useTeamStore((state) => state.cardSizes);
   const terminalSizes = useTeamStore((state) => state.terminalSizes);
-  const canvasMode = useTeamStore((state) => state.canvasMode);
   const openIds = useTeamStore((state) => state.openIds);
-  const expandedMap = canvasMode === "expanded";
-  // The terminals open on the map, in the order they were opened. The expanded map opens them all.
-  const openList = useMemo(
-    () => (expandedMap ? members.map((member) => member.id) : openIds),
-    [expandedMap, members, openIds],
-  );
+  // The terminals open on the map, in the order they were opened.
+  const openList = openIds;
   const sizeNowOf = useCallback(
     (id: string): CardSize => {
       if (resizing?.id === id) return resizing.size;
-      const open = canvasMode === "expanded" || openIds.includes(id);
-      return open
+      return openIds.includes(id)
         ? sizeOf(terminalSizes, id, TERMINAL_DEFAULT_SIZE)
         : sizeOf(cardSizes, id);
     },
-    [canvasMode, openIds, resizing, cardSizes, terminalSizes],
+    [openIds, resizing, cardSizes, terminalSizes],
   );
 
   const base = useMemo(
@@ -387,7 +374,6 @@ export function TeamCanvas({
     pairs,
     placed,
     sizeNowOf,
-    canvasMode,
   });
   useEffect(() => {
     latest.current = {
@@ -399,7 +385,6 @@ export function TeamCanvas({
       pairs,
       placed,
       sizeNowOf,
-      canvasMode,
     };
   });
   useEffect(() => {
@@ -535,11 +520,7 @@ export function TeamCanvas({
     if (!cy || !element || sameIds(before, openList)) return;
     const measured = element.getBoundingClientRect();
     const bounds = { width: measured.width, height: measured.height };
-    const {
-      placed: places,
-      sizeNowOf: sizeAt,
-      canvasMode: mode,
-    } = latest.current;
+    const { placed: places, sizeNowOf: sizeAt } = latest.current;
     const duration = reducedMotion() ? 0 : CARD_OPEN_MS;
     const motion = { duration, easing: CARD_OPEN_EASING, queue: false };
     const viewTo = (zoom: number, pan: { x: number; y: number }) => {
@@ -549,7 +530,7 @@ export function TeamCanvas({
     };
     const newest = openList.filter((id) => !before.includes(id)).at(-1);
     const corner = newest === undefined ? undefined : places.get(newest);
-    if (mode === "collapsed" && newest !== undefined && corner) {
+    if (newest !== undefined && corner) {
       viewTo(1, centredPan(centreOf(corner, sizeAt(newest)), bounds));
       return;
     }
@@ -569,13 +550,7 @@ export function TeamCanvas({
     const cy = canvas.current;
     const element = surface.current;
     const newest = openRef.current.at(-1);
-    if (
-      !cy ||
-      !element ||
-      !area ||
-      newest === undefined ||
-      latest.current.canvasMode !== "collapsed"
-    ) {
+    if (!cy || !element || !area || newest === undefined) {
       return;
     }
     const node = cy.getElementById(newest);
@@ -748,8 +723,7 @@ export function TeamCanvas({
   ) => {
     event.stopPropagation();
     if (event.button !== 0) return;
-    const { canvasMode: mode, openIds: opened } = useTeamStore.getState();
-    const terminal = mode === "expanded" || opened.includes(id);
+    const terminal = useTeamStore.getState().openIds.includes(id);
     const clamp = terminal ? clampTerminalSize : clampSize;
     const first = sizeNowOf(id);
     const origin = onCanvas(event.clientX, event.clientY);
@@ -895,26 +869,6 @@ export function TeamCanvas({
 
   return (
     <div className="relative size-full" aria-label={copy.team.mapLabel}>
-      <div className="absolute top-2 left-2 z-20">
-        <Select
-          value={canvasMode}
-          onValueChange={(mode) =>
-            useTeamStore.getState().setCanvasMode(mode as CanvasMode)
-          }
-        >
-          <SelectTrigger size="sm" aria-label={copy.team.canvasMode.label}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="collapsed">
-              {copy.team.canvasMode.collapsed}
-            </SelectItem>
-            <SelectItem value="expanded">
-              {copy.team.canvasMode.expanded}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
       {/* Cytoscape sets the position of its own container, so the box that sizes it is this one. */}
       <div className="absolute inset-0">
         <div ref={surface} className="size-full" />
@@ -942,7 +896,7 @@ export function TeamCanvas({
         </svg>
         {members.flatMap((member) => {
           if (!base.has(member.id)) return [];
-          const open = expandedMap || openIds.includes(member.id);
+          const open = openIds.includes(member.id);
           return [
             <div
               key={member.id}
@@ -973,7 +927,6 @@ export function TeamCanvas({
                 dimmed={focus !== null && !focus.has(member.id)}
                 open={open}
                 canOpen={!open}
-                closable={!expandedMap}
                 terminalVisible={onScreen.has(member.id)}
                 onClose={() => useTeamStore.getState().closeTerminal(member.id)}
                 onOpen={() => {

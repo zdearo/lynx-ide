@@ -934,14 +934,14 @@ describe("team sessions", () => {
     expect(store().openIds).toEqual([]);
   });
 
-  it("clears the pick and closes the terminal dialog when the worktree changes", async () => {
+  it("clears the pick when the worktree changes, and keeps each member's open terminal", async () => {
     await loadTeam();
     store().select("builder");
     store().openTerminal("builder");
 
     useWorkspaceStore.setState({ selectedWorktreePath: DOCS });
 
-    expect(store()).toMatchObject({ selectedId: null, openIds: [] });
+    expect(store()).toMatchObject({ selectedId: null, openIds: ["builder"] });
   });
 
   it("shows an agent's status from its session, and follows the terminal as it changes", async () => {
@@ -1294,11 +1294,10 @@ describe("team sessions", () => {
   });
 });
 
-describe("team canvas modes", () => {
-  it("keeps the open terminals in the order they were opened, and closes them all when the mode changes", () => {
-    useTeamStore.setState({ canvasMode: "collapsed", openIds: [] });
-    const { openTerminal, closeTerminal, setCanvasMode } =
-      useTeamStore.getState();
+describe("team open terminals", () => {
+  it("keeps the open terminals in the order they were opened, and closes them one at a time", () => {
+    useTeamStore.setState({ openIds: [] });
+    const { openTerminal, closeTerminal } = useTeamStore.getState();
 
     openTerminal("builder");
     openTerminal("reviewer");
@@ -1307,20 +1306,28 @@ describe("team canvas modes", () => {
 
     closeTerminal("reviewer");
     expect(useTeamStore.getState().openIds).toEqual(["builder"]);
-
-    setCanvasMode("expanded");
-    expect(useTeamStore.getState()).toMatchObject({
-      canvasMode: "expanded",
-      openIds: [],
-    });
   });
 
-  it("counts every terminal as open in the expanded map, and none but the opened ones in the collapsed one", () => {
-    useTeamStore.setState({ canvasMode: "expanded", openIds: [] });
-    expect(isTerminalOpen(useTeamStore.getState(), "lead")).toBe(true);
+  it("opens and closes every terminal of the worktree on the screen, and leaves the other worktrees' as they are", async () => {
+    await loadTeam();
+    useWorkspaceStore.setState({ selectedWorktreePath: AUTH });
+    useTeamStore.setState({ openIds: ["docs-lead"] });
+    const shown = membersOfWorktree(store().members, AUTH).map(
+      (member) => member.id,
+    );
 
-    useTeamStore.setState({ canvasMode: "collapsed", openIds: ["builder"] });
-    expect(isTerminalOpen(useTeamStore.getState(), "builder")).toBe(true);
-    expect(isTerminalOpen(useTeamStore.getState(), "lead")).toBe(false);
+    store().openAll();
+    expect(store().openIds).toEqual(
+      expect.arrayContaining(["docs-lead", ...shown]),
+    );
+    expect(store().openIds).toHaveLength(shown.length + 1);
+
+    store().closeAll();
+    expect(store().openIds).toEqual(["docs-lead"]);
+  });
+
+  it("tells whether a member's terminal is open", () => {
+    expect(isTerminalOpen({ openIds: ["builder"] }, "builder")).toBe(true);
+    expect(isTerminalOpen({ openIds: ["builder"] }, "lead")).toBe(false);
   });
 });

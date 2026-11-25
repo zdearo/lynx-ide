@@ -52,3 +52,37 @@ export function focusOf(
   }
   return focus;
 }
+
+/** The four handles of a card: the top and bottom ones make an orchestration, the side ones a pair. */
+export type HandleName = "top" | "bottom" | "left" | "right";
+
+/** The handle a line lands on: the opposite side of the one it leaves from. */
+export const OPPOSITE_HANDLE: Record<HandleName, HandleName> = {
+  top: "bottom",
+  bottom: "top",
+  left: "right",
+  right: "left",
+};
+
+/** Where a handle sits on a card whose top-left corner is `corner`, in canvas units. */
+export function handleAnchor(
+  corner: TeamPosition,
+  handle: HandleName,
+): TeamPosition {
+  switch (handle) {
+    case "top":
+      return { x: corner.x + TEAM_CARD_WIDTH / 2, y: corner.y };
+    case "bottom":
+      return {
+        x: corner.x + TEAM_CARD_WIDTH / 2,
+        y: corner.y + TEAM_CARD_HEIGHT,
+      };
+    case "left":
+      return { x: corner.x, y: corner.y + TEAM_CARD_HEIGHT / 2 };
+    case "right":
+      return {
+        x: corner.x + TEAM_CARD_WIDTH,
+        y: corner.y + TEAM_CARD_HEIGHT / 2,
+      };
+  }
+}

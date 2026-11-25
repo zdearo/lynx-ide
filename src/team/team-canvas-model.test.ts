@@ -7,6 +7,8 @@ import {
   centreOf,
   cornerOf,
   focusOf,
+  handleAnchor,
+  OPPOSITE_HANDLE,
 } from "@/team/team-canvas-model";
 
 const member = (id: string, parentId: string | null): TeamMember =>
@@ -52,5 +54,26 @@ describe("the focus of a selected member", () => {
       "reviewer",
       "tester",
     ]);
+  });
+});
+
+describe("the handles of a card", () => {
+  it("land on the opposite side of the one a line leaves from", () => {
+    expect(OPPOSITE_HANDLE.bottom).toBe("top");
+    expect(OPPOSITE_HANDLE.top).toBe("bottom");
+    expect(OPPOSITE_HANDLE.left).toBe("right");
+    expect(OPPOSITE_HANDLE.right).toBe("left");
+  });
+
+  it("sit at the middle of their side of the card", () => {
+    const corner = { x: 10, y: 20 };
+    expect(handleAnchor(corner, "top")).toEqual({
+      x: 10 + TEAM_CARD_WIDTH / 2,
+      y: 20,
+    });
+    expect(handleAnchor(corner, "right")).toEqual({
+      x: 10 + TEAM_CARD_WIDTH,
+      y: 20 + TEAM_CARD_HEIGHT / 2,
+    });
   });
 });

@@ -7,6 +7,9 @@ import {
   centreOf,
   cornerOf,
   focusOf,
+  handleAnchor,
+  OPPOSITE_HANDLE,
+  type HandleName,
 } from "@/team/team-canvas-model";
 import {
   extraRowsAt,
@@ -17,7 +20,9 @@ import {
   type SiblingOrder,
   type TeamPosition,
 } from "@/team/team-layout";
-import { pairKey, type TeamPair } from "@/team/team-pairs";
+import { isValidConnection, pairKey, type TeamPair } from "@/team/team-pairs";
+import { canOrchestrate, linkOf } from "@/team/team-hierarchy";
+import { cn } from "@/lib/utils";
 import { TeamNodeCard } from "@/team/TeamNodeCard";
 import { openMember, useTeamStore } from "@/team/team-store";
 import { useGlidedPositions } from "@/team/use-glided-positions";
@@ -118,6 +123,34 @@ function linesOf(
   return lines;
 }
 
+const HANDLE_PLACE: Record<HandleName, string> = {
+  top: "-top-1 left-1/2 -translate-x-1/2",
+  bottom: "-bottom-1 left-1/2 -translate-x-1/2",
+  left: "top-1/2 -left-1 -translate-y-1/2",
+  right: "top-1/2 -right-1 -translate-y-1/2",
+};
+
+/** A card's handle: it shows with the mouse over the card or focus inside it, and a press on it starts a line. */
+function HandleDot({
+  handle,
+  onStart,
+}: {
+  handle: HandleName;
+  onStart: (event: PointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      aria-hidden
+      data-handle={handle}
+      onPointerDown={onStart}
+      className={cn(
+        "pointer-events-auto absolute size-2.5 cursor-crosshair rounded-full border border-ring bg-background opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
+        HANDLE_PLACE[handle],
+      )}
+    />
+  );
+}
+
 /**
  * The team as a canvas. Cytoscape draws the lines and takes the pan, the zoom and the hit tests on empty space. The
  * cards are DOM laid over it, moved by the same pan and zoom, so a card keeps its own buttons and menus. A card taken
@@ -141,6 +174,11 @@ export function TeamCanvas({
   const surface = useRef<HTMLDivElement>(null);
   const cards = useRef(new Map<string, HTMLDivElement>());
   const ghost = useRef<HTMLDivElement>(null);
+  // The line drawn from a handle to the pointer while a connection is made; read by the canvas's render.
+  const linkDraw = useRef<{ anchor: TeamPosition; point: TeamPosition } | null>(
+    null,
+  );
+  const linkLine = useRef<SVGLineElement>(null);
   // Where the ghost goes, read by the canvas's render: kept out of the render itself.
   const spotRef = useRef<TeamPosition | null>(null);
   const canvas = useRef<cytoscape.Core | null>(null);
@@ -202,9 +240,9 @@ export function TeamCanvas({
   );
 
   // Read by a pointer release, which outlives the render it started in.
-  const latest = useRef({ drag, base, members, siblingOrder, order });
+  const latest = useRef({ drag, base, members, siblingOrder, order, pairs });
   useEffect(() => {
-    latest.current = { drag, base, members, siblingOrder, order };
+    latest.current = { drag, base, members, siblingOrder, order, pairs };
   });
 
   // Built once. Its handlers read the store, so they never go stale.
@@ -234,6 +272,25 @@ export function TeamCanvas({
       const spotNow = spotRef.current;
       if (ghost.current && spotNow) {
         ghost.current.style.transform = cardTransform(spotNow, zoom, pan);
+      }
+      const line = linkLine.current;
+      const draw = linkDraw.current;
+      if (line) {
+        if (draw) {
+          const screenOf = (at: TeamPosition) => ({
+            x: at.x * zoom + pan.x,
+            y: at.y * zoom + pan.y,
+          });
+          const a = screenOf(draw.anchor);
+          const b = screenOf(draw.point);
+          line.setAttribute("x1", String(a.x));
+          line.setAttribute("y1", String(a.y));
+          line.setAttribute("x2", String(b.x));
+          line.setAttribute("y2", String(b.y));
+          line.style.display = "";
+        } else {
+          line.style.display = "none";
+        }
       }
     };
     cy.on("render", place);
@@ -376,6 +433,107 @@ export function TeamCanvas({
     window.addEventListener("pointercancel", release);
   };
 
+  // A connection the team accepts: a line between two handles means what linkOf says it means, and the team keeps it
+  // only when the rule for that kind of line allows it.
+  const connectCards = (connection: {
+    source: string;
+    target: string;
+    sourceHandle: string;
+    targetHandle: string;
+  }) => {
+    const { members: now, pairs: linked } = latest.current;
+    const link = linkOf(connection);
+    if (!link) return;
+    const allowed =
+      link.kind === "orchestrates"
+        ? canOrchestrate(now, link.parent, link.child)
+        : isValidConnection(
+            { source: link.from, target: link.to },
+            now,
+            linked,
+          );
+    if (!allowed) return;
+    const store = useTeamStore.getState();
+    if (link.kind === "orchestrates") store.setParent(link.child, link.parent);
+    else store.setLinked(link.from, link.to, true);
+  };
+
+  // A press on a handle draws a line from it to the pointer; the card it is let go on takes the line.
+  const startLink = (
+    from: string,
+    handle: HandleName,
+    event: PointerEvent<HTMLDivElement>,
+  ) => {
+    // The press is for the handle, not the card: no drag starts.
+    event.stopPropagation();
+    const cy = canvas.current;
+    if (event.button !== 0 || !cy) return;
+    const node = cy.getElementById(from);
+    if (node.empty()) return;
+    const anchor = handleAnchor(cornerOf(node.position()), handle);
+    const drawTo = (clientX: number, clientY: number) => {
+      linkDraw.current = { anchor, point: onCanvas(clientX, clientY) };
+      cy.emit("render");
+    };
+    const cancel = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", cancel);
+      linkDraw.current = null;
+      cy.emit("render");
+    };
+    const move = (moment: globalThis.PointerEvent) =>
+      drawTo(moment.clientX, moment.clientY);
+    const release = (moment: globalThis.PointerEvent) => {
+      cancel();
+      const element = document
+        .elementFromPoint(moment.clientX, moment.clientY)
+        ?.closest<HTMLElement>("[data-team-id]");
+      const to = element?.dataset.teamId;
+      if (to && to !== from) {
+        connectCards({
+          source: from,
+          target: to,
+          sourceHandle: handle,
+          targetHandle: OPPOSITE_HANDLE[handle],
+        });
+      }
+    };
+    drawTo(event.clientX, event.clientY);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", cancel);
+  };
+
+  // Delete (or Backspace) removes the picked lines: a tree line takes its member off its orchestrator, a pair is
+  // unpaired. Typing in a field is left alone.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Delete" && event.key !== "Backspace") return;
+      if (
+        (event.target as HTMLElement).closest(
+          "input, textarea, [contenteditable='true']",
+        )
+      ) {
+        return;
+      }
+      const cy = canvas.current;
+      const picked = cy?.edges(":selected");
+      if (!cy || !picked || picked.empty()) return;
+      const store = useTeamStore.getState();
+      picked.forEach((edge) => {
+        if (edge.data("kind") === "tree") {
+          store.setParent(edge.target().id(), null);
+        } else {
+          store.setLinked(edge.source().id(), edge.target().id(), false);
+        }
+      });
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Where the held card would land: the spot under its parent, once the others have made room. The ghost is placed
   // by the canvas's own render, so it follows the zoom and the pan without a new render.
   const spot = targets !== base && dragId ? targets.get(dragId) : undefined;
@@ -399,6 +557,18 @@ export function TeamCanvas({
             style={{ width: TEAM_CARD_WIDTH, height: TEAM_CARD_HEIGHT }}
           />
         )}
+        <svg
+          aria-hidden
+          className="pointer-events-none absolute inset-0 size-full overflow-visible"
+        >
+          <line
+            ref={linkLine}
+            className="stroke-ring"
+            strokeWidth={1.5}
+            strokeDasharray="4 4"
+            style={{ display: "none" }}
+          />
+        </svg>
         {members.flatMap((member) => {
           if (!base.has(member.id)) return [];
           return [
@@ -415,7 +585,7 @@ export function TeamCanvas({
                 dropped.current = false;
                 event.stopPropagation();
               }}
-              className="pointer-events-auto absolute top-0 left-0 origin-top-left"
+              className="group pointer-events-auto absolute top-0 left-0 origin-top-left"
             >
               <TeamNodeCard
                 member={member}
@@ -429,6 +599,26 @@ export function TeamCanvas({
                   useTeamStore.getState().select(member.id);
                   openMember(member.id);
                 }}
+              />
+              {member.kind === "agent" && (
+                <HandleDot
+                  handle="top"
+                  onStart={(event) => startLink(member.id, "top", event)}
+                />
+              )}
+              {member.orchestrator && (
+                <HandleDot
+                  handle="bottom"
+                  onStart={(event) => startLink(member.id, "bottom", event)}
+                />
+              )}
+              <HandleDot
+                handle="left"
+                onStart={(event) => startLink(member.id, "left", event)}
+              />
+              <HandleDot
+                handle="right"
+                onStart={(event) => startLink(member.id, "right", event)}
               />
             </div>,
           ];

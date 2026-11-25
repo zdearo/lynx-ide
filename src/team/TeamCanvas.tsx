@@ -12,7 +12,6 @@ import type { TeamMember } from "@/team/team-fixtures";
 import {
   boxOf,
   cardTransform,
-  centredPan,
   centreOf,
   clampSize,
   clampTerminalSize,
@@ -30,8 +29,6 @@ import {
 import {
   extraRowsAt,
   siblingOrderAt,
-  TEAM_CARD_HEIGHT,
-  TEAM_CARD_WIDTH,
   teamLayout,
   type SiblingOrder,
   type TeamPosition,
@@ -375,6 +372,7 @@ export function TeamCanvas({
     order,
     pairs,
     placed,
+    shown,
     sizeNowOf,
   });
   useEffect(() => {
@@ -386,6 +384,7 @@ export function TeamCanvas({
       order,
       pairs,
       placed,
+      shown,
       sizeNowOf,
     };
   });
@@ -551,7 +550,18 @@ export function TeamCanvas({
     const newest = added.length === 1 ? added[0] : undefined;
     const corner = newest === undefined ? undefined : places.get(newest);
     if (newest !== undefined && corner) {
-      viewTo(1, centredPan(centreOf(corner, sizeAt(newest)), bounds));
+      // The terminal is centred and fitted on the screen. A small one keeps the zoom of 1: fitting never zooms in.
+      const size = sizeAt(newest);
+      const view = fitView(
+        [boxOf(centreOf(corner, size), size)],
+        bounds,
+        FIT_PADDING,
+        {
+          min: cy.minZoom(),
+          max: 1,
+        },
+      );
+      viewTo(view.zoom, view.pan);
       return;
     }
     const boxes = [...places].map(([id, at]) => {
@@ -575,13 +585,13 @@ export function TeamCanvas({
     }
     const node = cy.getElementById(newest);
     if (node.empty()) return;
-    cy.viewport({
-      zoom: 1,
-      pan: centredPan(node.position(), {
-        width: element.clientWidth,
-        height: element.clientHeight,
-      }),
-    });
+    const view = fitView(
+      [boxOf(node.position(), { width: node.width(), height: node.height() })],
+      { width: element.clientWidth, height: element.clientHeight },
+      FIT_PADDING,
+      { min: cy.minZoom(), max: 1 },
+    );
+    cy.viewport({ zoom: view.zoom, pan: view.pan });
   }, [area]);
 
   // The nodes take where the cards are drawn. This runs on every frame of a glide, so it only moves the nodes: a node is
@@ -687,7 +697,9 @@ export function TeamCanvas({
     dropped.current = false;
     if (event.button !== 0) return;
     if ((event.target as Element).closest("button")) return;
-    const corner = base.get(id);
+    // Where the card is drawn now, with the push of the terminals above it: the pointer's offset is taken from there.
+    const corner =
+      latest.current.shown.get(id) ?? latest.current.placed.get(id);
     if (!corner) return;
     const origin = { x: event.clientX, y: event.clientY };
     const start = onCanvas(event.clientX, event.clientY);
@@ -888,6 +900,8 @@ export function TeamCanvas({
   // Where the held card would land: its place once the others have made room. The ghost is placed by the canvas's
   // own render, so it follows the zoom and the pan without a new render.
   const spot = targets !== base && dragId ? placed.get(dragId) : undefined;
+  // The ghost is the size the held node has now: its terminal's size when it is open, its card's size when it is closed.
+  const ghostSize = sizeNowOf(dragId ?? "");
   useEffect(() => {
     spotRef.current = spot ?? null;
     canvas.current?.emit("render");
@@ -905,7 +919,7 @@ export function TeamCanvas({
             ref={ghost}
             aria-hidden
             className="absolute top-0 left-0 origin-top-left rounded-lg border-2 border-dashed border-ring/70 bg-ring/10"
-            style={{ width: TEAM_CARD_WIDTH, height: TEAM_CARD_HEIGHT }}
+            style={{ width: ghostSize.width, height: ghostSize.height }}
           />
         )}
         <svg

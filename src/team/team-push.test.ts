@@ -29,8 +29,11 @@ describe("pushApart", () => {
       item("terminal", 0, 0, 480, 300),
       item("next", 256, 0, 224, 112),
     ]);
-    expect(placed.get("terminal")).toEqual({ x: 0, y: 0 });
-    expect(placed.get("next")).toEqual({ x: 480 + PUSH_GAP, y: 0 });
+    const terminal = placed.get("terminal")!;
+    const next = placed.get("next")!;
+    // The row is centred on where it was, so the pair keeps its gap and moves as one.
+    expect(next.x - terminal.x).toBe(480 + PUSH_GAP);
+    expect(next.y).toBe(terminal.y);
   });
 
   it("pushes a card below a terminal under it", () => {
@@ -89,6 +92,6 @@ describe("pushApart", () => {
         expect(overlaps).toBe(false);
       }
     }
-    expect(placed.get("left")).toEqual({ x: 0, y: 176 });
+    expect(placed.get("left")).toEqual({ x: -248, y: 176 });
   });
 });

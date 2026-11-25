@@ -5619,10 +5619,13 @@ await session("?mock=empty", 1400, 800, async (p) => {
   );
 });
 
-// The team is a prototype of a coordinator's run, so only the mock offers it. The org chart draws
-// the run, a member's panel opens over it, and a member's terminal dialog covers the central area.
-const teamEdges = (p) => p.locator(".react-flow__edge").count();
-const teamNodes = (p) => p.locator(".react-flow__node").count();
+// The team is a prototype of a coordinator's run, so only the mock offers it. The map draws the team's cards on a
+// canvas, a member's panel opens over it, and a member's terminal opens in its own card in terminal mode.
+const teamNodes = (p) =>
+  p.locator('[aria-label="Team map"] [data-team-id]').count();
+// The canvas draws its lines itself, so their count is kept on the canvas for the tests.
+const teamEdges = async (p) =>
+  Number(await p.locator("[data-team-lines]").getAttribute("data-team-lines"));
 // A worktree row's button of the given name: its mode button switches that worktree between terminals and team.
 const worktreeMode = (p, worktree, name) =>
   p
@@ -5630,35 +5633,84 @@ const worktreeMode = (p, worktree, name) =>
       has: p.getByRole("button", { name: worktree }),
     })
     .getByRole("button", { name, exact: true });
-// The transform of a card on the map, in flow pixels.
+// A card's corner, from its transform, in model units: the zoom is taken out, so differences are card widths and rows.
 const cardAt = (p, id) =>
   p.evaluate((id) => {
-    const node = document.querySelector(`.react-flow__node[data-id="${id}"]`);
+    const wrapper = document.querySelector(
+      `[data-team-id="${id}"]`,
+    )?.parentElement;
     const m = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(
-      node?.style.transform ?? "",
+      wrapper?.style.transform ?? "",
     );
-    return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
+    if (!m || !wrapper) return null;
+    const zoom =
+      wrapper.getBoundingClientRect().width / parseFloat(wrapper.style.width);
+    return { x: Number(m[1]) / zoom, y: Number(m[2]) / zoom };
   }, id);
 // How much the map is zoomed: a drag of one row on screen is ROW * zoom pixels.
 const mapZoom = (p) =>
   p.evaluate(() => {
-    const viewport = document.querySelector(".react-flow__viewport");
-    return new DOMMatrix(getComputedStyle(viewport).transform).a;
+    const wrapper = document.querySelector("[data-team-id]")?.parentElement;
+    return (
+      wrapper.getBoundingClientRect().width / parseFloat(wrapper.style.width)
+    );
   });
-// Selects a pair line by its hit path (the tree's lines are not selectable).
-const clickEdge = (p, id) =>
-  p.evaluate((id) => {
-    const path = document.querySelector(
-      `.react-flow__edge[data-id="${id}"] .react-flow__edge-interaction`,
+// Waits until the cards stop gliding to their places: every card's transform reads the same twice, 100 ms apart.
+const untilStill = async (p) => {
+  // A glide can wait a frame or more under load, so two equal reads only count after a short wait.
+  await p.waitForTimeout(500);
+  let last = null;
+  for (let i = 0; i < 40; i++) {
+    const now = await p.evaluate(() =>
+      [...document.querySelectorAll("[data-team-id]")].map(
+        (el) => el.parentElement.style.transform,
+      ),
     );
-    path?.dispatchEvent(
-      new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-      }),
+    if (JSON.stringify(now) === last) return;
+    last = JSON.stringify(now);
+    await p.waitForTimeout(100);
+  }
+};
+const cardBox = (p, id) => p.locator(`[data-team-id="${id}"]`).boundingBox();
+// Clicks the first point that is on the canvas itself: a card or a handle over a line takes the click instead.
+const clickOnLine = async (p, points) => {
+  for (const [x, y] of points) {
+    const onCanvas = await p.evaluate(
+      ([x, y]) => document.elementFromPoint(x, y)?.tagName === "CANVAS",
+      [x, y],
     );
-  }, id);
+    if (onCanvas) return p.mouse.click(x, y);
+  }
+  return p.mouse.click(points[0][0], points[0][1]);
+};
+// Picks a pair line: it runs between the two cards' centres, so the points along that segment are on it.
+const pickPair = async (p, a, b) => {
+  const A = await cardBox(p, a);
+  const B = await cardBox(p, b);
+  const [ax, ay] = [A.x + A.width / 2, A.y + A.height / 2];
+  const [bx, by] = [B.x + B.width / 2, B.y + B.height / 2];
+  const at = (t) => [ax + (bx - ax) * t, ay + (by - ay) * t];
+  // A card can cover the middle of the line, so every part of it is tried, from one end to the other.
+  await clickOnLine(
+    p,
+    Array.from({ length: 49 }, (_, i) => at((i + 1) / 50)),
+  );
+};
+// Picks a tree line: it drops from the parent's bottom, so the points down the gap are on its stem.
+const pickTree = async (p, parent, child) => {
+  const P = await cardBox(p, parent);
+  const C = await cardBox(p, child);
+  const bottom = P.y + P.height;
+  // Every line of the parent leaves the same stem, so the part that drops onto the child's own top is picked.
+  const x = C.x + C.width / 2;
+  await clickOnLine(
+    p,
+    Array.from({ length: 8 }, (_, i) => [
+      x,
+      bottom + (C.y - bottom) * (0.6 + i * 0.05),
+    ]),
+  );
+};
 
 await session("?mock=full", 1400, 860, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
@@ -5682,7 +5734,7 @@ await session("?mock=full", 1400, 860, async (p) => {
       1 && (await worktreeMode(p, /^fix\/pty/, "Switch to team").count()) === 1,
   );
   // The team view loads on demand: wait for the map, not a fixed time.
-  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
   await settle(p, 600);
   check(
     "Team puts the team bar in place of the terminal tabs",
@@ -5697,8 +5749,14 @@ await session("?mock=full", 1400, 860, async (p) => {
     (await teamNodes(p)) === 6 && (await teamEdges(p)) === 4,
     `${await teamNodes(p)} nodes, ${await teamEdges(p)} edges`,
   );
+  check(
+    "the map starts in nodes mode: its terminal mode button is off",
+    (await p
+      .getByRole("button", { name: "Terminal mode", exact: true })
+      .getAttribute("aria-pressed")) === "false",
+  );
   // Nothing is picked when a worktree opens: pick the member that needs the user.
-  await p.locator('.react-flow__node[data-id="researcher"]').click();
+  await p.locator('[data-team-id="researcher"]').click();
   await settle(p, 300);
   check(
     "the member that needs the user opens in a panel, which shows the question and no Reply",
@@ -5720,7 +5778,7 @@ await session("?mock=full", 1400, 860, async (p) => {
       )) === "researcher",
   );
 
-  await p.locator('.react-flow__node[data-id="builder"]').click();
+  await p.locator('[data-team-id="builder"]').click();
   await settle(p, 200);
   const builderPanel = p.getByRole("dialog", {
     name: "Builder · Codex",
@@ -5731,21 +5789,23 @@ await session("?mock=full", 1400, 860, async (p) => {
     (await builderPanel.count()) === 1 &&
       (await builderPanel.getAttribute("aria-modal")) === null &&
       (await p
-        .locator('.react-flow__node.selected[data-id="builder"]')
+        .locator('[data-team-id="builder"][data-selected="true"]')
         .count()) === 1,
   );
   const place = await p.evaluate(() => {
     const panel = document
       .querySelector('[role="dialog"]:not([aria-modal])')
       ?.getBoundingClientRect();
-    const flow = document.querySelector(".react-flow")?.getBoundingClientRect();
-    return panel && flow
+    const map = document
+      .querySelector('[aria-label="Team map"]')
+      ?.getBoundingClientRect();
+    return panel && map
       ? {
-          right: flow.right - panel.right,
-          top: panel.top - flow.top,
+          right: map.right - panel.right,
+          top: panel.top - map.top,
           width: panel.width,
           height: panel.height,
-          flowHeight: flow.height,
+          mapHeight: map.height,
         }
       : null;
   });
@@ -5755,7 +5815,7 @@ await session("?mock=full", 1400, 860, async (p) => {
       Math.abs(place.right - 12) <= 2 &&
       Math.abs(place.top - 12) <= 2 &&
       Math.abs(place.width - 320) <= 2 &&
-      place.height < place.flowHeight * 0.8,
+      place.height < place.mapHeight * 0.8,
     JSON.stringify(place),
   );
   check(
@@ -5790,9 +5850,7 @@ await session("?mock=full", 1400, 860, async (p) => {
       .count()) === 1,
   );
 
-  await p
-    .locator('.react-flow__node[data-id="builder"]')
-    .click({ button: "right" });
+  await p.locator('[data-team-id="builder"]').click({ button: "right" });
   await settle(p, 200);
   check(
     "right-click on a card offers its terminal, Orchestrator and Dismiss, and no role or answer options",
@@ -5813,56 +5871,61 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
   await p.getByRole("menuitem", { name: "Open terminal", exact: true }).click();
   await settle(p, 400);
-  // The modal is the only dialog that is modal: the sheet of the same member is not, so it is not matched.
-  const modal = p.locator('[role="dialog"][aria-modal="true"]');
+  const builder = p.locator('[data-team-id="builder"]');
   check(
-    "Open terminal opens a modal dialog titled with the member",
-    (await modal
-      .getByRole("heading", { name: "Builder · Codex", exact: true })
-      .count()) === 1,
+    "Open terminal opens the member's card in terminal mode, with its close button",
+    (await builder
+      .getByRole("button", { name: "Close terminal", exact: true })
+      .count()) === 1 &&
+      (await p
+        .getByRole("button", { name: "Terminal mode", exact: true })
+        .getAttribute("aria-pressed")) === "true",
   );
-  // The modal covers the central area below the team's title bar (36 px), inset 5% on each side.
+  check(
+    "the open card says the output is simulated",
+    (await builder.getByText(/^Simulated output:/).count()) === 1,
+  );
+  // The card grows to 90% of the map, centred, under a 36 px title bar: the modal's frame, now on the canvas.
   const size = await p.evaluate(() => {
-    const main = document.querySelector("main")?.getBoundingClientRect();
-    const dialog = document
-      .querySelector('[role="dialog"][aria-modal="true"]')
-      ?.getBoundingClientRect();
-    return main && dialog
-      ? {
-          width: dialog.width / main.width,
-          height: dialog.height / (main.height - 36),
-        }
-      : null;
+    const map = document
+      .querySelector('[aria-label="Team map"]')
+      .getBoundingClientRect();
+    const root = document.querySelector('[data-team-id="builder"]');
+    const box = root.getBoundingClientRect();
+    return {
+      width: box.width / map.width,
+      height: box.height / map.height,
+      left: (box.left - map.left) / map.width,
+      top: (box.top - map.top) / map.height,
+      header: root.firstElementChild.getBoundingClientRect().height,
+    };
   });
   check(
-    "the dialog covers about 90% of the central area",
-    size !== null &&
-      Math.abs(size.width - 0.9) < 0.02 &&
-      Math.abs(size.height - 0.9) < 0.02,
+    "the open card covers about 90% of the map, centred, under a 36 px title bar",
+    Math.abs(size.width - 0.9) < 0.02 &&
+      Math.abs(size.height - 0.9) < 0.02 &&
+      Math.abs(size.left - 0.05) < 0.02 &&
+      Math.abs(size.top - 0.05) < 0.02 &&
+      size.header === 36,
     JSON.stringify(size),
-  );
-  check(
-    "the dialog says the output is simulated",
-    (await p.getByText(/^Simulated output:/).count()) === 1,
   );
   await settle(p, 300);
   await p.evaluate(axeSource);
-  const axeModal = await p.evaluate(async () => {
+  const axeCard = await p.evaluate(async () => {
     const r = await axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] });
     return r.violations.map(
       (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 120)}`,
     );
   });
   check(
-    "axe: no WCAG A/AA violations with the card and the terminal dialog open",
-    axeModal.length === 0,
-    axeModal.join(" || "),
+    "axe: no WCAG A/AA violations with the card and its terminal open",
+    axeCard.length === 0,
+    axeCard.join(" || "),
   );
 
   await p.keyboard.press("Escape");
   await settle(p, 300);
-  // The dialog closes after its exit animation, and only then hands the focus back to the card.
-  await modal.waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
+  // The card closes, and the focus stays on it.
   await p
     .waitForFunction(
       () => document.activeElement?.getAttribute("data-team-id") === "builder",
@@ -5871,8 +5934,10 @@ await session("?mock=full", 1400, 860, async (p) => {
     )
     .catch(() => {});
   check(
-    "Escape closes the terminal dialog, and the focus goes back to the card",
-    (await modal.count()) === 0 &&
+    "Escape closes the open card, and the focus goes back to it",
+    (await builder
+      .getByRole("button", { name: "Close terminal", exact: true })
+      .count()) === 0 &&
       (await p.evaluate(() =>
         document.activeElement?.getAttribute("data-team-id"),
       )) === "builder",
@@ -5882,8 +5947,11 @@ await session("?mock=full", 1400, 860, async (p) => {
   await p.keyboard.press("Enter");
   await settle(p, 300);
   check(
-    "Enter on a focused card opens its terminal dialog",
-    (await modal.count()) === 1,
+    "Enter on a focused card opens its terminal",
+    (await p
+      .locator('[data-team-id="tester"]')
+      .getByRole("button", { name: "Close terminal", exact: true })
+      .count()) === 1,
   );
   await p.keyboard.press("Escape");
   await settle(p, 300);
@@ -5913,7 +5981,7 @@ await session("?mock=full", 1400, 860, async (p) => {
   };
   await p.locator('[data-team-id="builder"]').focus();
   await p.keyboard.press("Alt+ArrowDown");
-  await settle(p, 300);
+  await untilStill(p);
   const down = {
     builder: await cardAt(p, "builder"),
     test: await cardAt(p, "login-tests"),
@@ -5928,7 +5996,7 @@ await session("?mock=full", 1400, 860, async (p) => {
     JSON.stringify({ before, down }),
   );
   await p.keyboard.press("Alt+ArrowUp");
-  await settle(p, 300);
+  await untilStill(p);
   const back = await cardAt(p, "builder");
   check(
     "Alt+Up moves the card back to its row",
@@ -5939,7 +6007,7 @@ await session("?mock=full", 1400, 860, async (p) => {
   // A mouse drag: only the height follows the pointer, and the card lands on the row it is over.
   const zoom = await mapZoom(p);
   const reviewerBefore = await cardAt(p, "researcher");
-  const card = await p.locator('[data-team-id="researcher"]').boundingBox();
+  const card = await cardBox(p, "researcher");
   const cx = card.x + card.width / 2;
   const cy = card.y + card.height / 2;
   await p.mouse.move(cx, cy);
@@ -5947,7 +6015,7 @@ await session("?mock=full", 1400, 860, async (p) => {
   await p.mouse.move(cx + 10, cy + 40 * zoom, { steps: 4 });
   await p.mouse.move(cx, cy + 176 * zoom, { steps: 10 });
   await p.mouse.up();
-  await settle(p, 300);
+  await untilStill(p);
   const reviewerAfter = await cardAt(p, "researcher");
   check(
     "dragging a card down snaps it one row lower",
@@ -5970,10 +6038,10 @@ await session("?mock=full", 1400, 860, async (p) => {
 
   // A handle drag draws a pair too: any handle can join any handle.
   const builderHandle = await p
-    .locator('[data-nodeid="builder"][data-handleid="right"]')
+    .locator('[data-owner="builder"] [data-handle="right"]')
     .boundingBox();
   const testerHandle = await p
-    .locator('[data-nodeid="tester"][data-handleid="left"]')
+    .locator('[data-owner="tester"] [data-handle="left"]')
     .boundingBox();
   await p.locator('[data-team-id="builder"]').hover();
   await p.mouse.move(
@@ -5987,7 +6055,7 @@ await session("?mock=full", 1400, 860, async (p) => {
     { steps: 10 },
   );
   await p.mouse.up();
-  await settle(p, 300);
+  await untilStill(p);
   check(
     "dragging from a side handle to another card draws a pair",
     (await teamEdges(p)) === 6,
@@ -5995,7 +6063,7 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
 
   // The Delete key removes a picked line.
-  await clickEdge(p, "builder|tester");
+  await pickPair(p, "builder", "tester");
   await settle(p, 200);
   await p.keyboard.press("Delete");
   await settle(p, 300);
@@ -6005,7 +6073,7 @@ await session("?mock=full", 1400, 860, async (p) => {
     `${await teamEdges(p)} edges`,
   );
   // A line of the tree can be picked too: taking it away leaves the member answering to no one, on the top row.
-  await clickEdge(p, "lead-builder");
+  await pickTree(p, "lead", "builder");
   await settle(p, 200);
   await p.keyboard.press("Delete");
   await settle(p, 300);
@@ -6020,10 +6088,10 @@ await session("?mock=full", 1400, 860, async (p) => {
   const drag = async (fromId, fromHandle, toId, toHandle) => {
     await p.locator(`[data-team-id="${fromId}"]`).hover();
     const from = await p
-      .locator(`[data-nodeid="${fromId}"][data-handleid="${fromHandle}"]`)
+      .locator(`[data-owner="${fromId}"] [data-handle="${fromHandle}"]`)
       .boundingBox();
     const to = await p
-      .locator(`[data-nodeid="${toId}"][data-handleid="${toHandle}"]`)
+      .locator(`[data-owner="${toId}"] [data-handle="${toHandle}"]`)
       .boundingBox();
     await p.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await p.mouse.down();
@@ -6043,14 +6111,14 @@ await session("?mock=full", 1400, 860, async (p) => {
   check(
     "only an orchestrator has a bottom handle",
     (await p
-      .locator('[data-nodeid="tester"][data-handleid="bottom"]')
+      .locator('[data-owner="tester"] [data-handle="bottom"]')
       .count()) === 0 &&
       (await p
-        .locator('[data-nodeid="lead"][data-handleid="bottom"]')
+        .locator('[data-owner="lead"] [data-handle="bottom"]')
         .count()) === 1,
   );
 
-  await p.locator('.react-flow__node[data-id="builder"]').click();
+  await p.locator('[data-team-id="builder"]').click();
   await settle(p, 200);
   await p
     .getByRole("dialog", { name: "Builder · Codex", exact: true })
@@ -6116,29 +6184,38 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
 });
 
-// The team's terminal modal runs on the stage: an agent's terminal stays mounted there, so opening and closing the modal
-// sends no resize and keeps the same terminal element. A bot's chat and an agent with no session are drawn in its body.
+// A member's terminal lives in its card, in terminal mode: it is mounted only while the card is on the screen, and its
+// process gets the card's size once the card has landed. A bot's chat and an agent with no session are drawn in the card.
 await session("?mock=full", 1400, 860, async (p) => {
-  const modal = p.locator('[role="dialog"][aria-modal="true"]');
+  const card = (id) => p.locator(`[data-team-id="${id}"]`);
   const resizes = () => p.evaluate(() => window.__lynxMock.resizes());
+  // The card can still be moving when it is opened again, so the double click is sent to the card itself.
   const openCard = (id) =>
-    p.locator(`[data-team-id="${id}"]`).first().dblclick();
+    card(id)
+      .first()
+      .evaluate((el) =>
+        el.dispatchEvent(
+          new MouseEvent("dblclick", {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+          }),
+        ),
+      );
+  const map = p.locator('[aria-label="Team map"]');
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await settle(p, 300);
   const beforeTeam = await resizes();
   await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
-  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
   await settle(p, 600);
-  const staged = await p.locator('[id^="team-stage-"]').count();
-  const sent = (await resizes()) - beforeTeam;
-  // A fit sends the size twice: once from the terminal's own resize event, once from the fit itself (pre-existing).
   check(
-    "entering the team sends each staged terminal its size, once or twice, and nothing else",
-    staged > 0 && sent >= staged && sent <= 2 * staged,
-    `${sent} resizes for ${staged} staged terminals`,
+    "entering the team draws no terminal, so it sends no resize",
+    (await resizes()) === beforeTeam,
+    `${(await resizes()) - beforeTeam} resizes`,
   );
 
-  // The first member whose terminal is on the stage: its modal names that stage in aria-owns.
+  // The first member whose card holds a live terminal: the adopted session, or one the mock starts.
   const ids = [
     ...new Set(
       await p
@@ -6150,54 +6227,47 @@ await session("?mock=full", 1400, 860, async (p) => {
   for (const id of ids) {
     await openCard(id);
     await settle(p, 300);
-    if (
-      (await modal.count()) === 1 &&
-      (await modal.getAttribute("aria-owns")) !== null
-    ) {
+    if ((await card(id).locator(".xterm").count()) === 1) {
       member = id;
       break;
     }
-    const close = modal.getByRole("button", {
+    const close = card(id).getByRole("button", {
       name: /^Close (terminal|chat)$/,
     });
     if ((await close.count()) === 1) await close.click();
     await settle(p, 200);
   }
-  check(
-    "a team member's terminal opens in the modal, which names its stage",
-    member !== null,
-  );
+  check("a team member's terminal opens in its own card", member !== null);
   if (member === null) return;
 
-  const stage = await modal.getAttribute("aria-owns");
   await p
     .waitForFunction(
-      (owns) => document.getElementById(owns)?.querySelector(".xterm") != null,
-      stage,
-      { timeout: 5000 },
+      (id) =>
+        document.activeElement?.closest(`[data-team-id="${id}"] .xterm`) !=
+        null,
+      member,
+      { timeout: 3000 },
     )
     .catch(() => {});
-  await p.evaluate((owns) => {
-    window.__stageXterm = document
-      .getElementById(owns)
-      ?.querySelector(".xterm");
-  }, stage);
   check(
-    "opening the modal focuses the member's terminal",
+    "opening the card focuses the member's terminal",
     await p.evaluate(() => document.activeElement?.closest(".xterm") != null),
   );
 
   await p.keyboard.press("Escape");
   await settle(p, 300);
   check(
-    "Escape inside the terminal belongs to the agent: the modal stays open",
-    (await modal.count()) === 1,
+    "Escape inside the terminal belongs to the agent: the card stays open",
+    (await card(member).locator(".xterm").count()) === 1,
   );
   await p.keyboard.press("Shift+Escape");
   await settle(p, 300);
   check(
-    "Shift+Escape closes the modal from inside the terminal",
-    (await modal.count()) === 0,
+    "Shift+Escape closes the terminal from inside it",
+    (await card(member).locator(".xterm").count()) === 0 &&
+      (await card(member)
+        .getByRole("button", { name: "Close terminal", exact: true })
+        .count()) === 0,
   );
   await p
     .waitForFunction(
@@ -6207,131 +6277,153 @@ await session("?mock=full", 1400, 860, async (p) => {
     )
     .catch(() => {});
   check(
-    "closing the modal gives the focus back to the member's card",
+    "closing the terminal gives the focus back to the member's card",
     (await p.evaluate(() =>
       document.activeElement?.getAttribute("data-team-id"),
     )) === member,
   );
 
-  const beforeOpen = await resizes();
-  await openCard(member);
+  // The card grows over its animation: the process keeps its size until the card lands, then gets the final one.
+  // The double click and the first frame are in one call, so the frames start with the growth.
+  const growing = await p.evaluate(
+    (id) =>
+      new Promise((resolve) => {
+        const root = document.querySelector(`[data-team-id="${id}"]`);
+        const wrapper = root.parentElement;
+        root.dispatchEvent(
+          new MouseEvent("dblclick", {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+          }),
+        );
+        const rows = [];
+        const start = performance.now();
+        const tick = () => {
+          rows.push([
+            parseFloat(wrapper.style.width),
+            window.__lynxMock.resizes(),
+          ]);
+          if (performance.now() - start < 500) requestAnimationFrame(tick);
+          else resolve(rows);
+        };
+        requestAnimationFrame(tick);
+      }),
+    member,
+  );
+  const landed = growing[growing.length - 1][0];
+  const beforeLanding = growing.filter(([width]) => width !== landed);
+  check(
+    "while the card grows its process keeps its size, and the size is sent once it has landed",
+    beforeLanding.length > 0 &&
+      beforeLanding.every(([, sent]) => sent === beforeLanding[0][1]) &&
+      growing[growing.length - 1][1] - beforeLanding[0][1] <= 3,
+    JSON.stringify(growing.slice(0, 4)),
+  );
   await settle(p, 300);
-  const sameElement = await p.evaluate(
-    (owns) =>
-      document.getElementById(owns)?.querySelector(".xterm") ===
-      window.__stageXterm,
-    stage,
-  );
   check(
-    "reopening the modal sends no resize, and shows the same terminal element",
-    (await resizes()) === beforeOpen && sameElement,
+    "reopened, the terminal shows its screen and sits on the card",
+    (await card(member).locator(".xterm").count()) === 1,
   );
-
-  const geometry = await p.evaluate((owns) => {
-    const frame = document.querySelector('[role="dialog"][aria-modal="true"]');
-    const header = frame.firstElementChild.getBoundingClientRect();
-    const box = frame.getBoundingClientRect();
-    const stageBox = document.getElementById(owns).getBoundingClientRect();
+  const geometry = await p.evaluate((id) => {
+    const map = document
+      .querySelector('[aria-label="Team map"]')
+      .getBoundingClientRect();
+    const root = document.querySelector(`[data-team-id="${id}"]`);
+    const box = root.getBoundingClientRect();
     return {
-      header: header.height,
-      top: stageBox.top - header.bottom,
-      left: stageBox.left - box.left,
-      right: box.right - stageBox.right,
-      bottom: box.bottom - stageBox.bottom,
+      width: box.width / map.width,
+      height: box.height / map.height,
+      header: root.firstElementChild.getBoundingClientRect().height,
     };
-  }, stage);
+  }, member);
   check(
-    "the stage is the modal's body, under a 36 px title bar",
-    geometry.header === 36 &&
-      Object.entries(geometry).every(
-        ([key, value]) => key === "header" || Math.abs(value) <= 0.5,
-      ),
+    "the open card covers about 90% of the map, under a 36 px title bar",
+    Math.abs(geometry.width - 0.9) < 0.02 &&
+      Math.abs(geometry.height - 0.9) < 0.02 &&
+      geometry.header === 36,
     JSON.stringify(geometry),
   );
 
-  const aria = await p.evaluate(() => {
-    const frame = document.querySelector('[role="dialog"][aria-modal="true"]');
-    return {
-      name:
-        document.getElementById(frame.getAttribute("aria-labelledby"))
-          ?.textContent ?? "",
-      described:
-        (
-          document.getElementById(frame.getAttribute("aria-describedby"))
-            ?.textContent ?? ""
-        ).length > 0,
-      owns: document.getElementById(frame.getAttribute("aria-owns")) !== null,
-      inert: document.querySelectorAll("[inert]").length,
-    };
-  });
+  // Panned away, the card's terminal is not mounted; brought back, it is attached again to its session. The map is
+  // dragged along its bottom edge, where no card is.
+  const mapBox = await map.boundingBox();
+  const bottom = mapBox.y + mapBox.height - 4;
+  await p.mouse.move(mapBox.x + mapBox.width - 20, bottom);
+  await p.mouse.down();
+  await p.mouse.move(mapBox.x + 20, bottom, { steps: 12 });
+  await p.mouse.up();
+  await settle(p, 400);
+  const awayCount = await p.locator(".xterm").count();
+  await p.mouse.move(mapBox.x + 20, bottom);
+  await p.mouse.down();
+  await p.mouse.move(mapBox.x + mapBox.width - 20, bottom, { steps: 12 });
+  await p.mouse.up();
+  await settle(p, 400);
   check(
-    "the modal is a named dialog that owns its stage, and the rest of the screen is inert",
-    aria.name.length > 0 && aria.described && aria.owns && aria.inert >= 2,
-    JSON.stringify(aria),
+    "a terminal whose card is off the screen is unmounted, and attached again when it comes back",
+    awayCount === 0 && (await p.locator(".xterm").count()) === 1,
+    `${awayCount} off screen`,
   );
 
   await p.evaluate(axeSource);
   const violations = await p.evaluate(async () => {
-    const result = await axe.run(document, {
-      runOnly: ["wcag2a", "wcag2aa"],
-    });
-    return result.violations.map((v) => `${v.id} (${v.nodes.length})`);
+    // Terminal text is drawn in the colours the agent printed, so it is left out of the check (as above).
+    const result = await axe.run(
+      { exclude: [".xterm"] },
+      { runOnly: ["wcag2a", "wcag2aa"] },
+    );
+    return result.violations.map(
+      (v) => `${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 160)}`,
+    );
   });
   check(
-    "axe: no WCAG A/AA violations with the modal open",
+    "axe: no WCAG A/AA violations with the terminal open",
     violations.length === 0,
     violations.join(" || "),
   );
 
-  await modal
+  await card(member)
     .getByRole("button", { name: "Close terminal", exact: true })
     .focus();
   await p.keyboard.press("Escape");
   await settle(p, 300);
   check(
-    "Escape from the title bar closes the modal",
-    (await modal.count()) === 0,
-  );
-
-  await openCard(member);
-  await settle(p, 300);
-  const main = await p.locator("main").boundingBox();
-  await p.mouse.click(main.x + 20, main.y + 60);
-  await settle(p, 300);
-  check(
-    "a click on the backdrop closes the modal",
-    (await modal.count()) === 0,
+    "Escape from the title bar closes the terminal",
+    (await card(member).locator(".xterm").count()) === 0,
   );
 
   await openCard(member);
   await settle(p, 300);
   const beforeClose = await resizes();
-  await modal
+  await card(member)
     .getByRole("button", { name: "Close terminal", exact: true })
     .click();
   await settle(p, 300);
   check(
-    "closing the modal with its X sends no resize",
-    (await resizes()) === beforeClose && (await modal.count()) === 0,
+    "closing with its X sends no resize",
+    (await resizes()) === beforeClose &&
+      (await card(member).locator(".xterm").count()) === 0,
   );
 
-  // A bot's chat, and an agent with no session, are drawn in the modal's body: nothing is staged behind them.
+  // A bot's chat, and an agent with no session, are drawn in the card: no terminal is mounted for either.
   await p.getByRole("button", { name: /^docs\/readme/ }).click();
   await settle(p, 300);
   await worktreeMode(p, /^docs\/readme/, "Switch to team").click();
-  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
   await settle(p, 600);
   await openCard("docs-lead");
   await settle(p, 400);
   check(
-    "a bot's chat opens in the modal's body, with no stage",
-    (await modal.count()) === 1 &&
-      (await modal.getAttribute("aria-owns")) === null &&
-      (await modal
-        .getByRole("button", { name: "Close chat", exact: true })
-        .count()) === 1,
+    "a bot's chat opens in its card, with no terminal",
+    (await card("docs-lead")
+      .getByRole("button", { name: "Close chat", exact: true })
+      .count()) === 1 &&
+      (await card("docs-lead").locator(".xterm").count()) === 0,
   );
-  await modal.getByRole("button", { name: "Close chat", exact: true }).click();
+  await card("docs-lead")
+    .getByRole("button", { name: "Close chat", exact: true })
+    .click();
   await settle(p, 300);
 
   const docsIds = [
@@ -6345,19 +6437,24 @@ await session("?mock=full", 1400, 860, async (p) => {
   for (const id of docsIds) {
     await openCard(id);
     await settle(p, 300);
-    if ((await p.getByText(/^Simulated output:/).count()) === 1) {
+    if (
+      (await card(id)
+        .getByText(/^Simulated output:/)
+        .count()) === 1
+    ) {
       sessionless = id;
       break;
     }
-    const close = modal.getByRole("button", {
+    const close = card(id).getByRole("button", {
       name: /^Close (terminal|chat)$/,
     });
     if ((await close.count()) === 1) await close.click();
     await settle(p, 200);
   }
   check(
-    "an agent with no session shows its simulated output in the modal, with no stage",
-    sessionless !== null && (await modal.getAttribute("aria-owns")) === null,
+    "an agent with no session shows its simulated output in its card, with no terminal",
+    sessionless !== null &&
+      (await card(sessionless).locator(".xterm").count()) === 0,
   );
 });
 
@@ -6366,7 +6463,7 @@ await session("?mock=full", 1400, 860, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await settle(p, 300);
   await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
-  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
   await settle(p, 600);
   await p.locator('[data-team-id="reviewer"]').click({ button: "right" });
   await settle(p, 200);
@@ -6374,7 +6471,7 @@ await session("?mock=full", 1400, 860, async (p) => {
     .getByRole("menuitemcheckbox", { name: "Orchestrator", exact: true })
     .click();
   await settle(p, 400);
-  const bottom = p.locator('[data-nodeid="reviewer"][data-handleid="bottom"]');
+  const bottom = p.locator('[data-owner="reviewer"] [data-handle="bottom"]');
   check(
     "the member turned orchestrator shows its bottom handle",
     (await bottom.count()) === 1,
@@ -6382,16 +6479,19 @@ await session("?mock=full", 1400, 860, async (p) => {
   await p.locator('[data-team-id="reviewer"]').hover();
   const from = await bottom.boundingBox();
   const to = await p
-    .locator('[data-nodeid="tester"][data-handleid="top"]')
+    .locator('[data-owner="tester"] [data-handle="top"]')
     .boundingBox();
   await p.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
   await p.mouse.down();
   await p.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 10 });
   await p.mouse.up();
   await settle(p, 400);
+  const reviewer = await cardAt(p, "reviewer");
+  const tester = await cardAt(p, "tester");
   check(
-    "a line from that bottom handle to a top handle puts the member under it, and draws the line",
-    (await p.locator('[data-testid="rf__edge-reviewer-tester"]').count()) === 1,
+    "a line from that bottom handle to a top handle puts the member under it",
+    tester.y > reviewer.y + 100,
+    JSON.stringify({ reviewer, tester }),
   );
 });
 
@@ -6432,13 +6532,13 @@ await session("?mock=full", 1000, 860, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();
   await settle(p, 300);
   await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
-  await p.locator(".react-flow__node").first().waitFor({ timeout: 15000 });
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
   await settle(p, 400);
-  await p.locator('.react-flow__node[data-id="researcher"]').click();
+  await p.locator('[data-team-id="researcher"]').click();
   await settle(p, 300);
   check(
     "a narrow window shows the team as the map, with the question in the panel and no Reply",
-    (await p.locator(".react-flow__node").count()) === 6 &&
+    (await p.locator('[aria-label="Team map"] [data-team-id]').count()) === 6 &&
       (await p
         .getByRole("dialog", { name: "Researcher · OpenCode", exact: true })
         .count()) === 1 &&

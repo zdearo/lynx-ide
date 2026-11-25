@@ -27,7 +27,13 @@ function TeamViewBase() {
   const pairs = useTeamStore((state) => state.pairs);
   const extraRows = useTeamStore((state) => state.extraRows);
   const siblingOrder = useTeamStore((state) => state.siblingOrder);
+  const canvasMode = useTeamStore((state) => state.canvasMode);
+  const terminalOpen = useTeamStore((state) => state.terminalOpen);
+  const terminalFor = useTeamStore((state) => state.terminalFor);
   const selected = members.find((member) => member.id === selectedId);
+  // The picked member's terminal is open on its card: the panel waits, hidden, so it does not cover the terminal.
+  const terminalShowing =
+    canvasMode === "terminal" && terminalOpen && terminalFor === selectedId;
   const loadBots = useBotsStore((state) => state.load);
 
   // The bot members draw their avatar and engine from the Bots list, which the Bots view may not have loaded.
@@ -70,6 +76,7 @@ function TeamViewBase() {
                   key={selected.id}
                   member={selected}
                   members={members}
+                  hidden={terminalShowing}
                 />
               )}
             </>

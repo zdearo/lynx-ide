@@ -444,9 +444,11 @@ export function engineOf(
   return copy.team.engine(provider, bot.model);
 }
 
-/** Opens a member in the dialog over the central area: its terminal, or a bot's chat. The card, the sheet and the menus use it. */
+/** Opens a member's terminal, or a bot's chat, on its card; the member is picked too, as the card's double click does. */
 export function openMember(id: string) {
-  useTeamStore.getState().openTerminal(id);
+  const store = useTeamStore.getState();
+  store.select(id);
+  store.openTerminal(id);
 }
 
 /** The members of one worktree's team. None when no worktree is given. */

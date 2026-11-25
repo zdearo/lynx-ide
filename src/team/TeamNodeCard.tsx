@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 import { BotAvatar } from "@/bots/BotAvatar";
 import { useBotsStore } from "@/bots/bots-store";
 import { AgentBrandIcon } from "@/components/icons/brands/AgentBrandIcon";
@@ -48,6 +50,18 @@ export function TeamNodeCard({
   onOpen: () => void;
   onClose: () => void;
 }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Closing the terminal leaves the focus on the card, which stays where it is.
+  const close = () => {
+    onClose();
+    rootRef.current?.focus();
+  };
+  // A card whose terminal opens takes the focus, unless the terminal takes it itself (see TerminalView).
+  useEffect(() => {
+    if (open && !rootRef.current?.contains(document.activeElement)) {
+      rootRef.current?.focus();
+    }
+  }, [open]);
   const status = copy.team.status[member.status];
   const bots = useBotsStore((state) => state.bots);
   const bot = botOf(member, bots);
@@ -103,11 +117,34 @@ export function TeamNodeCard({
         <div
           role="group"
           aria-label={copy.team.rowLabel(member.role, status, running)}
+          ref={rootRef}
           data-team-id={member.id}
+          data-selected={selected ? "true" : undefined}
           tabIndex={0}
           onClick={() => useTeamStore.getState().select(member.id)}
           onDoubleClick={onOpen}
+          onKeyDownCapture={(event) => {
+            // Shift+Escape closes the terminal from anywhere in the card, the terminal included: it is taken before the
+            // terminal reads the key.
+            if (open && event.key === "Escape" && event.shiftKey) {
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+            }
+          }}
           onKeyDown={(event) => {
+            // Escape belongs to the agent inside its terminal; anywhere else it closes the terminal.
+            if (
+              open &&
+              event.key === "Escape" &&
+              !(event.target as Element).closest(".xterm")
+            ) {
+              event.preventDefault();
+              // The team clears the pick on Escape; here Escape only closes the terminal.
+              event.stopPropagation();
+              close();
+              return;
+            }
             // Keys from the chevron belong to it, not to the card.
             if (event.target !== event.currentTarget) return;
             if (event.key === "Enter") {
@@ -155,9 +192,13 @@ export function TeamNodeCard({
               <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
                 {title}
                 <TooltipIconButton
-                  label={copy.team.closeTerminal}
+                  label={
+                    member.kind === "bot"
+                      ? copy.team.closeChat
+                      : copy.team.closeTerminal
+                  }
                   className="ml-auto shrink-0"
-                  onClick={onClose}
+                  onClick={close}
                 >
                   <XIcon />
                 </TooltipIconButton>

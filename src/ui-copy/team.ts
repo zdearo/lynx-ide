@@ -57,9 +57,7 @@ export const teamCopy = {
     closeTerminal: "Close terminal",
     closeChat: "Close chat",
     canvasMode: {
-      label: "Map mode",
-      nodes: "Nodes",
-      terminal: "Terminal",
+      label: "Terminal mode",
     },
     changes: "Changes",
     orchestrator: "Orchestrator",

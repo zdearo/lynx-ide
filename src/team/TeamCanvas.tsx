@@ -503,11 +503,34 @@ export function TeamCanvas({
     viewTo(view.zoom, view.pan);
   }, [expandedId]);
 
+  // The open card stays centred when the map's area changes; while it grows, the animation above centres it.
+  useEffect(() => {
+    const cy = canvas.current;
+    const element = surface.current;
+    if (!cy || !element || !expandedId || !expansion) return;
+    if (useTeamStore.getState().movingId) return;
+    const node = cy.getElementById(expandedId);
+    if (node.empty()) return;
+    cy.viewport({
+      zoom: 1,
+      pan: centredPan(node.position(), {
+        width: element.clientWidth,
+        height: element.clientHeight,
+      }),
+    });
+  }, [expandedId, expansion]);
+
   // The canvas takes where the cards are drawn: one node per card, and the lines between them.
   useEffect(() => {
     const cy = canvas.current;
     if (!cy) return;
-    const moving = useTeamStore.getState().movingId;
+    const stored = useTeamStore.getState();
+    const moving = stored.movingId;
+    // The open card keeps the centre the map was centred on; its size still follows the area.
+    const openId =
+      stored.canvasMode === "terminal" && stored.terminalOpen
+        ? stored.terminalFor
+        : null;
     const placed = new Map<string, TeamPosition>();
     for (const member of members) {
       const corner = shown.get(member.id) ?? targets.get(member.id);
@@ -522,7 +545,7 @@ export function TeamCanvas({
         if (node.nonempty() && id === moving) continue;
         if (node.empty()) {
           cy.add({ group: "nodes", data: { id }, position: centre });
-        } else {
+        } else if (id !== openId) {
           node.position(centre);
         }
         cy.getElementById(id).style({ width: size.width, height: size.height });
@@ -533,6 +556,8 @@ export function TeamCanvas({
       cy.edges().remove();
       cy.add(linesOf(members, placed, pairs));
     });
+    // The lines the canvas draws, for the tests: the canvas draws them itself, so they are not in the DOM.
+    cy.container()?.setAttribute("data-team-lines", String(cy.edges().length));
     cy.emit("render");
   }, [members, shown, targets, base, pairs, sizeNowOf, movingId]);
 
@@ -725,10 +750,10 @@ export function TeamCanvas({
       drawTo(moment.clientX, moment.clientY);
     const release = (moment: globalThis.PointerEvent) => {
       cancel();
-      const element = document
+      // A release on the target's handle counts as well as on its body: the handles sit beside the card, in its wrapper.
+      const to = document
         .elementFromPoint(moment.clientX, moment.clientY)
-        ?.closest<HTMLElement>("[data-team-id]");
-      const to = element?.dataset.teamId;
+        ?.closest<HTMLElement>("[data-owner]")?.dataset.owner;
       if (to && to !== from) {
         connectCards({
           source: from,
@@ -787,15 +812,14 @@ export function TeamCanvas({
         <Button
           size="sm"
           variant="outline"
+          aria-pressed={canvasMode === "terminal"}
           onClick={() =>
             useTeamStore
               .getState()
               .setCanvasMode(canvasMode === "nodes" ? "terminal" : "nodes")
           }
         >
-          {canvasMode === "nodes"
-            ? copy.team.canvasMode.terminal
-            : copy.team.canvasMode.nodes}
+          {copy.team.canvasMode.label}
         </Button>
       </div>
       {/* Cytoscape sets the position of its own container, so the box that sizes it is this one. */}
@@ -828,6 +852,7 @@ export function TeamCanvas({
           return [
             <div
               key={member.id}
+              data-owner={member.id}
               ref={(element) => {
                 if (element) cards.current.set(member.id, element);
                 else cards.current.delete(member.id);

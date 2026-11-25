@@ -196,7 +196,7 @@ function TeamNodeCardBase({
           {open ? (
             <>
               <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
-                {title}(
+                {title}
                 <TooltipIconButton
                   label={
                     member.kind === "bot"

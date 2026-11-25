@@ -54,16 +54,27 @@ const CARD_OPEN_MS = 280;
 const CARD_OPEN_EASING = "ease-in-out" as const;
 
 /**
- * A computed colour of a design token. Cytoscape cannot read CSS variables, so the token is resolved by the browser
- * once, when the canvas is built.
+ * A colour of a design token in the form Cytoscape reads. Cytoscape parses rgb and hex only, and the tokens are oklch,
+ * so the browser paints the colour on a pixel and the pixel is read back as rgb. A browser that cannot paint oklch
+ * keeps the fallback.
  */
 function tokenColor(token: string, fallback: string): string {
   const probe = document.createElement("span");
   probe.style.color = `var(${token})`;
   document.body.append(probe);
-  const colour = getComputedStyle(probe).color;
+  const css = getComputedStyle(probe).color;
   probe.remove();
-  return colour || fallback;
+  const context = document.createElement("canvas").getContext("2d");
+  if (!css || !context) return fallback;
+  const sentinel = "#010203";
+  context.fillStyle = sentinel;
+  context.fillStyle = css;
+  if (context.fillStyle === sentinel) return fallback;
+  context.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+  return a === 255
+    ? `rgb(${r}, ${g}, ${b})`
+    : `rgba(${r}, ${g}, ${b}, ${(a / 255).toFixed(3)})`;
 }
 
 function canvasStyle(): cytoscape.StylesheetStyle[] {
@@ -340,6 +351,15 @@ export function TeamCanvas({
       autoungrabify: true,
     });
     canvas.current = cy;
+    // The tokens change with the theme: the colours are read again when it does.
+    const restyle = () => cy.style(canvasStyle());
+    const theme = new MutationObserver(restyle);
+    theme.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme", "style"],
+    });
+    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    scheme.addEventListener("change", restyle);
     const observer = new ResizeObserver(() => {
       const box = element.getBoundingClientRect();
       setArea({ width: box.width, height: box.height });
@@ -418,6 +438,8 @@ export function TeamCanvas({
     return () => {
       useTeamStore.setState({ fitMap: null });
       canvas.current = null;
+      theme.disconnect();
+      scheme.removeEventListener("change", restyle);
       observer.disconnect();
       cy.destroy();
     };

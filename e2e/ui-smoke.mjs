@@ -6136,6 +6136,69 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
 });
 
+// A double click on an open node's header focuses its terminal, and neither opens nor closes the node. Its body is the
+// terminal, so a double click there does nothing to the node.
+await session("?mock=full&perf=team5", 1400, 860, async (p) => {
+  const card = (id) => p.locator(`[data-team-id="${id}"]`);
+  const focusedIn = (id) =>
+    p.evaluate((team) => {
+      const holder = document.querySelector(`[data-team-id="${team}"]`);
+      return (
+        !!holder &&
+        holder.contains(document.activeElement) &&
+        document.activeElement.classList.contains("xterm-helper-textarea")
+      );
+    }, id);
+  const header = (id) => card(id).locator(":scope > div").first();
+
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p
+    .locator("div.group\\/row", {
+      has: p.getByRole("button", { name: /^feat\/auth/ }),
+    })
+    .getByRole("button", { name: "Switch to team", exact: true })
+    .click();
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
+  await settle(p, 800);
+
+  await card("builder").evaluate((el) =>
+    el.dispatchEvent(
+      new MouseEvent("dblclick", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+      }),
+    ),
+  );
+  await settle(p, 600);
+  check(
+    "a double click on a closed node still opens its terminal, and focuses it",
+    (await card("builder").locator(".xterm").count()) === 1 &&
+      (await focusedIn("builder")),
+  );
+
+  await card("reviewer").click();
+  await settle(p, 200);
+  await header("builder").dblclick({ position: { x: 4, y: 4 } });
+  await settle(p, 400);
+  check(
+    "a double click on an open node's header focuses its terminal, and keeps it open",
+    (await card("builder").locator(".xterm").count()) === 1 &&
+      (await focusedIn("builder")),
+  );
+  check(
+    "the header's double click takes the focus from another node's terminal",
+    !(await focusedIn("reviewer")),
+  );
+
+  await card("builder").locator(".xterm-screen").dblclick();
+  await settle(p, 400);
+  check(
+    "a double click on an open node's terminal does not close the node",
+    (await card("builder").locator(".xterm").count()) === 1,
+  );
+});
+
 // A member made an orchestrator from its menu, after its card is drawn, gets a bottom handle that starts a line.
 await session("?mock=full", 1400, 860, async (p) => {
   await p.getByRole("button", { name: /^feat\/auth/ }).click();

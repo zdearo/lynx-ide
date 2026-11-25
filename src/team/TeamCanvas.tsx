@@ -802,7 +802,6 @@ export function TeamCanvas({
     const origin = onCanvas(event.clientX, event.clientY);
     let last = first;
     resizingId.current = id;
-    useTeamStore.getState().setMoving(id, true);
     const move = (moment: globalThis.PointerEvent) => {
       const at = onCanvas(moment.clientX, moment.clientY);
       last = clamp({
@@ -822,7 +821,6 @@ export function TeamCanvas({
       if (terminal) store.setTerminalSize(id, last);
       else store.setCardSize(id, last);
       // The terminal sends its final size now that the pointer has let go.
-      store.setMoving(id, false);
       setResizing(null);
     };
     window.addEventListener("pointermove", move);
@@ -1003,6 +1001,7 @@ export function TeamCanvas({
                 open={open}
                 canOpen={!open}
                 onScreen={onScreen.has(member.id)}
+                resizeLive={resizing?.id === member.id}
               />
               <ResizeDot
                 edge="right"

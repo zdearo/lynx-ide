@@ -36,6 +36,7 @@ function TeamNodeCardBase({
   dimmed,
   canOpen,
   onScreen,
+  resizeLive,
 }: {
   member: TeamMember;
   hasChildren: boolean;
@@ -49,6 +50,8 @@ function TeamNodeCardBase({
   canOpen: boolean;
   /** Whether the open card's terminal is on the screen; off it, the terminal is not mounted. */
   onScreen: boolean;
+  /** Whether the node is being dragged to a new size. */
+  resizeLive: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   // The actions read the store, so the card needs nothing but its own state: a memoised card keeps its place.
@@ -57,6 +60,13 @@ function TeamNodeCardBase({
     openMember(member.id);
   };
   const onClose = () => useTeamStore.getState().closeTerminal(member.id);
+  // A double click on the header of an open node gives its terminal the focus: it neither opens nor closes the node.
+  const onFocusTerminal = () => {
+    useTeamStore.getState().select(member.id);
+    if (member.kind === "agent" && member.sessionId) {
+      useTerminalStore.getState().requestFocus(member.sessionId);
+    }
+  };
   // Closing the terminal leaves the focus on the card, which stays where it is.
   const close = () => {
     onClose();
@@ -128,7 +138,8 @@ function TeamNodeCardBase({
           data-selected={selected ? "true" : undefined}
           tabIndex={0}
           onClick={() => useTeamStore.getState().select(member.id)}
-          onDoubleClick={onOpen}
+          // An open node's body is the terminal: a double click there selects a word, and does nothing to the node.
+          onDoubleClick={open ? undefined : onOpen}
           onKeyDownCapture={(event) => {
             // Shift+Escape closes the terminal from anywhere in the card, the terminal included: it is taken before the
             // terminal reads the key.
@@ -195,7 +206,13 @@ function TeamNodeCardBase({
         >
           {open ? (
             <>
-              <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
+              <div
+                className="flex h-9 shrink-0 items-center gap-2 border-b px-3"
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  onFocusTerminal();
+                }}
+              >
                 {title}
                 <TooltipIconButton
                   label={
@@ -214,7 +231,11 @@ function TeamNodeCardBase({
                 className="flex min-h-0 flex-1 flex-col"
                 onPointerDown={(event) => event.stopPropagation()}
               >
-                <TeamNodeBody member={member} onScreen={onScreen} />
+                <TeamNodeBody
+                  member={member}
+                  onScreen={onScreen}
+                  resizeLive={resizeLive}
+                />
               </div>
             </>
           ) : (

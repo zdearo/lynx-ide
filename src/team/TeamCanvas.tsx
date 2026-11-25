@@ -41,7 +41,7 @@ import { pushApart, type PushItem } from "@/team/team-push";
 import { canOrchestrate, linkOf } from "@/team/team-hierarchy";
 import { cn } from "@/lib/utils";
 import { TeamNodeCard } from "@/team/TeamNodeCard";
-import { openMember, useTeamStore } from "@/team/team-store";
+import { useTeamStore } from "@/team/team-store";
 import { useGlidedPositions } from "@/team/use-glided-positions";
 import { copy } from "@/ui-copy";
 
@@ -175,11 +175,12 @@ function linesOf(
   return lines;
 }
 
+// The link point sits exactly on its edge's line, so the resize strip beside it is the same on both sides.
 const HANDLE_PLACE: Record<HandleName, string> = {
-  top: "-top-1 left-1/2 -translate-x-1/2",
-  bottom: "-bottom-1 left-1/2 -translate-x-1/2",
-  left: "top-1/2 -left-1 -translate-y-1/2",
-  right: "top-1/2 -right-1 -translate-y-1/2",
+  top: "top-0 left-1/2 -translate-x-1/2 -translate-y-1/2",
+  bottom: "bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2",
+  left: "top-1/2 left-0 -translate-x-1/2 -translate-y-1/2",
+  right: "top-1/2 right-0 translate-x-1/2 -translate-y-1/2",
 };
 
 /** A card's handle: it shows with the mouse over the card or focus inside it, and a press on it starts a line. */
@@ -196,7 +197,7 @@ function HandleDot({
       data-handle={handle}
       onPointerDown={onStart}
       className={cn(
-        "pointer-events-auto absolute size-2.5 cursor-crosshair rounded-full border border-ring bg-background opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
+        "pointer-events-auto absolute size-2 cursor-crosshair rounded-full border border-ring bg-background opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
         HANDLE_PLACE[handle],
       )}
     />
@@ -414,7 +415,24 @@ export function TeamCanvas({
     });
     const scheme = window.matchMedia("(prefers-color-scheme: dark)");
     scheme.addEventListener("change", restyle);
+    // The map's size, read when it changes: the render reads it every frame, and a read after the writes would relayout.
+    const bounds = { width: element.clientWidth, height: element.clientHeight };
     const observer = new ResizeObserver(() => {
+      bounds.width = element.clientWidth;
+      bounds.height = element.clientHeight;
+      // The canvas reads its container's size first: its own size may still be the old one.
+      cy.resize();
+      // A map that was resized with a card now off the screen fits again, so the team stays in view.
+      const offScreen = cy.nodes().some((node) => {
+        const box = node.renderedBoundingBox();
+        return (
+          box.x1 < 0 ||
+          box.y1 < 0 ||
+          box.x2 > bounds.width ||
+          box.y2 > bounds.height
+        );
+      });
+      if (offScreen) cy.fit(cy.nodes(), FIT_PADDING);
       const box = element.getBoundingClientRect();
       setArea({ width: box.width, height: box.height });
     });
@@ -430,8 +448,11 @@ export function TeamCanvas({
         if (node.empty()) continue;
         const { x, y } = node.position();
         const size = { width: node.width(), height: node.height() };
-        card.style.width = `${size.width}px`;
-        card.style.height = `${size.height}px`;
+        // Only the sizes that changed are written: a frame of a glide writes the same ones again.
+        const width = `${size.width}px`;
+        const height = `${size.height}px`;
+        if (card.style.width !== width) card.style.width = width;
+        if (card.style.height !== height) card.style.height = height;
         card.style.transform = cardTransform(
           cornerOf({ x, y }, size),
           zoom,
@@ -439,10 +460,6 @@ export function TeamCanvas({
         );
       }
       // Each open terminal is mounted only while it is on the screen.
-      const bounds = {
-        width: element.clientWidth,
-        height: element.clientHeight,
-      };
       const seen = new Set<string>();
       for (const id of openRef.current) {
         const node = cy.getElementById(id);
@@ -567,8 +584,8 @@ export function TeamCanvas({
     });
   }, [area]);
 
-  // The canvas takes where the cards are drawn: one node per card, and the lines between them. A node whose size
-  // changes is animated by its card in the DOM, and its terminal holds the process's size until that lands.
+  // The nodes take where the cards are drawn. This runs on every frame of a glide, so it only moves the nodes: a node is
+  // added or removed when its card is, and the lines are drawn again by the effect below.
   useEffect(() => {
     const cy = canvas.current;
     if (!cy) return;
@@ -588,9 +605,10 @@ export function TeamCanvas({
             data: { id, w: size.width, h: size.height },
             position: centreOf(corner, size),
           });
-        } else {
-          node.position(centreOf(corner, size));
+          sizesDrawn.current.set(id, size);
+          continue;
         }
+        node.position(centreOf(corner, size));
         const drawn = sizesDrawn.current.get(id);
         if (
           !drawn ||
@@ -598,7 +616,7 @@ export function TeamCanvas({
           drawn.height !== size.height
         ) {
           sizesDrawn.current.set(id, size);
-          cy.getElementById(id).data({ w: size.width, h: size.height });
+          node.data({ w: size.width, h: size.height });
           if (drawn && resizingId.current !== id) holdForChange(id);
         }
       }
@@ -607,13 +625,21 @@ export function TeamCanvas({
         sizesDrawn.current.delete(node.id());
         node.remove();
       });
+    });
+    cy.emit("render");
+  }, [members, shown, placed, base, sizeNowOf]);
+
+  // The lines between the cards. They change with the team's lines, not with a glide: a line is drawn again only then.
+  useEffect(() => {
+    const cy = canvas.current;
+    if (!cy) return;
+    cy.batch(() => {
       cy.edges().remove();
-      cy.add(linesOf(members, drawnAt, pairs));
+      cy.add(linesOf(members, base, pairs));
     });
     // The lines the canvas draws, for the tests: the canvas draws them itself, so they are not in the DOM.
     cy.container()?.setAttribute("data-team-lines", String(cy.edges().length));
-    cy.emit("render");
-  }, [members, shown, placed, base, pairs, sizeNowOf]);
+  }, [members, base, pairs]);
 
   // The lines of the selected member's line of work stay solid; the rest fade.
   useEffect(() => {
@@ -627,7 +653,7 @@ export function TeamCanvas({
       edge.toggleClass("focus", inFocus);
       edge.toggleClass("dim", focus !== null && !inFocus);
     });
-  }, [focus, shown, pairs]);
+  }, [focus, members, base, pairs]);
 
   // A card added or removed can land outside the view, so the map fits again. The wait lets the canvas place the
   // new cards first; shortcut: a fixed 50 ms, upgrade to an event if a slow machine misses it.
@@ -928,11 +954,6 @@ export function TeamCanvas({
                 open={open}
                 canOpen={!open}
                 terminalVisible={onScreen.has(member.id)}
-                onClose={() => useTeamStore.getState().closeTerminal(member.id)}
-                onOpen={() => {
-                  useTeamStore.getState().select(member.id);
-                  openMember(member.id);
-                }}
               />
               <ResizeDot
                 edge="right"

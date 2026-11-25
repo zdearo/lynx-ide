@@ -78,7 +78,10 @@ function mountTerminal(
   // A hidden container measures 0x0 and would collapse the terminal.
   // The size is always sent: the screen's own resize event only fires when its size changes, and a
   // process that kept an older size (a session that outlived the window) would stay at it.
+  // While the process holds its size (a card moving), the terminal is not refitted on each frame: it is fitted once, on release.
+  let holding = false;
   const fitIfVisible = () => {
+    if (holding) return;
     if (container.clientWidth > 0 && container.clientHeight > 0) {
       fit.fit();
       sendSize({ cols: terminal.cols, rows: terminal.rows });
@@ -158,7 +161,11 @@ function mountTerminal(
   return {
     terminal,
     refit: fitIfVisible,
-    holdResize: (held) => sendSize.hold(held),
+    holdResize: (next) => {
+      holding = next;
+      sendSize.hold(next);
+      if (!next) fitIfVisible();
+    },
     webgl,
     dispose() {
       disposed = true;

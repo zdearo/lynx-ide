@@ -23,8 +23,6 @@ export const teamCopy = {
     justStarted: "Just started",
     rowLabel: (role: string, status: string, running: string | null = null) =>
       running ? `${role}, ${status}, ${running}` : `${role}, ${status}`,
-    sheetLabel: (role: string, agent: string) => `${role} · ${agent}`,
-    actions: (role: string) => `Actions for ${role}`,
     collapse: (role: string) => `Collapse ${role}`,
     expand: (role: string) => `Expand ${role}`,
     empty: {
@@ -58,7 +56,6 @@ export const teamCopy = {
     openChat: "Open chat",
     closeTerminal: "Close terminal",
     closeChat: "Close chat",
-    changes: "Changes",
     orchestrator: "Orchestrator",
     orchestratorBadge: "orchestrator",
     dismiss: "Dismiss",
@@ -70,31 +67,6 @@ export const teamCopy = {
     task: "Task",
     noTask: "No task",
     acceptance: "Done when",
-    dependsOn: "Depends on",
-    taskStatus: "Status",
-    taskState: {
-      pending: "Waiting to start",
-      running: "Running",
-      done: "Done",
-      failed: "Failed",
-      cancelled: "Cancelled",
-    },
-    runsIn: "Runs in",
-    talksTo: "Talks to",
-    activityLine: (text: string, age: string) => `${text} · ${age}`,
-    /** A message's activity: its kind's name, then its text when it has one. */
-    messageLine: (kind: string, text: string, age: string) =>
-      text ? `${kind}: ${text} · ${age}` : `${kind} · ${age}`,
-    messageKind: {
-      done: "Report",
-      failed: "Failed",
-      noReport: "No report",
-      needsYou: "Needs you",
-      question: "Asks",
-      answer: "Answer",
-      other: "Message",
-    },
-    notes: "Notes",
     teamNotes: {
       title: "Team notes",
       count: (count: number) => (count === 1 ? "1 note" : `${count} notes`),

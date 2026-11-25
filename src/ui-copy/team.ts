@@ -57,7 +57,6 @@ export const teamCopy = {
     closeTerminal: "Close terminal",
     closeChat: "Close chat",
     orchestrator: "Orchestrator",
-    orchestratorBadge: "orchestrator",
     dismiss: "Dismiss",
     pairedWith: (role: string) => `↔ ${role}`,
     waitingOn: (role: string) => `Waiting for ${role}`,

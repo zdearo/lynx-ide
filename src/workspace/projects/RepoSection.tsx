@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { GitBranchIcon } from "@phosphor-icons/react";
+import { BookBookmarkIcon } from "@phosphor-icons/react";
 import {
   CaretRightIcon,
   DotsThreeIcon,
@@ -132,7 +132,7 @@ function RepoSectionView({
             "flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-ui font-medium text-sidebar-foreground hover:bg-sidebar-accent/50",
           )}
         >
-          <GitBranchIcon
+          <BookBookmarkIcon
             aria-hidden
             className="size-3.5 shrink-0 text-muted-foreground"
           />

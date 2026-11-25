@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { TerminalStreamGate } from "@/terminal/terminal-stream-gate";
+import {
+  REPLAY_SLICE,
+  TerminalStreamGate,
+} from "@/terminal/terminal-stream-gate";
 
 function setup() {
   const written: Array<string | Uint8Array> = [];
@@ -101,5 +104,58 @@ describe("TerminalStreamGate", () => {
     gate.pushOutput({ seq: 4, data: bytes });
 
     expect(written).toEqual(["old", bytes]);
+  });
+
+  it("writes a long replay in pieces, one per step, and holds live output until the last piece", () => {
+    const written: string[] = [];
+    const steps: Array<() => void> = [];
+    const doneCallbacks: Array<() => void> = [];
+    let replayed = 0;
+    const gate = new TerminalStreamGate(
+      (data, done) => {
+        written.push(data as string);
+        if (done) doneCallbacks.push(done);
+      },
+      () => {},
+      (step) => {
+        steps.push(step);
+        return () => {};
+      },
+    );
+    const data = "a".repeat(REPLAY_SLICE * 2 + 10);
+    gate.attach(snapshot(data, 4), () => (replayed += 1));
+    gate.pushOutput({ seq: 5, data: "Z" });
+
+    expect(written).toEqual([]);
+    while (steps.length > 0) steps.shift()?.();
+    expect(written.map((piece) => piece.length)).toEqual([
+      REPLAY_SLICE,
+      REPLAY_SLICE,
+      10,
+      1,
+    ]);
+    expect(written.join("")).toBe(data + "Z");
+    expect(replayed).toBe(0);
+    doneCallbacks.forEach((done) => done());
+    expect(replayed).toBe(1);
+  });
+
+  it("never cuts a surrogate pair between two pieces", () => {
+    const written: string[] = [];
+    const steps: Array<() => void> = [];
+    const gate = new TerminalStreamGate(
+      (data) => written.push(data as string),
+      () => {},
+      (step) => {
+        steps.push(step);
+        return () => {};
+      },
+    );
+    const data = "a".repeat(REPLAY_SLICE - 1) + "😀" + "b";
+    gate.attach(snapshot(data, 1));
+    while (steps.length > 0) steps.shift()?.();
+
+    expect(written[0]).toHaveLength(REPLAY_SLICE - 1);
+    expect(written.join("")).toBe(data);
   });
 });

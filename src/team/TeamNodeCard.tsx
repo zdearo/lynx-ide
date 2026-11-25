@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
-import type { CardSize } from "@/team/team-canvas-model";
 import type { TeamMember } from "@/team/team-fixtures";
 import { hasTask } from "@/team/team-hierarchy";
 import { runningLabelOf } from "@/team/team-live";
@@ -30,8 +29,8 @@ export function TeamNodeCard({
   open,
   selected,
   dimmed,
-  size,
   terminal,
+  terminalVisible,
   onOpen,
   onClose,
 }: {
@@ -43,8 +42,9 @@ export function TeamNodeCard({
   open: boolean;
   selected: boolean;
   dimmed: boolean;
-  size: CardSize;
   terminal: boolean;
+  /** Whether the open card's terminal is on the screen; off it, the terminal is not mounted. */
+  terminalVisible: boolean;
   onOpen: () => void;
   onClose: () => void;
 }) {
@@ -143,9 +143,8 @@ export function TeamNodeCard({
               );
             }
           }}
-          style={{ width: size.width, height: size.height }}
           className={cn(
-            "group flex flex-col gap-1.5 overflow-hidden rounded-lg border bg-card p-3 text-ui text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            "group size-full flex flex-col gap-1.5 overflow-hidden rounded-lg border bg-card p-3 text-ui text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
             selected ? "border-ring" : "border-border",
             dimmed && "opacity-80",
             open && "gap-0 p-0",
@@ -168,7 +167,10 @@ export function TeamNodeCard({
                 className="flex min-h-0 flex-1 flex-col"
                 onPointerDown={(event) => event.stopPropagation()}
               >
-                <TeamNodeBody member={member} />
+                <TeamNodeBody
+                  member={member}
+                  terminalVisible={terminalVisible}
+                />
               </div>
             </>
           ) : (

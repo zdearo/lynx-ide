@@ -125,3 +125,78 @@ export function handleAnchor(
       return { x: corner.x + size.width, y: corner.y + size.height / 2 };
   }
 }
+
+/** A card's box on the map, from its two corners. */
+export interface Box {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** The size an open card takes: the modal's 5% inset on each side of the map, so 90% of it. */
+export function openSizeOf(area: CardSize): CardSize {
+  return {
+    width: Math.round(area.width * 0.9),
+    height: Math.round(area.height * 0.9),
+  };
+}
+
+/** The pan that puts a map point at the middle of the area, at zoom 1. */
+export function centredPan(
+  point: { x: number; y: number },
+  area: CardSize,
+): { x: number; y: number } {
+  return { x: area.width / 2 - point.x, y: area.height / 2 - point.y };
+}
+
+/** A card's box on the map, from its centre and size. */
+export function boxOf(centre: { x: number; y: number }, size: CardSize): Box {
+  return {
+    x1: centre.x - size.width / 2,
+    y1: centre.y - size.height / 2,
+    x2: centre.x + size.width / 2,
+    y2: centre.y + size.height / 2,
+  };
+}
+
+/** The zoom and pan that fit the boxes in the area with the padding around them; the zoom stays in range. */
+export function fitView(
+  boxes: readonly Box[],
+  area: CardSize,
+  padding: number,
+  zoomRange: { min: number; max: number },
+): { zoom: number; pan: { x: number; y: number } } {
+  if (boxes.length === 0) return { zoom: 1, pan: { x: 0, y: 0 } };
+  const x1 = Math.min(...boxes.map((box) => box.x1));
+  const y1 = Math.min(...boxes.map((box) => box.y1));
+  const x2 = Math.max(...boxes.map((box) => box.x2));
+  const y2 = Math.max(...boxes.map((box) => box.y2));
+  const fitting = Math.min(
+    (area.width - 2 * padding) / Math.max(x2 - x1, 1),
+    (area.height - 2 * padding) / Math.max(y2 - y1, 1),
+  );
+  const zoom = Math.min(Math.max(fitting, zoomRange.min), zoomRange.max);
+  return {
+    zoom,
+    pan: {
+      x: area.width / 2 - (zoom * (x1 + x2)) / 2,
+      y: area.height / 2 - (zoom * (y1 + y2)) / 2,
+    },
+  };
+}
+
+/** Whether a box of the map is on the screen at all, at this zoom and pan. */
+export function isInView(
+  box: Box,
+  zoom: number,
+  pan: { x: number; y: number },
+  area: CardSize,
+): boolean {
+  return (
+    box.x2 * zoom + pan.x > 0 &&
+    box.x1 * zoom + pan.x < area.width &&
+    box.y2 * zoom + pan.y > 0 &&
+    box.y1 * zoom + pan.y < area.height
+  );
+}

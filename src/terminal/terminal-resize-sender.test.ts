@@ -54,3 +54,34 @@ describe("createResizeSender", () => {
     expect(sent).toEqual(["100", "150", "160"]);
   });
 });
+
+describe("createResizeSender hold", () => {
+  it("keeps the sizes while held and sends the latest one on release", async () => {
+    const sent: string[] = [];
+    const resize = createResizeSender(async ({ cols, rows }) => {
+      sent.push(`${cols}x${rows}`);
+    });
+
+    resize.hold(true);
+    resize({ cols: 100, rows: 30 });
+    resize({ cols: 180, rows: 30 });
+    await flush();
+    expect(sent).toEqual([]);
+
+    resize.hold(false);
+    await flush();
+    expect(sent).toEqual(["180x30"]);
+  });
+
+  it("sends nothing on release when no size came during the hold", async () => {
+    const sent: string[] = [];
+    const resize = createResizeSender(async ({ cols, rows }) => {
+      sent.push(`${cols}x${rows}`);
+    });
+
+    resize.hold(true);
+    resize.hold(false);
+    await flush();
+    expect(sent).toEqual([]);
+  });
+});

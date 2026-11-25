@@ -17,12 +17,25 @@ import { copy } from "@/ui-copy";
  * What an expanded card shows under its title: an agent's terminal, a bot's chat, or what a member without a session
  * shows in its place. The title and the close button belong to the card.
  */
-export function TeamNodeBody({ member }: { member: TeamMember }) {
+export function TeamNodeBody({
+  member,
+  terminalVisible,
+}: {
+  member: TeamMember;
+  terminalVisible: boolean;
+}) {
   if (member.kind === "bot") return <BotChatBody member={member} />;
-  return <AgentBody member={member} />;
+  return <AgentBody member={member} visible={terminalVisible} />;
 }
 
-function AgentBody({ member }: { member: TeamAgent }) {
+function AgentBody({
+  member,
+  visible,
+}: {
+  member: TeamAgent;
+  visible: boolean;
+}) {
+  const moving = useTeamStore((state) => state.movingId === member.id);
   const session = useTerminalStore((state) =>
     member.sessionId
       ? state.sessions.find((candidate) => candidate.id === member.sessionId)
@@ -50,9 +63,13 @@ function AgentBody({ member }: { member: TeamAgent }) {
     return <ClosedAgentBody member={member} />;
   }
 
+  // Off the screen the terminal is not mounted: the process runs on, and its screen comes back on attach.
+  if (!visible) {
+    return <div className="flex min-h-0 flex-1 flex-col bg-background" />;
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <TerminalView terminalId={session.id} active />
+      <TerminalView terminalId={session.id} active resizeHeld={moving} />
     </div>
   );
 }

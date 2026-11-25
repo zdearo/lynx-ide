@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
 import type { ResumableSession, TeamSnapshot, TerminalInfo } from "@/bindings";
@@ -13,6 +13,7 @@ import {
   useTeamStore,
   watchTeam,
   isTerminalOpen,
+  OPEN_PER_FRAME,
 } from "@/team/team-store";
 import { requestCloseTerminal, resumeLine } from "@/terminal/terminal-actions";
 import { useTerminalStore } from "@/terminal/terminal-store";
@@ -205,6 +206,38 @@ beforeEach(() => {
   resumable.remove.mockResolvedValue(undefined);
   useTeamStore.setState(initialState, true);
   useWorkspaceStore.setState({ selectedWorktreePath: null });
+});
+
+// Frames the store asks for are kept here until the test runs them: `step` runs the pending ones, `runAll` until none is left.
+function stubFrames() {
+  const callbacks = new Map<number, FrameRequestCallback>();
+  let nextId = 1;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const id = nextId++;
+    callbacks.set(id, callback);
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+    callbacks.delete(id);
+  });
+  const step = () => {
+    const pending = [...callbacks.values()];
+    callbacks.clear();
+    pending.forEach((callback) => callback(0));
+    return pending.length;
+  };
+  return {
+    step,
+    runAll: () => {
+      while (step() > 0) {
+        // keep running the frames the batches ask for
+      }
+    },
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("team load", () => {
@@ -1316,7 +1349,9 @@ describe("team open terminals", () => {
       (member) => member.id,
     );
 
+    const frames = stubFrames();
     store().openAll();
+    frames.runAll();
     expect(store().openIds).toEqual(
       expect.arrayContaining(["docs-lead", ...shown]),
     );
@@ -1324,6 +1359,29 @@ describe("team open terminals", () => {
 
     store().closeAll();
     expect(store().openIds).toEqual(["docs-lead"]);
+  });
+
+  it("opens the terminals one batch per frame, and closing one before its turn keeps it closed", async () => {
+    await loadTeam();
+    useWorkspaceStore.setState({ selectedWorktreePath: AUTH });
+    useTeamStore.setState({ openIds: [] });
+    const shown = membersOfWorktree(store().members, AUTH).map(
+      (member) => member.id,
+    );
+    const frames = stubFrames();
+
+    store().openAll();
+    expect(store().openIds).toHaveLength(0);
+    frames.step();
+    expect(store().openIds).toHaveLength(
+      Math.min(OPEN_PER_FRAME, shown.length),
+    );
+
+    const last = shown[shown.length - 1];
+    store().closeTerminal(last);
+    frames.runAll();
+    expect(store().openIds).not.toContain(last);
+    expect(store().openIds).toHaveLength(shown.length - 1);
   });
 
   it("tells whether a member's terminal is open", () => {

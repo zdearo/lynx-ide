@@ -8,6 +8,12 @@ export interface ResizeSender {
   (size: TerminalSize): void;
   /** While held, sizes are kept and nothing is sent; releasing sends the latest one. */
   hold(held: boolean): void;
+  /** The next size is sent even when it is the one asked for last, as when a session is attached. */
+  forget(): void;
+}
+
+function sameSize(a: TerminalSize | null, b: TerminalSize): boolean {
+  return a !== null && a.cols === b.cols && a.rows === b.rows;
 }
 
 /**
@@ -21,6 +27,8 @@ export function createResizeSender(
   let sending = false;
   let held = false;
   let latest: TerminalSize | null = null;
+  // The last size asked for: showing a tab or refitting to the same size sends nothing, so the process does not redraw.
+  let lastAsked: TerminalSize | null = null;
 
   async function drain() {
     sending = true;
@@ -37,12 +45,17 @@ export function createResizeSender(
   }
 
   const resize = ((size: TerminalSize) => {
+    if (sameSize(lastAsked, size)) return;
+    lastAsked = size;
     latest = size;
     if (!sending && !held) void drain();
   }) as ResizeSender;
   resize.hold = (next: boolean) => {
     held = next;
     if (!held && !sending) void drain();
+  };
+  resize.forget = () => {
+    lastAsked = null;
   };
   return resize;
 }

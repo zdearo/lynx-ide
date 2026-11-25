@@ -85,3 +85,41 @@ describe("createResizeSender hold", () => {
     expect(sent).toEqual([]);
   });
 });
+
+describe("createResizeSender sizes", () => {
+  it("does not send again the size it was last asked for", async () => {
+    const sent: Array<{ cols: number; rows: number }> = [];
+    const resize = createResizeSender(async (size) => {
+      sent.push(size);
+    });
+
+    resize({ cols: 80, rows: 24 });
+    resize({ cols: 80, rows: 24 });
+    await new Promise((done) => setTimeout(done, 0));
+    resize({ cols: 80, rows: 24 });
+    await new Promise((done) => setTimeout(done, 0));
+
+    expect(sent).toEqual([{ cols: 80, rows: 24 }]);
+  });
+
+  it("sends a size that changed, and sends the same size again after forget", async () => {
+    const sent: Array<{ cols: number; rows: number }> = [];
+    const resize = createResizeSender(async (size) => {
+      sent.push(size);
+    });
+
+    resize({ cols: 80, rows: 24 });
+    await new Promise((done) => setTimeout(done, 0));
+    resize({ cols: 100, rows: 24 });
+    await new Promise((done) => setTimeout(done, 0));
+    resize.forget();
+    resize({ cols: 100, rows: 24 });
+    await new Promise((done) => setTimeout(done, 0));
+
+    expect(sent).toEqual([
+      { cols: 80, rows: 24 },
+      { cols: 100, rows: 24 },
+      { cols: 100, rows: 24 },
+    ]);
+  });
+});

@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useRef } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -32,9 +32,14 @@ interface TerminalViewProps {
   inView?: boolean;
   /** The screen is fitted, but the process keeps its size until this is released (a card moving to its size). */
   resizeHeld?: boolean;
+  /** A node is being dragged to a new size: the screen follows it, and the process gets the size a few times meanwhile. */
+  resizeLive?: boolean;
   onExit?: (exitCode: number | null) => void;
   className?: string;
 }
+
+/** While a node is being resized, the process gets the size at most this often: each size makes the agent redraw. */
+const LIVE_RESIZE_MS = 120;
 
 interface Mounted {
   terminal: Terminal;
@@ -42,6 +47,8 @@ interface Mounted {
   refit: () => void;
   /** Keeps the process's size while held; releasing sends the screen's latest size. */
   holdResize: (held: boolean) => void;
+  /** While a node is dragged, the screen follows every frame and the process gets the size at most every LIVE_RESIZE_MS. */
+  setLiveResize: (live: boolean) => void;
   /** WebGL is attached only while this terminal is the visible one. */
   webgl: WebglRendererSlot;
   /** Whether the snapshot is applied; the GPU renderer waits for it, so the replay is drawn by the DOM view. */
@@ -86,11 +93,27 @@ function mountTerminal(
   // process that kept an older size (a session that outlived the window) would stay at it.
   // While the process holds its size (a card moving), the terminal is not refitted on each frame: it is fitted once, on release.
   let holding = false;
-  const fitIfVisible = () => {
+  // While a node is dragged the process gets the size at most every LIVE_RESIZE_MS, and the last one when the drag ends.
+  let live = false;
+  let liveTimer: ReturnType<typeof setTimeout> | null = null;
+  const sendScreenSize = () => {
+    if (!live) {
+      sendSize({ cols: terminal.cols, rows: terminal.rows });
+      return;
+    }
+    liveTimer ??= setTimeout(() => {
+      liveTimer = null;
+      sendSize({ cols: terminal.cols, rows: terminal.rows });
+    }, LIVE_RESIZE_MS);
+  };
+
+  // `attaching` is the first fit of a session: the session gets the screen's size even when it is the size it has.
+  const fitIfVisible = (attaching = false) => {
     if (holding) return;
     if (container.clientWidth > 0 && container.clientHeight > 0) {
+      if (attaching) sendSize.forget();
       fit.fit();
-      sendSize({ cols: terminal.cols, rows: terminal.rows });
+      sendScreenSize();
     }
   };
 
@@ -134,7 +157,7 @@ function mountTerminal(
       gate.attach(snapshot, () => {
         // The last piece of a replay can finish after the terminal was closed: a closed terminal sends no size.
         if (disposed) return;
-        fitIfVisible();
+        fitIfVisible(true);
         mounted.replayed = true;
         onReplayed(mounted);
       });
@@ -150,10 +173,10 @@ function mountTerminal(
     void commands.writeTerminal(terminalId, data);
     useTerminalStore.getState().woken(terminalId);
   });
-  const resize = terminal.onResize(({ cols, rows }) => {
-    sendSize({ cols, rows });
+  const resize = terminal.onResize(() => {
+    sendScreenSize();
   });
-  const observer = new ResizeObserver(fitIfVisible);
+  const observer = new ResizeObserver(() => fitIfVisible());
   observer.observe(container);
 
   // The bell is only shown: the terminal engine reports it, it plays no sound.
@@ -186,12 +209,20 @@ function mountTerminal(
       sendSize.hold(next);
       if (!next) fitIfVisible();
     },
+    setLiveResize: (next) => {
+      live = next;
+      if (next) return;
+      if (liveTimer !== null) clearTimeout(liveTimer);
+      liveTimer = null;
+      fitIfVisible();
+    },
     webgl,
     replayed: false,
     dispose() {
       disposed = true;
       cancelAttach();
       gate.dispose();
+      if (liveTimer !== null) clearTimeout(liveTimer);
       observer.disconnect();
       input.dispose();
       resize.dispose();
@@ -216,6 +247,7 @@ function TerminalViewBase({
   focused = true,
   inView = true,
   resizeHeld = false,
+  resizeLive = false,
   onExit,
   className,
 }: TerminalViewProps) {
@@ -228,6 +260,7 @@ function TerminalViewBase({
   const focusRequest = useTerminalStore((state) => state.focusRequest);
   const settingsRef = useRef(settings);
   const heldRef = useRef(resizeHeld);
+  const liveRef = useRef(resizeLive);
 
   // The GPU renderer starts once the replay is parsed, in a frame of its own, and only while the terminal is shown.
   const requestGpu = (mounted: Mounted) =>
@@ -262,6 +295,7 @@ function TerminalViewBase({
         );
         mountedRef.current = mounted;
         mounted.holdResize(heldRef.current);
+        mounted.setLiveResize(liveRef.current);
         if (activeRef.current && focusedRef.current) mounted.terminal.focus();
       });
     });
@@ -290,6 +324,11 @@ function TerminalViewBase({
     if (!resizeHeld) mounted.refit();
   }, [resizeHeld]);
 
+  useEffect(() => {
+    liveRef.current = resizeLive;
+    mountedRef.current?.setLiveResize(resizeLive);
+  }, [resizeLive]);
+
   // Settings changed while terminals are open: restyle them in place.
   useEffect(() => {
     const mounted = mountedRef.current;
@@ -313,21 +352,14 @@ function TerminalViewBase({
     return () => cancelAnimationFrame(frame);
   }, [focusRequest, active, terminalId]);
 
-  useEffect(() => {
+  // Before the paint: the tab is shown in the same commit, so the first frame already has the final size.
+  useLayoutEffect(() => {
     if (!active) return;
-    let cancelShow = () => {};
-    // Wait a frame so the container is laid out after becoming visible.
-    const frame = requestAnimationFrame(() => {
-      mountedRef.current?.refit();
-      if (focusedRef.current) mountedRef.current?.terminal.focus();
-      // The DOM view is usable at once; the GPU renderer follows in a frame of its own, with the other terminals' work.
-      const mounted = mountedRef.current;
-      if (mounted) cancelShow = requestGpu(mounted);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      cancelShow();
-    };
+    mountedRef.current?.refit();
+    if (focusedRef.current) mountedRef.current?.terminal.focus();
+    // The DOM view is usable at once; the GPU renderer follows in a frame of its own, with the other terminals' work.
+    const mounted = mountedRef.current;
+    return mounted ? requestGpu(mounted) : undefined;
   }, [active]);
 
   return (
@@ -335,7 +367,7 @@ function TerminalViewBase({
     // would count padding on that parent as room it does not have. Its colour is
     // the terminal's, so a light scheme does not sit inside a dark frame.
     <div
-      className={cn("size-full py-2 pl-2", !active && "hidden", className)}
+      className={cn("size-full py-2 pl-2", !active && "invisible", className)}
       style={{ backgroundColor: resolveTerminalTheme(settings).background }}
     >
       {/* WebGL draws the text on a canvas, so the applied font is mirrored here for the page to read. */}

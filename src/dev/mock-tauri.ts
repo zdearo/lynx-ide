@@ -90,6 +90,17 @@ const SHELL_TRANSCRIPT = [
   `${green("dev@host")} ${dim("~/lynx-ide")} $ `,
 ].join("\r\n");
 
+/** About a megabyte of coloured lines, as a long agent session leaves behind. Development only. */
+function perfTranscript(index: number): string {
+  const lines: string[] = [];
+  for (let line = 0; line < 10_000; line++) {
+    lines.push(
+      `\x1b[3${(index + line) % 7}m agent ${index} line ${line}\x1b[0m ${"lorem ipsum dolor sit amet ".repeat(3)}\r\n`,
+    );
+  }
+  return lines.join("");
+}
+
 function worktree(
   repoPath: string,
   name: string,
@@ -1045,6 +1056,25 @@ export function installMockTauri(scenario: string): void {
   const mockExpanded = new Set<string>(
     scenario === "full" ? [TEAM_ROOT_ID, "docs-lead"] : [],
   );
+  // Development only, for measuring the team's terminals (`?mock=full&perf=team5`): five agents, each with a session
+  // whose transcript is about a megabyte, the size a long agent session replays on attach.
+  if (
+    scenario === "full" &&
+    new URLSearchParams(window.location.search).get("perf") === "team5"
+  ) {
+    mockMembers
+      .filter((member) => member.kind === "agent")
+      .slice(0, 5)
+      .forEach((member, index) => {
+        member.sessionId = addSession(
+          member.worktree,
+          "claude",
+          true,
+          perfTranscript(index),
+          600,
+        );
+      });
+  }
   const teamError = (
     kind: "teamNotFound" | "teamInvalid" | "teamRefused",
     message: string,

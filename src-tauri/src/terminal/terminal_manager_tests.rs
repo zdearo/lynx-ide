@@ -618,3 +618,52 @@ fn a_started_session_is_announced_once_with_its_id() {
     );
     manager.close(&info.id).expect("close");
 }
+
+#[test]
+fn a_view_that_attaches_is_replayed_the_whole_output() {
+    let (manager, sink, dir) = setup();
+    let info = manager
+        .create(
+            &path_of(&dir),
+            Some(
+                "printf '\\033[?2004h'; i=0; while [ $i -lt 3000 ]; do echo \"line $i\"; i=$((i+1)); done",
+            ),
+            80,
+            24,
+        )
+        .expect("create");
+    sink.wait_for_text(&info.id, "line 2999\r\n");
+
+    let replay = manager.replay(&info.id).expect("replay");
+    let full = manager.snapshot(&info.id).expect("snapshot");
+
+    // Nothing was evicted, so the replay is the output itself, the mode included.
+    assert_eq!(replay.data, full.data);
+    assert_eq!(replay.last_seq, full.last_seq);
+    manager.close(&info.id).expect("close");
+}
+
+#[test]
+fn a_view_that_attaches_after_eviction_gets_the_state_the_dropped_output_set() {
+    let (manager, sink, dir) = setup();
+    let info = manager
+        .create(
+            &path_of(&dir),
+            Some("printf '\\033[?2004h'; head -c 1200000 /dev/zero | tr '\\0' a; echo MARK-$((6 * 7))"),
+            80,
+            24,
+        )
+        .expect("create");
+    sink.wait_for_text(&info.id, "MARK-42\r\n");
+
+    let replay = manager.replay(&info.id).expect("replay");
+
+    // The mode was set before the 1.2 MB that evicted it, so the replay sets it again, then the rest.
+    assert!(replay.data.starts_with("\x1b[?2004h"));
+    assert!(
+        replay.data.contains("MARK-42\r\n"),
+        "the output after the eviction is replayed"
+    );
+    assert!(replay.data.len() <= 1024 * 1024 + 64);
+    manager.close(&info.id).expect("close");
+}

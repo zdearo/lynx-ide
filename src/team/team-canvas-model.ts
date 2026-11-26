@@ -142,14 +142,6 @@ export interface Box {
   y2: number;
 }
 
-/** The pan that puts a map point at the middle of the area, at zoom 1. */
-export function centredPan(
-  point: { x: number; y: number },
-  area: CardSize,
-): { x: number; y: number } {
-  return { x: area.width / 2 - point.x, y: area.height / 2 - point.y };
-}
-
 /** A card's box on the map, from its centre and size. */
 export function boxOf(centre: { x: number; y: number }, size: CardSize): Box {
   return {

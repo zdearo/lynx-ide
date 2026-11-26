@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal } from "@xterm/xterm";
 
 import {
@@ -6,15 +6,21 @@ import {
   type WebglRendererSlot,
 } from "@/terminal/terminal-renderer";
 
-// Stands in for the GPU addon: it records each instance and can fire context loss.
+// Stands in for the GPU addon: it records each instance and can fire context loss. Like xterm 0.19 it starts a cursor
+// blink interval that its own dispose() leaves running; only the blink's clear stops it.
 const fake = vi.hoisted(() => ({
   loadError: null as Error | null,
+  withRenderer: true,
   created: [] as Array<{ dispose: () => void; loseContext: () => void }>,
 }));
 
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class {
     private readonly listeners: Array<() => void> = [];
+    private readonly blink = setInterval(() => {}, 600);
+    readonly _renderer = fake.withRenderer
+      ? { _cursorBlinkStateManager: { clear: () => clearInterval(this.blink) } }
+      : undefined;
     readonly dispose = vi.fn();
     readonly onContextLoss = (listener: () => void) => {
       this.listeners.push(listener);
@@ -38,6 +44,13 @@ function fakeTerminal() {
 beforeEach(() => {
   fake.created.length = 0;
   fake.loadError = null;
+  fake.withRenderer = true;
+  // Only the blink's interval is faked, so vi.getTimerCount() counts the intervals an addon leaves running.
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("WebglBudget", () => {
@@ -110,6 +123,37 @@ describe("WebglBudget", () => {
     expect(budget.holding()).toBe(6);
   });
 
+  it("never takes the context of a terminal on a screen now, and the claimer waits on the DOM view", async () => {
+    const budget = new WebglBudget(1);
+    const [shown, claimer] = ["shown", "claimer"].map((id) =>
+      slotIn(budget, id),
+    );
+    // Both on a screen, the claimer the more recently: by time alone it would take the context.
+    shown.setVisible(true);
+    claimer.setVisible(true);
+
+    await shown.show();
+    await claimer.show();
+
+    expect(fake.created[0].dispose).not.toHaveBeenCalled();
+    expect(budget.holding()).toBe(1);
+  });
+
+  it("takes the context of a hidden terminal for a claimer that is seen more recently", async () => {
+    const budget = new WebglBudget(1);
+    const [hidden, claimer] = ["hidden", "claimer"].map((id) =>
+      slotIn(budget, id),
+    );
+    budget.markSeen("hidden", 1);
+    budget.markSeen("claimer", 9);
+
+    await hidden.show();
+    claimer.setVisible(true);
+    await claimer.show();
+
+    expect(fake.created[0].dispose).toHaveBeenCalledOnce();
+  });
+
   it("makes a terminal wait when every holder was seen at least as recently", async () => {
     const budget = new WebglBudget(1);
     const [a, b] = ["a", "b"].map((id) => slotIn(budget, id));
@@ -164,12 +208,80 @@ describe("WebglBudget", () => {
     expect(fake.created).toHaveLength(0);
   });
 
+  it("refits the terminal when the context is lost, because the DOM renderer measures a cell differently", async () => {
+    const onRenderer = vi.fn();
+    const { terminal } = fakeTerminal();
+    const slot = new WebglBudget(6).slotFor(terminal, "a", onRenderer);
+
+    await slot.show();
+    expect(onRenderer).toHaveBeenCalledTimes(1);
+    fake.created[0].loseContext();
+
+    expect(onRenderer).toHaveBeenCalledTimes(2);
+  });
+
+  it("forgets the last-seen time of a disposed terminal", () => {
+    const budget = new WebglBudget(6);
+    const slot = slotIn(budget, "a");
+    budget.markSeen("a", 5);
+
+    slot.dispose();
+
+    const seen = (budget as unknown as { seen: Map<string, number> }).seen;
+    expect(seen.has("a")).toBe(false);
+  });
+
   it("keeps the DOM renderer without throwing when WebGL cannot load", async () => {
     fake.loadError = new Error("WebGL2 not supported");
     const { terminal } = fakeTerminal();
     const slot = new WebglBudget(6).slotFor(terminal, "a");
 
     await expect(slot.show()).resolves.toBeUndefined();
+    expect(fake.created[0].dispose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the cursor blink of a released addon", () => {
+  it("is stopped when the context is given back, so no interval outlives the addon", async () => {
+    const { terminal } = fakeTerminal();
+    const slot = new WebglBudget(6).slotFor(terminal, "a");
+
+    await slot.show();
+    expect(vi.getTimerCount()).toBe(1);
+    slot.release();
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fake.created[0].dispose).toHaveBeenCalledOnce();
+  });
+
+  it("is stopped when the terminal is disposed", async () => {
+    const { terminal } = fakeTerminal();
+    const slot = new WebglBudget(6).slotFor(terminal, "a");
+
+    await slot.show();
+    slot.dispose();
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fake.created[0].dispose).toHaveBeenCalledOnce();
+  });
+
+  it("is stopped when the context is lost", async () => {
+    const { terminal } = fakeTerminal();
+    const slot = new WebglBudget(6).slotFor(terminal, "a");
+
+    await slot.show();
+    fake.created[0].loseContext();
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("still releases an addon whose renderer cannot be reached", async () => {
+    fake.withRenderer = false;
+    const { terminal } = fakeTerminal();
+    const slot = new WebglBudget(6).slotFor(terminal, "a");
+
+    await slot.show();
+    expect(() => slot.release()).not.toThrow();
     expect(fake.created[0].dispose).toHaveBeenCalledOnce();
   });
 });

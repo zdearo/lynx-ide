@@ -1,2 +1,4 @@
 # Stored with LF. Git for Windows checks out CRLF by default, and the formatter rejects that.
 * text=auto eol=lf
+# The captured fixtures are raw PTY bytes: they keep their CRLF exactly.
+src-tauri/src/terminal/replay_fixtures/*.bin binary

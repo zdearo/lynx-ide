@@ -6,9 +6,9 @@ export interface TerminalSize {
 /** A terminal's size sender: call it with each size, and hold it while the process must keep its size. */
 export interface ResizeSender {
   (size: TerminalSize): void;
-  /** While held, sizes are kept and nothing is sent; releasing sends the latest one. */
+  /** While held, sizes are kept and nothing is sent; releasing sends the latest one, if the process lacks it. */
   hold(held: boolean): void;
-  /** The next size is sent even when it is the one asked for last, as when a session is attached. */
+  /** The next size is sent even when the process has it, as when a session is attached. */
   forget(): void;
 }
 
@@ -22,31 +22,33 @@ function sameSize(a: TerminalSize | null, b: TerminalSize): boolean {
  * order and leave the process with a size the screen no longer has.
  */
 export function createResizeSender(
-  send: (size: TerminalSize) => Promise<unknown>,
+  send: (size: TerminalSize) => Promise<boolean>,
 ): ResizeSender {
   let sending = false;
   let held = false;
   let latest: TerminalSize | null = null;
-  // The last size asked for: showing a tab or refitting to the same size sends nothing, so the process does not redraw.
-  let lastAsked: TerminalSize | null = null;
+  // The size the process has accepted: a size it already has is not sent again. A size changed back while held is one it has.
+  let accepted: TerminalSize | null = null;
 
   async function drain() {
     sending = true;
     while (latest && !held) {
       const size = latest;
       latest = null;
+      if (sameSize(accepted, size)) continue;
+      let ok = false;
       try {
-        await send(size);
+        ok = await send(size);
       } catch {
         // The session may be gone already; a newer size, if any, still goes out.
       }
+      // A refused size is not the process's: the next request for it goes out again.
+      if (ok) accepted = size;
     }
     sending = false;
   }
 
   const resize = ((size: TerminalSize) => {
-    if (sameSize(lastAsked, size)) return;
-    lastAsked = size;
     latest = size;
     if (!sending && !held) void drain();
   }) as ResizeSender;
@@ -55,7 +57,7 @@ export function createResizeSender(
     if (!held && !sending) void drain();
   };
   resize.forget = () => {
-    lastAsked = null;
+    accepted = null;
   };
   return resize;
 }

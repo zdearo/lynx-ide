@@ -1,16 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   REPLAY_SLICE,
   TerminalStreamGate,
 } from "@/terminal/terminal-stream-gate";
+import { TerminalWriteQueue } from "@/terminal/terminal-write-queue";
 
+// The terminal parses at once in these tests, so the queue writes everything in order straight away.
 function setup() {
   const written: Array<string | Uint8Array> = [];
   const exits: Array<number | null> = [];
-  const gate = new TerminalStreamGate(
-    (data) => written.push(data),
-    (code) => exits.push(code),
+  const queue = new TerminalWriteQueue(
+    (data, done) => {
+      written.push(data);
+      done();
+    },
+    (run) => {
+      run();
+      return () => {};
+    },
   );
+  const gate = new TerminalStreamGate(queue, (code) => exits.push(code));
   return { gate, written, exits };
 }
 
@@ -106,28 +115,28 @@ describe("TerminalStreamGate", () => {
     expect(written).toEqual(["old", bytes]);
   });
 
-  it("writes a long replay in pieces, one per step, and holds live output until the last piece", () => {
+  it("writes a long replay in pieces, one at a time, and holds live output behind them", () => {
     const written: string[] = [];
-    const steps: Array<() => void> = [];
-    const doneCallbacks: Array<() => void> = [];
-    let replayed = 0;
-    const gate = new TerminalStreamGate(
+    const parsed: Array<() => void> = [];
+    const replayed = vi.fn();
+    const queue = new TerminalWriteQueue(
       (data, done) => {
         written.push(data as string);
-        if (done) doneCallbacks.push(done);
+        parsed.push(done);
       },
-      () => {},
-      (step) => {
-        steps.push(step);
+      (run) => {
+        run();
         return () => {};
       },
     );
+    const gate = new TerminalStreamGate(queue, () => {});
     const data = "a".repeat(REPLAY_SLICE * 2 + 10);
-    gate.attach(snapshot(data, 4), () => (replayed += 1));
+    gate.attach(snapshot(data, 4), replayed);
     gate.pushOutput({ seq: 5, data: "Z" });
 
-    expect(written).toEqual([]);
-    while (steps.length > 0) steps.shift()?.();
+    expect(written.map((piece) => piece.length)).toEqual([REPLAY_SLICE]);
+    while (parsed.length > 0) parsed.shift()?.();
+
     expect(written.map((piece) => piece.length)).toEqual([
       REPLAY_SLICE,
       REPLAY_SLICE,
@@ -135,25 +144,13 @@ describe("TerminalStreamGate", () => {
       1,
     ]);
     expect(written.join("")).toBe(data + "Z");
-    expect(replayed).toBe(0);
-    doneCallbacks.forEach((done) => done());
-    expect(replayed).toBe(1);
+    expect(replayed).toHaveBeenCalledOnce();
   });
 
   it("never cuts a surrogate pair between two pieces", () => {
-    const written: string[] = [];
-    const steps: Array<() => void> = [];
-    const gate = new TerminalStreamGate(
-      (data) => written.push(data as string),
-      () => {},
-      (step) => {
-        steps.push(step);
-        return () => {};
-      },
-    );
+    const { gate, written } = setup();
     const data = "a".repeat(REPLAY_SLICE - 1) + "😀" + "b";
     gate.attach(snapshot(data, 1));
-    while (steps.length > 0) steps.shift()?.();
 
     expect(written[0]).toHaveLength(REPLAY_SLICE - 1);
     expect(written.join("")).toBe(data);

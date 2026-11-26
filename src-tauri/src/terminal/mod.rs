@@ -1,4 +1,5 @@
 mod output_coalescer;
+mod replay_state;
 mod scrollback_buffer;
 mod shell_resolution;
 mod terminal_error;
@@ -14,6 +15,8 @@ pub mod terminal_events;
 pub mod terminal_manager;
 pub mod terminal_session;
 
+#[cfg(test)]
+mod replay_capture_tests;
 #[cfg(all(test, unix))]
 mod terminal_daemon_tests;
 #[cfg(all(test, unix))]

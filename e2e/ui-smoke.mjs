@@ -879,7 +879,10 @@ await session("?mock=full", 1200, 760, async (p) => {
       const visible = [...document.querySelectorAll(".xterm")].find(
         (x) => x.offsetParent !== null,
       );
-      const frame = visible?.parentElement?.parentElement;
+      // The view's container carries the terminal's font attributes; its parent is the frame that paints the background.
+      const frame = visible?.closest(
+        "[data-terminal-font-family]",
+      )?.parentElement;
       return frame ? getComputedStyle(frame).backgroundColor : null;
     });
   const pick = async (id, option) => {
@@ -1794,6 +1797,161 @@ await session("?mock=full", 1200, 760, async (p) => {
         document.activeElement?.classList.contains("xterm-helper-textarea") ??
         false,
     ),
+  );
+
+  // The shown terminal's screen fills its box: a terminal that sized itself to its own content kept its first rows.
+  const heights = await p.evaluate(() =>
+    [...document.querySelectorAll(".xterm")]
+      .filter(
+        (x) =>
+          getComputedStyle(x).visibility === "visible" &&
+          x.getBoundingClientRect().width > 0,
+      )
+      .map((x) => {
+        // The view's container, not the element xterm sits in: that one is sized by the screen itself.
+        const box = x
+          .closest("[data-terminal-font-family]")
+          .getBoundingClientRect();
+        const screen = x.querySelector(".xterm-screen").getBoundingClientRect();
+        return Math.round(box.height - screen.height);
+      }),
+  );
+  check(
+    "the shown terminal's screen fills the height of its box, to a row",
+    heights.length > 0 && heights.every((gap) => gap >= 0 && gap < 24),
+    JSON.stringify(heights),
+  );
+});
+
+// A tab shows its screen in its box at once, and keeps it after another tab and back: the box is the view's container.
+const shownGaps = (p) =>
+  p.evaluate(() =>
+    [...document.querySelectorAll(".xterm")]
+      .filter(
+        (x) =>
+          getComputedStyle(x).visibility === "visible" &&
+          x.getBoundingClientRect().width > 0,
+      )
+      .map((x) => {
+        const box = x
+          .closest("[data-terminal-font-family]")
+          .getBoundingClientRect();
+        const screen = x.querySelector(".xterm-screen").getBoundingClientRect();
+        return [
+          Math.round(box.width - screen.width),
+          Math.round(box.height - screen.height),
+        ];
+      }),
+  );
+const fillsBox = (gaps) =>
+  gaps.length === 1 &&
+  gaps.every(
+    ([width, height]) => width >= 0 && width < 24 && height >= 0 && height < 24,
+  );
+await session("?mock=full", 1400, 860, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 500);
+  check(
+    "a shown tab's screen fills its box, width and height",
+    fillsBox(await shownGaps(p)),
+    JSON.stringify(await shownGaps(p)),
+  );
+  await p
+    .getByRole("button", { name: "New terminal", exact: true })
+    .first()
+    .click();
+  await p.getByRole("menuitem").filter({ hasText: "Shell" }).first().click();
+  await settle(p, 1500);
+  check(
+    "a new tab's screen fills its box",
+    fillsBox(await shownGaps(p)),
+    JSON.stringify(await shownGaps(p)),
+  );
+  await p
+    .getByRole("tablist", { name: "Terminals" })
+    .getByRole("tab")
+    .first()
+    .click();
+  await settle(p, 700);
+  check(
+    "going back to a tab, its screen still fills its box",
+    fillsBox(await shownGaps(p)),
+    JSON.stringify(await shownGaps(p)),
+  );
+});
+
+// Coming back to a worktree puts its open terminals in place before the first frame, each the element it was: none is
+// built again, and none waits its turn in a frame of its own.
+await session("?mock=full&perf=team5", 1400, 860, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p
+    .locator("div.group\\/row", {
+      has: p.getByRole("button", { name: /^feat\/auth/ }),
+    })
+    .getByRole("button", { name: "Switch to team", exact: true })
+    .click();
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
+  await settle(p, 800);
+  await p
+    .getByRole("button", { name: "Open all terminals", exact: true })
+    .click();
+  await settle(p, 4000);
+  await p.evaluate(() => {
+    window.__returnIds = new WeakMap();
+    let count = 0;
+    for (const x of document.querySelectorAll(".xterm"))
+      window.__returnIds.set(x, ++count);
+    window.__openCount = count;
+    // The cards of the map: a map built again would bring new ones.
+    window.__cardIds = new WeakSet(document.querySelectorAll("[data-team-id]"));
+  });
+  await p.getByRole("button", { name: /^fix\/pty/ }).click();
+  await settle(p, 1500);
+  const first = await p.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const button = [...document.querySelectorAll("div.group\\/row")]
+          .find((row) => row.textContent.includes("feat/auth"))
+          ?.querySelector("button");
+        button?.click();
+        requestAnimationFrame(() => {
+          const terminals = [...document.querySelectorAll(".xterm")];
+          const cards = [...document.querySelectorAll("[data-team-id]")];
+          resolve({
+            open: window.__openCount,
+            inDom: terminals.length,
+            same: terminals.filter((x) => window.__returnIds.has(x)).length,
+            cards: cards.length,
+            sameCards: cards.filter((x) => window.__cardIds.has(x)).length,
+          });
+        });
+      }),
+  );
+  check(
+    "coming back, every open terminal is in place at the first frame, as the same element",
+    first.open > 0 && first.inDom === first.open && first.same === first.open,
+    JSON.stringify(first),
+  );
+  check(
+    "coming back keeps the map: its cards are the same elements, none is built again",
+    first.cards > 0 && first.sameCards === first.cards,
+    JSON.stringify(first),
+  );
+});
+
+// A window resize sends the size of the terminal on the screen; the others keep theirs until they are shown again.
+await session("?mock=full", 1200, 760, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await p.getByRole("tab", { name: /claude/ }).click();
+  await settle(p, 500);
+  const before = await p.evaluate(() => window.__lynxMock.resizes());
+  await p.setViewportSize({ width: 1100, height: 700 });
+  await settle(p, 700);
+  const sent = (await p.evaluate(() => window.__lynxMock.resizes())) - before;
+  check(
+    "a window resize sends a size for the shown terminal only, not for the others",
+    sent <= 1,
+    String(sent),
   );
 });
 
@@ -5942,6 +6100,10 @@ await session("?mock=full", 1400, 860, async (p) => {
     "Escape inside the terminal belongs to the agent: the card stays open",
     (await card(member).locator(".xterm").count()) === 1,
   );
+  check(
+    "Escape inside the terminal leaves the team's pick alone",
+    (await card(member).getAttribute("data-selected")) === "true",
+  );
   await p.keyboard.press("Shift+Escape");
   await settle(p, 300);
   check(
@@ -6088,7 +6250,8 @@ await session("?mock=full", 1400, 860, async (p) => {
   await p.getByRole("button", { name: /^docs\/readme/ }).click();
   await settle(p, 300);
   await worktreeMode(p, /^docs\/readme/, "Switch to team").click();
-  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
+  // The team of the other worktree stays mounted, hidden, so the first card may be that one: wait for a shown card.
+  await p.locator("[data-team-id]:visible").first().waitFor({ timeout: 15000 });
   await settle(p, 600);
   await openCard("docs-lead");
   await settle(p, 400);
@@ -6161,6 +6324,7 @@ await session("?mock=full&perf=team5", 1400, 860, async (p) => {
   await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
   await settle(p, 800);
 
+  const beforeOpen = await p.evaluate(() => window.__lynxMock.resizes());
   await card("builder").evaluate((el) =>
     el.dispatchEvent(
       new MouseEvent("dblclick", {
@@ -6170,7 +6334,20 @@ await session("?mock=full&perf=team5", 1400, 860, async (p) => {
       }),
     ),
   );
+  // The replay is written a piece at a time, so the attach's size comes once it is parsed: wait for it.
+  await p
+    .waitForFunction(
+      (count) => window.__lynxMock.resizes() > count,
+      beforeOpen,
+      { timeout: 8000 },
+    )
+    .catch(() => {});
   await settle(p, 600);
+  check(
+    "opening a terminal sends the process its size at its attach, and at the landing if the card changed size",
+    (await p.evaluate(() => window.__lynxMock.resizes())) - beforeOpen <= 2,
+    String((await p.evaluate(() => window.__lynxMock.resizes())) - beforeOpen),
+  );
   check(
     "a double click on a closed node still opens its terminal, and focuses it",
     (await card("builder").locator(".xterm").count()) === 1 &&
@@ -6196,6 +6373,28 @@ await session("?mock=full&perf=team5", 1400, 860, async (p) => {
   check(
     "a double click on an open node's terminal does not close the node",
     (await card("builder").locator(".xterm").count()) === 1,
+  );
+
+  // Closed and opened again, a terminal keeps its process's size: showing it again sends nothing.
+  await card("builder")
+    .getByRole("button", { name: "Close terminal", exact: true })
+    .click();
+  await settle(p, 400);
+  const beforeReopen = await p.evaluate(() => window.__lynxMock.resizes());
+  await card("builder").evaluate((el) =>
+    el.dispatchEvent(
+      new MouseEvent("dblclick", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+      }),
+    ),
+  );
+  await settle(p, 800);
+  check(
+    "a terminal opened again, with its size unchanged, sends the process no size",
+    (await p.evaluate(() => window.__lynxMock.resizes())) === beforeReopen &&
+      (await card("builder").locator(".xterm").count()) === 1,
   );
 });
 
@@ -6426,6 +6625,79 @@ await session("?mock=full", 1000, 860, async (p) => {
   check(
     "no horizontal scroll with the team in a narrow window",
     (await overflow(p)) <= 0,
+  );
+});
+
+// An open card's terminal does not take the close shortcut away: Ctrl+Shift+W still closes the active tab.
+await session("?mock=full", 1400, 860, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 300);
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
+  await settle(p, 400);
+  const ids = [
+    ...new Set(
+      await p
+        .locator("[data-team-id]")
+        .evaluateAll((els) => els.map((el) => el.getAttribute("data-team-id"))),
+    ),
+  ];
+  for (const id of ids) {
+    // The team can read again while the loop runs: a card that has gone is skipped, not waited for.
+    const root = p.locator(`[data-team-id="${id}"]`).first();
+    if ((await root.count()) === 0) continue;
+    await root.evaluate((el) =>
+      el.dispatchEvent(
+        new MouseEvent("dblclick", {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+        }),
+      ),
+    );
+    await settle(p, 300);
+    if ((await p.locator(`[data-team-id="${id}"] .xterm`).count()) === 1) break;
+    const close = p
+      .locator(`[data-team-id="${id}"]`)
+      .first()
+      .getByRole("button", { name: /^Close (terminal|chat)$/ });
+    if ((await close.count()) === 1) await close.click();
+    await settle(p, 200);
+  }
+  check(
+    "a team card's terminal is open",
+    (await p.locator(".xterm").count()) === 1,
+  );
+
+  await worktreeMode(p, /^feat\/auth/, "Switch to terminals").click();
+  await settle(p, 400);
+  await p.keyboard.press("Control+Shift+T");
+  await settle(p, 300);
+  check(
+    "Ctrl+Shift+T opens a third tab while the card's terminal stays open",
+    (await tabs(p)) === 3,
+    String(await tabs(p)),
+  );
+  await p.keyboard.press("Control+Shift+W");
+  await settle(p, 300);
+  check(
+    "Ctrl+Shift+W closes the active tab while a team card's terminal is open",
+    (await tabs(p)) === 2,
+    String(await tabs(p)),
+  );
+
+  // In the team the tabs are out of sight: the shortcut leaves them alone.
+  await worktreeMode(p, /^feat\/auth/, "Switch to team").click();
+  await p.locator("[data-team-id]").first().waitFor({ timeout: 15000 });
+  await settle(p, 300);
+  await p.keyboard.press("Control+Shift+W");
+  await settle(p, 300);
+  await worktreeMode(p, /^feat\/auth/, "Switch to terminals").click();
+  await settle(p, 400);
+  check(
+    "Ctrl+Shift+W does not close a tab while the team is shown",
+    (await tabs(p)) === 2,
+    String(await tabs(p)),
   );
 });
 

@@ -1,6 +1,6 @@
-import { useMemo } from "react";
 import { toast } from "sonner";
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 
 import type {
   BotSummary,
@@ -35,8 +35,6 @@ import { isClosedByBackend, useTerminalStore } from "@/terminal/terminal-store";
 import { useResumableStore } from "@/workspace/resumable-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import { copy } from "@/ui-copy";
-
-/** The team map's mode: the cards alone, or the cards with a terminal for each member. */
 
 /** A worktree's central area: its terminals, or the team. */
 export type TeamMode = "terminal" | "team";
@@ -447,15 +445,6 @@ export function engineOf(
   return copy.team.engine(provider, bot.model);
 }
 
-/** Opens a member's terminal, or a bot's chat, on its card; the member is picked too, as the card's double click does. */
-/** Whether a member's terminal is open on the map. */
-export function isTerminalOpen(
-  state: Pick<TeamState, "openIds">,
-  id: string,
-): boolean {
-  return state.openIds.includes(id);
-}
-
 // The open terminals are kept per member in this viewer's browser: a convenience, so the map comes back as it was.
 const OPEN_KEY = "lynx.team.open";
 
@@ -478,6 +467,7 @@ function saveOpenIds(openIds: readonly string[]) {
   }
 }
 
+/** Opens a member's terminal, or a bot's chat, on its card; the member is picked too, as the card's double click does. */
 export function openMember(id: string) {
   const store = useTeamStore.getState();
   store.select(id);
@@ -494,14 +484,17 @@ export function membersOfWorktree(
     : members.filter((member) => member.worktree === worktree);
 }
 
+/** The members of one worktree's team. The same array while that team does not change, so its canvas keeps its layout. */
+export function useTeamMembersOf(worktree: string | null): TeamMember[] {
+  return useTeamStore(
+    useShallow((state) => membersOfWorktree(state.members, worktree)),
+  );
+}
+
 /** The team on screen: the members of the worktree selected on the sidebar. */
 export function useTeamMembers(): TeamMember[] {
-  const members = useTeamStore((state) => state.members);
   const worktree = useWorkspaceStore((state) => state.selectedWorktreePath);
-  return useMemo(
-    () => membersOfWorktree(members, worktree),
-    [members, worktree],
-  );
+  return useTeamMembersOf(worktree);
 }
 
 /** A member's role by id, or undefined once it is gone from the team. */
@@ -526,6 +519,15 @@ export function teamModeOf(
   path: string | null,
 ): TeamMode {
   return path ? (modeByWorktree[path] ?? "terminal") : "terminal";
+}
+
+/** The worktrees whose central area is the team. Each keeps its team mounted, hidden, while the sidebar is elsewhere. */
+export function teamWorktreesOf(
+  modeByWorktree: Record<string, TeamMode>,
+): string[] {
+  return Object.keys(modeByWorktree).filter(
+    (path) => modeByWorktree[path] === "team",
+  );
 }
 
 /**
@@ -564,7 +566,6 @@ let latestLoad = 0;
 /** Members whose agent is being started again. A second request for one of them does nothing. */
 const revivingIds = new Set<string>();
 
-/** The team on screen. Its members and lines come from the backend; the rest is the screen's own state. */
 /** How many terminals open per frame when they are opened all at once: each one mounts a terminal, and a frame holds one. */
 export const OPEN_PER_FRAME = 1;
 
@@ -608,6 +609,7 @@ export function restoreOpenTerminals() {
   openingFrame = requestAnimationFrame(openNextBatch);
 }
 
+/** The team on screen. Its members and lines come from the backend; the rest is the screen's own state. */
 export const useTeamStore = create<TeamState>((set, get) => ({
   loaded: false,
   members: [],
@@ -653,10 +655,11 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     set((state) => ({
       modeByWorktree: { ...state.modeByWorktree, [path]: mode },
     })),
-  openTerminal: (id) =>
+  openTerminal: (id) => {
     set((state) => ({
       openIds: [...state.openIds.filter((open) => open !== id), id],
-    })),
+    }));
+  },
   closeTerminal: (id) => {
     opening = opening.filter((pending) => pending !== id);
     set((state) => ({

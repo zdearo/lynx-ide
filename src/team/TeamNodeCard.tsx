@@ -157,7 +157,7 @@ function TeamNodeCardBase({
               !(event.target as Element).closest(".xterm")
             ) {
               event.preventDefault();
-              // The team clears the pick on Escape; here Escape only closes the terminal.
+              // Stopped here, so the pick stays on the card: Escape only closes the terminal.
               event.stopPropagation();
               close();
               return;

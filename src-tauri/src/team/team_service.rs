@@ -16,7 +16,7 @@ use super::team_rules::{
     check_agent_only, check_bot_id, check_bot_join, check_dependencies, check_exchange,
     check_has_orchestrator, check_orchestrator_off, check_pair, check_parent, check_role_change,
     check_session_free, check_task_pending, clean_key, clean_role, clean_session_id, clean_text,
-    clean_worktree, member_of,
+    clean_worktree, member_of, orchestrators_above,
 };
 use super::team_store::{
     clear_tasks_of, insert_exchange, insert_member, insert_message, insert_pair, mark_message_read,
@@ -179,12 +179,20 @@ impl TeamService {
                 ..planned.member
             })
             .collect();
+        // A member shows on the map only when every orchestrator above it is open, so they open with it.
+        let opened: Vec<String> = written
+            .iter()
+            .flat_map(|member| orchestrators_above(&members, member))
+            .collect();
         self.database.team_transaction(|connection| {
             for member in &written {
                 insert_member(connection, member)?;
             }
             for member in &written {
                 replace_dependencies(connection, &member.id, &member.depends_on)?;
+            }
+            for id in &opened {
+                update_expanded(connection, id, true)?;
             }
             Ok(())
         })?;

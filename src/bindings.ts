@@ -199,9 +199,9 @@ export const commands = {
 	/**  Chooses what closing the app does with the daemon's sessions, before the window closes. */
 	prepareQuit: (keepSessions: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("prepare_quit", { keepSessions })),
 	/**
-	 *  Starts the output stream of a session to `on_output` and returns what it printed so far.
-	 *  The channel is attached first, so a chunk printed meanwhile is in both and the view skips the
-	 *  repeat by its `seq`; attached second, it could fall in the gap between them.
+	 *  Starts the output stream of a session to `on_output` and returns what it printed so far, behind the
+	 *  state its dropped output left. The channel is attached first, so a chunk printed meanwhile is in both
+	 *  and the view skips the repeat by its `seq`; attached second, it could fall in the gap between them.
 	 * 
 	 *  Not `async`: Tauri runs it in the order the page sent it. Two attaches in a row (a view that is
 	 *  mounted twice) must end with the second one attached, which tasks racing on a pool would not promise.

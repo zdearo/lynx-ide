@@ -59,15 +59,20 @@ function reducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+/** Longest a terminal holds its size for a card's change, if the card's transition never ends. */
+const HOLD_FALLBACK_MS = 1000;
+
 /**
  * A node's size is changing: its card animates it in the DOM, and its terminal holds the process's size until the
- * change lands, so the process gets the final size once.
+ * card lands (its transition ends), so the process gets the final size once.
  */
 function holdForChange(id: string) {
+  // Without motion there is no transition to wait for: the size changes at once.
+  if (reducedMotion()) return;
   useTeamStore.getState().setMoving(id, true);
   window.setTimeout(
     () => useTeamStore.getState().setMoving(id, false),
-    CARD_OPEN_MS,
+    HOLD_FALLBACK_MS,
   );
 }
 
@@ -238,6 +243,7 @@ export function TeamCanvas({
   extraRows,
   siblingOrder,
   pairs,
+  selected,
 }: {
   members: readonly TeamMember[];
   expanded: readonly string[];
@@ -245,6 +251,8 @@ export function TeamCanvas({
   extraRows: Readonly<Record<string, number>>;
   siblingOrder: SiblingOrder;
   pairs: readonly TeamPair[];
+  /** Whether this team is the one on the screen. A team kept hidden keeps its camera and does not fit or take keys. */
+  selected: boolean;
 }) {
   const surface = useRef<HTMLDivElement>(null);
   const cards = useRef(new Map<string, HTMLDivElement>());
@@ -397,6 +405,7 @@ export function TeamCanvas({
     placed,
     shown,
     sizeNowOf,
+    selected,
   });
   useEffect(() => {
     latest.current = {
@@ -409,6 +418,7 @@ export function TeamCanvas({
       placed,
       shown,
       sizeNowOf,
+      selected,
     };
   });
   useEffect(() => {
@@ -546,11 +556,7 @@ export function TeamCanvas({
       if (event.target === cy) useTeamStore.getState().select(null);
     });
 
-    useTeamStore.setState({
-      fitMap: () => cy.fit(cy.nodes(), FIT_PADDING),
-    });
     return () => {
-      useTeamStore.setState({ fitMap: null });
       canvas.current = null;
       theme.disconnect();
       scheme.removeEventListener("change", restyle);
@@ -558,6 +564,34 @@ export function TeamCanvas({
       cy.destroy();
     };
   }, []);
+
+  // The fit button fits the team on the screen. A team kept hidden must not take it from the one that is shown.
+  useEffect(() => {
+    if (!selected) return;
+    const fit = () => {
+      const cy = canvas.current;
+      if (cy) cy.fit(cy.nodes(), FIT_PADDING);
+    };
+    useTeamStore.setState({ fitMap: fit });
+    return () => {
+      if (useTeamStore.getState().fitMap === fit) {
+        useTeamStore.setState({ fitMap: null });
+      }
+    };
+  }, [selected]);
+
+  // Focus leaves a team that is hidden: the keys go to the team on the screen, not to a card's terminal out of sight.
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const focused = document.activeElement;
+    if (
+      !selected &&
+      focused instanceof HTMLElement &&
+      root.current?.contains(focused)
+    ) {
+      focused.blur();
+    }
+  }, [selected]);
 
   // The camera: a terminal that opens is centred at zoom 1; when the terminals close, or the map is expanded, the map
   // fits the team. The cards move and grow over the same time, so the camera goes where they end.
@@ -570,6 +604,8 @@ export function TeamCanvas({
     const before = openedBefore.current;
     openedBefore.current = openList;
     if (!cy || !element || sameIds(before, openList)) return;
+    // A team kept hidden keeps its camera: it is centred when it is shown, not while it is out of sight.
+    if (!latest.current.selected) return;
     const measured = element.getBoundingClientRect();
     const bounds = { width: measured.width, height: measured.height };
     const { placed: places, sizeNowOf: sizeAt } = latest.current;
@@ -707,10 +743,9 @@ export function TeamCanvas({
     .map((member) => member.id)
     .join("|");
   useEffect(() => {
-    const timer = window.setTimeout(
-      () => useTeamStore.getState().fitMap?.(),
-      50,
-    );
+    const timer = window.setTimeout(() => {
+      if (latest.current.selected) useTeamStore.getState().fitMap?.();
+    }, 50);
     return () => window.clearTimeout(timer);
   }, [cardIds]);
 
@@ -906,6 +941,8 @@ export function TeamCanvas({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Delete" && event.key !== "Backspace") return;
+      // A team kept hidden has picked lines of its own; the keys are for the team on the screen.
+      if (!latest.current.selected) return;
       if (
         (event.target as HTMLElement).closest(
           "input, textarea, [contenteditable='true']",
@@ -941,7 +978,12 @@ export function TeamCanvas({
   }, [spot]);
 
   return (
-    <div className="relative size-full" aria-label={copy.team.mapLabel}>
+    <div
+      ref={root}
+      role="group"
+      className="relative size-full"
+      aria-label={copy.team.mapLabel}
+    >
       {/* Cytoscape sets the position of its own container, so the box that sizes it is this one. */}
       <div className="absolute inset-0">
         <div ref={surface} className="size-full" />
@@ -979,11 +1021,21 @@ export function TeamCanvas({
                 else cards.current.delete(member.id);
               }}
               onPointerDown={(event) => startDrag(member.id, event)}
+              // The card's own size transition ended: its terminal may take the final size. Not a child's.
+              onTransitionEnd={(event) => {
+                if (event.target === event.currentTarget)
+                  useTeamStore.getState().setMoving(member.id, false);
+              }}
               onClickCapture={(event) => {
                 // The click that ends a drag is not a pick.
                 if (!dropped.current) return;
                 dropped.current = false;
                 event.stopPropagation();
+              }}
+              // The card's size from its first render: a card shown again starts at its size, not at its natural one.
+              style={{
+                width: sizeNowOf(member.id).width,
+                height: sizeNowOf(member.id).height,
               }}
               className={cn(
                 "group pointer-events-auto absolute top-0 left-0 origin-top-left transition-[width,height] duration-[280ms] ease-in-out motion-reduce:transition-none",

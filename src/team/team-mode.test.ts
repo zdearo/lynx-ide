@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands } from "@/bindings";
-import { teamModeOf, useTeamStore } from "@/team/team-store";
+import { teamModeOf, teamWorktreesOf, useTeamStore } from "@/team/team-store";
 import { startTerminal } from "@/terminal/terminal-actions";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { ok, session } from "@/test-support";
@@ -47,5 +47,17 @@ describe("the central view", () => {
     await expect(startTerminal(WT, null)).resolves.toBe(true);
 
     expect(mode()).toBe("terminal");
+  });
+});
+
+describe("the teams kept on the map", () => {
+  it("are the worktrees whose central view is the team, so they stay mounted", () => {
+    expect(
+      teamWorktreesOf({
+        [WT]: "team",
+        "/work/web": "terminal",
+        "/work/docs": "team",
+      }),
+    ).toEqual([WT, "/work/docs"]);
   });
 });

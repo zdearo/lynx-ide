@@ -284,12 +284,23 @@ impl TerminalSession {
         let _ = self.monitor.input.send(AgentInput::Seen);
     }
 
+    /// The whole buffered output, for reads that need all of it.
     pub fn snapshot(&self) -> TerminalSnapshot {
+        self.capture(ScrollbackBuffer::contents)
+    }
+
+    /// What a view that attaches now is given: the state the dropped output left, then the output.
+    /// See `ScrollbackBuffer::replay`.
+    pub fn replay(&self) -> TerminalSnapshot {
+        self.capture(ScrollbackBuffer::replay)
+    }
+
+    fn capture(&self, data: impl FnOnce(&ScrollbackBuffer) -> String) -> TerminalSnapshot {
         let exit = *SessionShared::lock(&self.shared.exit);
         let output = SessionShared::lock(&self.shared.output);
         let (cols, rows) = *SessionShared::lock(&self.shared.size);
         TerminalSnapshot {
-            data: output.scrollback.contents(),
+            data: data(&output.scrollback),
             last_seq: output.seq,
             running: exit.is_none(),
             exit_code: exit.flatten(),

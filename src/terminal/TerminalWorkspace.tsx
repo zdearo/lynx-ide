@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useMemo } from "react";
 
 import { FolderSimpleIcon } from "@phosphor-icons/react";
 
@@ -23,7 +23,7 @@ import { TerminalTabs } from "@/terminal/TerminalTabs";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
 import { TerminalView } from "@/terminal/TerminalView";
 import { TeamTopBar } from "@/team/TeamTopBar";
-import { teamModeOf, useTeamStore } from "@/team/team-store";
+import { teamModeOf, teamWorktreesOf, useTeamStore } from "@/team/team-store";
 import { copy } from "@/ui-copy";
 import {
   useSelectedWorktree,
@@ -65,8 +65,16 @@ export function TerminalWorkspace({
   const hasSessions = sessions.some((session) => session.worktreePath === path);
   const openFile = useEditorStore((state) => activeFileOf(state, path));
   const browserOpen = useBrowserStore((state) => state.open);
-  const teamMode =
-    useTeamStore((state) => teamModeOf(state.modeByWorktree, path)) === "team";
+  const modeByWorktree = useTeamStore((state) => state.modeByWorktree);
+  const teamMode = teamModeOf(modeByWorktree, path) === "team";
+  const teamPaths = useMemo(
+    () => teamWorktreesOf(modeByWorktree),
+    [modeByWorktree],
+  );
+  // A worktree whose team is kept on the map has its terminals in the cards, so they are not mounted here too.
+  const tabSessions = sessions.filter(
+    (session) => teamModeOf(modeByWorktree, session.worktreePath) !== "team",
+  );
   // In the Bots view the main area is the chat with the picked bot; the terminals stay mounted, hidden.
   const botsView = useNavigationStore((state) => state.activeView === "bots");
   const bot = useBotsStore(selectedBotOf);
@@ -125,7 +133,7 @@ export function TerminalWorkspace({
         {/* Every session stays mounted so switching worktrees keeps scroll position and screen state. In team mode the
             team's cards draw their terminals instead, so a session has one view at a time. */}
         {!teamMode &&
-          sessions.map((session) => {
+          tabSessions.map((session) => {
             const shown =
               session.id === activeId && !openFile && !browserOpen && !botsView;
             return (
@@ -149,13 +157,25 @@ export function TerminalWorkspace({
             </Suspense>
           </div>
         )}
-        {!botsView && teamMode && (
-          <div className="absolute inset-0 bg-background">
-            <Suspense fallback={null}>
-              <TeamView />
-            </Suspense>
-          </div>
-        )}
+        {/* A team kept on the map stays mounted while the sidebar is on another worktree: coming back to it only shows it
+            again, instead of building its map and its terminals once more. */}
+        {teamPaths.map((teamPath) => {
+          const shown = !botsView && teamMode && teamPath === path;
+          return (
+            <div
+              key={teamPath}
+              className={
+                shown
+                  ? "absolute inset-0 bg-background"
+                  : "absolute inset-0 invisible"
+              }
+            >
+              <Suspense fallback={null}>
+                <TeamView worktree={teamPath} selected={shown} />
+              </Suspense>
+            </div>
+          );
+        })}
         {!botsView &&
           loaded &&
           selected &&

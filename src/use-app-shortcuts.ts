@@ -2,12 +2,22 @@ import { useEffect } from "react";
 
 import { useNavigationStore } from "@/navigation/navigation-store";
 import { matchShortcut } from "@/platform-shortcuts";
-import { useTeamStore } from "@/team/team-store";
+import { teamModeOf, useTeamStore } from "@/team/team-store";
 import {
   closeActiveTerminal,
   startShellInSelectedWorktree,
 } from "@/terminal/terminal-actions";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
+
+/** The tabs are not on the screen while the team is, so the close shortcut would end a session out of sight. */
+function teamIsShown() {
+  return (
+    teamModeOf(
+      useTeamStore.getState().modeByWorktree,
+      useWorkspaceStore.getState().selectedWorktreePath,
+    ) === "team"
+  );
+}
 
 function openNewWorktreeForSelection() {
   const { repos, worktrees, selectedWorktreePath, openNewWorktree } =
@@ -28,13 +38,7 @@ export function useAppShortcuts(
     const onKeyDown = (event: KeyboardEvent) => {
       const action = matchShortcut(event);
       if (!action) return;
-      // With the team's modal open, its close button is the way out: the shortcut would close a session behind it.
-      if (
-        action === "closeTerminal" &&
-        useTeamStore.getState().openIds.length > 0
-      ) {
-        return;
-      }
+      if (action === "closeTerminal" && teamIsShown()) return;
       event.preventDefault();
       event.stopPropagation();
 

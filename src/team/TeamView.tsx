@@ -1,4 +1,5 @@
 import { memo, useEffect } from "react";
+
 import { toast } from "sonner";
 
 import { useBotsStore } from "@/bots/bots-store";
@@ -9,21 +10,27 @@ import { TeamCanvas } from "@/team/TeamCanvas";
 import { TeamNotes } from "@/team/TeamNotes";
 import {
   restoreOpenTerminals,
-  useTeamMembers,
+  useTeamMembersOf,
   useTeamStore,
 } from "@/team/team-store";
 import { copy } from "@/ui-copy";
-import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 /**
- * The team of the worktree on the sidebar, as an org chart. Escape clears the pick. The terminal modal is drawn
- * beside this view, not inside it.
+ * The team of one worktree, as an org chart. Escape clears the pick, except in a card's terminal: xterm cancels the keys
+ * it sends to the agent, so Escape never reaches this view there. A team that is not on the screen stays mounted,
+ * hidden, so coming back to it keeps its map and its open terminals as they were.
  */
 export const TeamView = memo(TeamViewBase);
 
-function TeamViewBase() {
-  const members = useTeamMembers();
-  const worktree = useWorkspaceStore((state) => state.selectedWorktreePath);
+function TeamViewBase({
+  worktree,
+  selected,
+}: {
+  worktree: string;
+  /** Whether this is the worktree on the sidebar, the one the screen shows. */
+  selected: boolean;
+}) {
+  const members = useTeamMembersOf(worktree);
   const loaded = useTeamStore((state) => state.loaded);
   const expanded = useTeamStore((state) => state.expanded);
   const selectedId = useTeamStore((state) => state.selectedId);
@@ -63,22 +70,21 @@ function TeamViewBase() {
       <div className="relative min-h-0 flex-1">
         {loaded &&
           (members.length > 0 ? (
-            <>
-              <TeamCanvas
-                members={members}
-                expanded={expanded}
-                selectedId={selectedId}
-                extraRows={extraRows}
-                siblingOrder={siblingOrder}
-                pairs={pairs}
-              />
-            </>
+            <TeamCanvas
+              members={members}
+              expanded={expanded}
+              selectedId={selectedId}
+              extraRows={extraRows}
+              siblingOrder={siblingOrder}
+              pairs={pairs}
+              selected={selected}
+            />
           ) : (
-            <TeamEmpty hasWorktree={worktree !== null} />
+            <TeamEmpty hasWorktree />
           ))}
       </div>
-      {loaded && <TeamNotes />}
-      <TeamAddDialog />
+      {loaded && selected && <TeamNotes />}
+      {selected && <TeamAddDialog />}
     </div>
   );
 }

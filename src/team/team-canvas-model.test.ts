@@ -4,7 +4,6 @@ import type { TeamMember } from "@/team/team-fixtures";
 import { TEAM_CARD_HEIGHT, TEAM_CARD_WIDTH } from "@/team/team-layout";
 import {
   boxOf,
-  centredPan,
   fitView,
   isInView,
   CARD_DEFAULT_SIZE,
@@ -114,11 +113,6 @@ describe("a card's size", () => {
 
 describe("open card view", () => {
   const area = { width: 1000, height: 800 };
-
-  it("centres a map point at zoom 1", () => {
-    expect(centredPan({ x: 500, y: 400 }, area)).toEqual({ x: 0, y: 0 });
-    expect(centredPan({ x: 1200, y: 100 }, area)).toEqual({ x: -700, y: 300 });
-  });
 
   it("builds a card's box from its centre and size", () => {
     expect(boxOf({ x: 10, y: 10 }, { width: 20, height: 10 })).toEqual({

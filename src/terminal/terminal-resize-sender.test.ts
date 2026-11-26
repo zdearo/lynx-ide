@@ -8,7 +8,9 @@ function controlledSend() {
   const releases: (() => void)[] = [];
   const send = ({ cols, rows }: { cols: number; rows: number }) => {
     sent.push(`${cols}x${rows}`);
-    return new Promise<void>((resolve) => releases.push(resolve));
+    return new Promise<boolean>((resolve) =>
+      releases.push(() => resolve(true)),
+    );
   };
   return { sent, send, release: () => releases.shift()?.() };
 }
@@ -42,7 +44,7 @@ describe("createResizeSender", () => {
       sent.push(String(cols));
       return cols === 100
         ? Promise.reject(new Error("gone"))
-        : Promise.resolve();
+        : Promise.resolve(true);
     });
 
     resize({ cols: 100, rows: 30 });
@@ -60,6 +62,7 @@ describe("createResizeSender hold", () => {
     const sent: string[] = [];
     const resize = createResizeSender(async ({ cols, rows }) => {
       sent.push(`${cols}x${rows}`);
+      return true;
     });
 
     resize.hold(true);
@@ -77,6 +80,7 @@ describe("createResizeSender hold", () => {
     const sent: string[] = [];
     const resize = createResizeSender(async ({ cols, rows }) => {
       sent.push(`${cols}x${rows}`);
+      return true;
     });
 
     resize.hold(true);
@@ -91,6 +95,7 @@ describe("createResizeSender sizes", () => {
     const sent: Array<{ cols: number; rows: number }> = [];
     const resize = createResizeSender(async (size) => {
       sent.push(size);
+      return true;
     });
 
     resize({ cols: 80, rows: 24 });
@@ -106,6 +111,7 @@ describe("createResizeSender sizes", () => {
     const sent: Array<{ cols: number; rows: number }> = [];
     const resize = createResizeSender(async (size) => {
       sent.push(size);
+      return true;
     });
 
     resize({ cols: 80, rows: 24 });
@@ -121,5 +127,57 @@ describe("createResizeSender sizes", () => {
       { cols: 100, rows: 24 },
       { cols: 100, rows: 24 },
     ]);
+  });
+});
+
+describe("createResizeSender acceptance", () => {
+  it("asks for a size again when the process refused it", async () => {
+    const sent: string[] = [];
+    let accept = false;
+    const resize = createResizeSender(async ({ cols, rows }) => {
+      sent.push(`${cols}x${rows}`);
+      return accept;
+    });
+
+    resize({ cols: 100, rows: 30 });
+    await flush();
+    accept = true;
+    resize({ cols: 100, rows: 30 });
+    await flush();
+
+    expect(sent).toEqual(["100x30", "100x30"]);
+  });
+
+  it("sends nothing when a hold ends on the size the process already has", async () => {
+    const sent: string[] = [];
+    const resize = createResizeSender(async ({ cols, rows }) => {
+      sent.push(`${cols}x${rows}`);
+      return true;
+    });
+
+    resize({ cols: 100, rows: 30 });
+    await flush();
+    resize.hold(true);
+    resize({ cols: 120, rows: 30 });
+    resize({ cols: 100, rows: 30 });
+    resize.hold(false);
+    await flush();
+
+    expect(sent).toEqual(["100x30"]);
+  });
+
+  it("does not send again a size the process accepted", async () => {
+    const sent: string[] = [];
+    const resize = createResizeSender(async ({ cols, rows }) => {
+      sent.push(`${cols}x${rows}`);
+      return true;
+    });
+
+    resize({ cols: 100, rows: 30 });
+    await flush();
+    resize({ cols: 100, rows: 30 });
+    await flush();
+
+    expect(sent).toEqual(["100x30"]);
   });
 });

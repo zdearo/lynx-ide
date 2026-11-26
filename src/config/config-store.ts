@@ -76,6 +76,14 @@ export function useUsageConfig(): UsageConfig {
   );
 }
 
+/** The terminal settings, for code outside React: the registry of terminals reads them when it makes one. */
+export function currentTerminalConfig(): TerminalConfig {
+  return (
+    useConfigStore.getState().snapshot?.config.terminal ??
+    DEFAULT_TERMINAL_CONFIG
+  );
+}
+
 export function useTerminalConfig(): TerminalConfig {
   return useConfigStore(
     (state) => state.snapshot?.config.terminal ?? DEFAULT_TERMINAL_CONFIG,

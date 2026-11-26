@@ -12,7 +12,6 @@ import {
   statusOfWorker,
   useTeamStore,
   watchTeam,
-  isTerminalOpen,
   OPEN_PER_FRAME,
 } from "@/team/team-store";
 import { requestCloseTerminal, resumeLine } from "@/terminal/terminal-actions";
@@ -1397,10 +1396,5 @@ describe("team open terminals", () => {
     frames.runAll();
     expect(store().openIds).not.toContain(last);
     expect(store().openIds).toHaveLength(shown.length - 1);
-  });
-
-  it("tells whether a member's terminal is open", () => {
-    expect(isTerminalOpen({ openIds: ["builder"] }, "builder")).toBe(true);
-    expect(isTerminalOpen({ openIds: ["builder"] }, "lead")).toBe(false);
   });
 });

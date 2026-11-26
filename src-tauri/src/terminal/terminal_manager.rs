@@ -447,6 +447,11 @@ impl TerminalManager {
         Ok(self.session(id)?.snapshot())
     }
 
+    /// What a view that attaches is replayed; see `TerminalSession::replay`.
+    pub fn replay(&self, id: &str) -> Result<TerminalSnapshot, TerminalError> {
+        Ok(self.session(id)?.replay())
+    }
+
     pub fn write(&self, id: &str, data: &str) -> Result<(), TerminalError> {
         let session = self.session(id)?;
         session.write(data)?;

@@ -6701,6 +6701,22 @@ await session("?mock=full", 1400, 860, async (p) => {
   );
 });
 
+await session("?mock=restore", 1200, 760, async (p) => {
+  await p.getByRole("button", { name: /^feat\/auth/ }).click();
+  await settle(p, 500);
+  await p.getByRole("tab", { name: /Login tests/ }).click();
+  await settle(p, 400);
+  check(
+    "a terminal that was open when the app quit shows Restore",
+    (await p
+      .getByText("This terminal was open when the app closed.")
+      .count()) === 1 &&
+      (await p
+        .getByRole("button", { name: "Restore", exact: true })
+        .count()) === 1,
+  );
+});
+
 await runQueuedSessions();
 console.log(results.join("\n"));
 await browser.close();

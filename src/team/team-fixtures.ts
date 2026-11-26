@@ -63,7 +63,7 @@ export interface TeamAgent extends TeamMemberBase {
   harness: HarnessId | null;
   /**
    * The terminal session the agent runs in, cleared when it closes. Null for most seeded fixtures; the login tests one
-   * names a session that ended, which the mock lists as resumable.
+   * names a session that was open when the app quit, which the mock lists as restorable.
    */
   sessionId: string | null;
 }
@@ -169,7 +169,7 @@ export const TEAM_MEMBERS: readonly TeamMember[] = [
     worktree: TEAM_AUTH_WORKTREE,
     role: "Tester",
     harness: "claude",
-    // Its session ended: the mock lists it as resumable, so its terminal shows Resume.
+    // Its session was open when the app quit: the `restore` mock lists it as restorable, so its terminal shows Restore.
     sessionId: "ended-login-tests",
     status: "idle",
     parentId: "builder",

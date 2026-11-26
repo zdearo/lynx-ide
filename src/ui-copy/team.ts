@@ -75,8 +75,6 @@ export const teamCopy = {
     terminalClosed: "This agent's terminal is closed.",
     terminalDescription:
       "The agent's terminal, the same session the terminal tabs show.",
-    resume: "Resume",
-    resumeHint: "Reopens this agent's conversation in its worktree.",
     startAgain: "Start again",
     startAgainHint:
       "There is no conversation to reopen, so a new agent starts in its worktree.",

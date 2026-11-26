@@ -45,6 +45,8 @@ const session = (id: string, running = true): TerminalInfo => ({
   startedAt: 0,
   harness: "claude",
   agentStatus: "idle",
+  restorable: false,
+  title: null,
 });
 
 describe("teamCounts", () => {

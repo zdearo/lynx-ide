@@ -10,7 +10,6 @@ import type { TeamAgent, TeamBot, TeamMember } from "@/team/team-fixtures";
 import { botOf, isSeededMember, useTeamStore } from "@/team/team-store";
 import { TerminalView } from "@/terminal/TerminalView";
 import { useTerminalStore } from "@/terminal/terminal-store";
-import { useResumableStore } from "@/workspace/resumable-store";
 import { copy } from "@/ui-copy";
 
 /**
@@ -87,22 +86,11 @@ function AgentBody({
 }
 
 /**
- * The body of an agent whose session is not open. It offers the agent again: its own conversation when the list of
- * ended sessions still has it, else a new agent in the same worktree. The list is read first, so the label is right.
+ * The body of an agent whose session is gone for good: a session that was open when the app quit is restored from its
+ * own screen instead. It starts a new agent in the same worktree.
  */
 function ClosedAgentBody({ member }: { member: TeamAgent }) {
-  const refresh = useResumableStore((state) => state.refresh);
-  const resumable = useResumableStore((state) =>
-    state.byWorktree[member.worktree]?.find(
-      (item) => item.id === member.sessionId,
-    ),
-  );
-  const [listed, setListed] = useState(false);
   const [starting, setStarting] = useState(false);
-
-  useEffect(() => {
-    void refresh(member.worktree).then(() => setListed(true));
-  }, [refresh, member.worktree]);
 
   const revive = () => {
     setStarting(true);
@@ -117,16 +105,12 @@ function ClosedAgentBody({ member }: { member: TeamAgent }) {
       <p className="text-meta text-muted-foreground">
         {copy.team.terminalClosed}
       </p>
-      {listed && (
-        <>
-          <Button size="sm" disabled={starting} onClick={revive}>
-            {resumable ? copy.team.resume : copy.team.startAgain}
-          </Button>
-          <p className="text-meta text-muted-foreground">
-            {resumable ? copy.team.resumeHint : copy.team.startAgainHint}
-          </p>
-        </>
-      )}
+      <Button size="sm" disabled={starting} onClick={revive}>
+        {copy.team.startAgain}
+      </Button>
+      <p className="text-meta text-muted-foreground">
+        {copy.team.startAgainHint}
+      </p>
     </div>
   );
 }

@@ -41,6 +41,8 @@ export function session(
     startedAt: 1_800_000_000,
     harness: null,
     agentStatus: null,
+    restorable: false,
+    title: null,
     ...overrides,
   };
 }

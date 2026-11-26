@@ -53,6 +53,8 @@ const session = (worktreePath: string, running: boolean): TerminalInfo => ({
   startedAt: 0,
   harness: null,
   agentStatus: null,
+  restorable: false,
+  title: null,
 });
 
 /** The tree as nested names, so a test reads the way the sidebar would show it. */

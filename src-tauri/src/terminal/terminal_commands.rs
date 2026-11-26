@@ -3,13 +3,14 @@ use std::sync::Arc;
 use tauri::State;
 use tauri::ipc::Channel;
 
+use crate::config::config_store::ConfigStore;
 use crate::error::{AppError, IpcError};
 use crate::orchestration::agent_wake::AgentWakes;
 use crate::process::blocking_task::run_blocking;
 
 use super::daemon_host::DaemonStatus;
 use super::output_channels::{OutputBytes, OutputChannels};
-use super::terminal_manager::{ResumableSession, TerminalManager};
+use super::terminal_manager::TerminalManager;
 use super::terminal_session::{TerminalInfo, TerminalSnapshot};
 
 #[tauri::command]
@@ -55,24 +56,19 @@ pub async fn hibernate_terminal(
     run_blocking(move || Ok(manager.hibernate(&id)?)).await
 }
 
-/// Takes an ended agent conversation off the resumable list. The agent keeps the conversation.
+/// Starts again a session that was open when the app stopped, under the same id. Refused when the
+/// session does not wait to be restored.
 #[tauri::command]
 #[specta::specta]
-pub async fn forget_resumable_session(
+pub async fn restore_terminal(
     manager: State<'_, TerminalManager>,
+    config: State<'_, Arc<ConfigStore>>,
     id: String,
-) -> Result<(), IpcError> {
+) -> Result<TerminalInfo, IpcError> {
     let manager = manager.inner().clone();
-    run_blocking(move || Ok(manager.forget_resumable(&id)?)).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn list_resumable_sessions(
-    manager: State<'_, TerminalManager>,
-    worktree_path: String,
-) -> Result<Vec<ResumableSession>, IpcError> {
-    Ok(manager.resumable(&worktree_path))
+    let agents = config.config().agents;
+    run_blocking(move || Ok(manager.relaunch(&id, agents.launch_mode, &agents.launch_arguments)?))
+        .await
 }
 
 /// Chooses what closing the app does with the daemon's sessions, before the window closes.

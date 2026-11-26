@@ -23,6 +23,7 @@ pub mod mcp_cleanup;
 pub mod omp_hooks;
 pub mod opencode_hooks;
 pub mod plugin_file;
+pub mod session_title;
 pub mod skill_file;
 pub mod title_scanner;
 pub mod tool_catalog;

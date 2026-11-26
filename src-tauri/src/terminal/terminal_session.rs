@@ -62,6 +62,10 @@ pub struct TerminalInfo {
     pub harness: Option<HarnessId>,
     /// The agent's status while it runs; None for a plain shell or an exited session.
     pub agent_status: Option<AgentStatus>,
+    /// Open when the app quit, so it can be relaunched with the same id. Its process is not running.
+    pub restorable: bool,
+    /// The name the agent keeps for its conversation, when it has one.
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -275,6 +279,9 @@ impl TerminalSession {
             } else {
                 None
             },
+            restorable: false,
+            // The manager reads the title from the session's record, which the session does not hold.
+            title: None,
         }
     }
 

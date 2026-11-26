@@ -18,7 +18,6 @@ import type {
   ChannelSummary,
   ChatGptStatus,
   ChatMessage,
-  ResumableSession,
   RunningCommand,
   ThreadSummary,
   ConfigSnapshot,
@@ -526,6 +525,8 @@ function seedBenchmark(seeded: ReturnType<typeof seedRepos>): void {
 }
 
 export function installMockTauri(scenario: string): void {
+  // `restore` is the full mock plus a session that was open when the app quit.
+  const full = scenario === "full" || scenario === "restore";
   const seeded =
     scenario === "empty" ? { repos: [], worktrees: {} } : seedRepos();
   if (scenario === "bench") seedBenchmark(seeded);
@@ -549,19 +550,18 @@ export function installMockTauri(scenario: string): void {
   // The ChatGPT sign-in in miniature: the browser step is skipped, and the answer comes a moment later.
   // The bots in miniature: the list starts empty, as a new install does, and makes are kept here. The full
   // mock has one bot, the Team's Lead in the docs team.
-  let mockBots: BotSummary[] =
-    scenario === "full"
-      ? [
-          {
-            id: "lead",
-            name: "Lead",
-            color: "indigo",
-            provider: "claude",
-            model: "sonnet",
-            team: null,
-          },
-        ]
-      : [];
+  let mockBots: BotSummary[] = full
+    ? [
+        {
+          id: "lead",
+          name: "Lead",
+          color: "indigo",
+          provider: "claude",
+          model: "sonnet",
+          team: null,
+        },
+      ]
+    : [];
   let mockChannels: ChannelSummary[] = [];
   const mockChannelConversations = new Map<string, ChatMessage[]>();
   // The instructions and the conversation of each mock bot, by id, as the backend keeps them.
@@ -721,21 +721,26 @@ export function installMockTauri(scenario: string): void {
   };
 
   let nextSessionId = 0;
-  const sessions: TerminalInfo[] = [];
-  // Ended agent sessions per worktree, as the resumable list shows them. The login tests agent's session ended here.
-  const resumable: Record<string, ResumableSession[]> =
-    scenario === "full"
-      ? {
-          [TEAM_AUTH_WORKTREE]: [
-            {
-              id: "ended-login-tests",
-              harness: "claude",
-              resumeArguments: ["--resume", "7c1f0e2a-login-tests"],
-              endedAt: Math.floor(Date.now() / 1000) - 1800,
-            },
-          ],
-        }
-      : {};
+  // The login tests agent's session was open when the app quit, so it waits to be restored (`restore` only).
+  const sessions: TerminalInfo[] =
+    scenario === "restore"
+      ? [
+          {
+            id: "ended-login-tests",
+            worktreePath: TEAM_AUTH_WORKTREE,
+            command: "claude",
+            shell: "zsh",
+            running: false,
+            hibernated: false,
+            exitCode: null,
+            startedAt: Math.floor(Date.now() / 1000) - 1800,
+            harness: "claude",
+            agentStatus: null,
+            restorable: true,
+            title: "Login tests",
+          },
+        ]
+      : [];
   const transcripts = new Map<string, string>();
   const seq = new Map<string, number>();
 
@@ -792,41 +797,40 @@ export function installMockTauri(scenario: string): void {
   };
   // Every tab of the browser, whatever its owner. The full mock opens with the first one shown.
   const BROWSER_WORKTREE = "/home/dev/lynx-ide-worktrees/feat-auth";
-  const mockPages: BrowserPageInfo[] =
-    scenario === "full"
-      ? [
-          {
-            id: 1,
-            owner: { kind: "workspace", worktreePath: BROWSER_WORKTREE },
-            url: "http://localhost:5173/",
-            title: "Dashboard · Vite",
-            loading: false,
-            agent: null,
-            detached: false,
-            agentPage: false,
-          },
-          {
-            id: 2,
-            owner: { kind: "workspace", worktreePath: BROWSER_WORKTREE },
-            url: "https://github.com/zdearo/lynx-ide/pull/4",
-            title: "Pull request #4 · lynx-ide",
-            loading: true,
-            agent: null,
-            detached: false,
-            agentPage: false,
-          },
-          {
-            id: 3,
-            owner: { kind: "workspace", worktreePath: BROWSER_WORKTREE },
-            url: "https://docs.example.com/api/tokens",
-            title: "API tokens · Docs",
-            loading: false,
-            agent: "claude",
-            detached: false,
-            agentPage: true,
-          },
-        ]
-      : [];
+  const mockPages: BrowserPageInfo[] = full
+    ? [
+        {
+          id: 1,
+          owner: { kind: "workspace", worktreePath: BROWSER_WORKTREE },
+          url: "http://localhost:5173/",
+          title: "Dashboard · Vite",
+          loading: false,
+          agent: null,
+          detached: false,
+          agentPage: false,
+        },
+        {
+          id: 2,
+          owner: { kind: "workspace", worktreePath: BROWSER_WORKTREE },
+          url: "https://github.com/zdearo/lynx-ide/pull/4",
+          title: "Pull request #4 · lynx-ide",
+          loading: true,
+          agent: null,
+          detached: false,
+          agentPage: false,
+        },
+        {
+          id: 3,
+          owner: { kind: "workspace", worktreePath: BROWSER_WORKTREE },
+          url: "https://docs.example.com/api/tokens",
+          title: "API tokens · Docs",
+          loading: false,
+          agent: "claude",
+          detached: false,
+          agentPage: true,
+        },
+      ]
+    : [];
   const mockThumbnails = new Map<number, string>();
   for (const page of mockPages) mockThumbnails.set(page.id, MOCK_PICTURE);
   let nextPageId = mockPages.length + 1;
@@ -860,7 +864,7 @@ export function installMockTauri(scenario: string): void {
       state: structuredClone(browserState),
     });
   };
-  setShown(scenario === "full" ? 1 : null);
+  setShown(full ? 1 : null);
   const hookFiles: Record<string, { path: string; events: string[] }> = {
     claude: {
       path: "/home/dev/.claude/settings.json",
@@ -983,6 +987,8 @@ export function installMockTauri(scenario: string): void {
       startedAt: Math.floor(Date.now() / 1000) - startedSecondsAgo,
       harness: harnessOf(command),
       agentStatus: harnessOf(command) && running ? agentStatus : null,
+      restorable: false,
+      title: null,
     });
     transcripts.set(id, text);
     seq.set(id, 1);
@@ -1047,23 +1053,21 @@ export function installMockTauri(scenario: string): void {
 
   // The team in miniature. Its rules are the screen's own (team-hierarchy, team-pairs), so the mock refuses what
   // the backend refuses; the messages are the backend's for the common refusals.
-  let mockMembers: MockTeamMember[] =
-    scenario === "full"
-      ? structuredClone([...TEAM_MEMBERS, ...TEAM_DOCS_MEMBERS])
-      : [];
-  let mockPairs: TeamPair[] =
-    scenario === "full" ? TEAM_PAIRS.map(([from, to]) => ({ from, to })) : [];
+  let mockMembers: MockTeamMember[] = full
+    ? structuredClone([...TEAM_MEMBERS, ...TEAM_DOCS_MEMBERS])
+    : [];
+  let mockPairs: TeamPair[] = full
+    ? TEAM_PAIRS.map(([from, to]) => ({ from, to }))
+    : [];
   // The members whose branch is open: the seeded lead and docs bot, as the backend seeds a root orchestrator.
-  const mockExpanded = new Set<string>(
-    scenario === "full" ? [TEAM_ROOT_ID, "docs-lead"] : [],
-  );
+  const mockExpanded = new Set<string>(full ? [TEAM_ROOT_ID, "docs-lead"] : []);
   // Development only, for measuring the team's terminals (`?mock=full&perf=teamN`): N agents, each with a session
   // whose transcript is about a megabyte, the size a long agent session replays on attach. Extra agents are added to
   // the team under the lead when the team has fewer than N.
   const perfTeam = /^team(\d+)$/.exec(
     new URLSearchParams(window.location.search).get("perf") ?? "",
   );
-  if (scenario === "full" && perfTeam) {
+  if (full && perfTeam) {
     const count = Number(perfTeam[1]);
     const template = mockMembers.find((member) => member.kind === "agent");
     while (
@@ -2825,16 +2829,23 @@ export function installMockTauri(scenario: string): void {
           return null;
         case "hibernate_terminal":
           return null;
-        case "forget_resumable_session": {
-          // The backend drops every ended record of the conversation; each mock session is its own, so its id is enough.
+        case "restore_terminal": {
           const id = String(args.id);
-          for (const [path, rows] of Object.entries(resumable)) {
-            resumable[path] = rows.filter((row) => row.id !== id);
-          }
-          return null;
+          const session = sessions.find((s) => s.id === id);
+          if (!session?.restorable)
+            throw {
+              kind: "terminal",
+              message: `terminal ${id} cannot be restored`,
+            };
+          session.restorable = false;
+          session.running = true;
+          session.exitCode = null;
+          transcripts.set(
+            id,
+            `${green("dev@host")} $ ${session.command ?? ""}\r\n`,
+          );
+          return structuredClone(session);
         }
-        case "list_resumable_sessions":
-          return structuredClone(resumable[String(args.worktreePath)] ?? []);
         case "prepare_quit":
           return null;
         case "mark_agent_seen":

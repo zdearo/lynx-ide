@@ -45,6 +45,14 @@ pub struct TerminalClosed {
     pub id: String,
 }
 
+/// The agent named its conversation, so the tab and the Team node show the new name.
+#[derive(Debug, Clone, Serialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalTitleChanged {
+    pub id: String,
+    pub title: String,
+}
+
 /// Where a session reports output, exit and agent status. A trait so tests can observe sessions
 /// without a running Tauri app.
 pub trait TerminalEventSink: Send + Sync + 'static {
@@ -58,6 +66,8 @@ pub trait TerminalEventSink: Send + Sync + 'static {
     fn created(&self, _session: &TerminalInfo) {}
     /// The backend closed a session itself, so the screen drops it. Nothing by default.
     fn closed(&self, _id: &str) {}
+    /// The agent renamed its conversation, so the tab and the Team node show the new name. Nothing by default.
+    fn title_changed(&self, _id: &str, _title: &str) {}
 }
 
 pub struct TauriEventSink {
@@ -136,6 +146,14 @@ impl TerminalEventSink for TauriEventSink {
             id: id.to_owned(),
             harness,
             status,
+        }
+        .emit(&self.app);
+    }
+
+    fn title_changed(&self, id: &str, title: &str) {
+        let _ = TerminalTitleChanged {
+            id: id.to_owned(),
+            title: title.to_owned(),
         }
         .emit(&self.app);
     }

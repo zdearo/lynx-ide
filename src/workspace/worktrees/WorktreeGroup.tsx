@@ -2,7 +2,6 @@ import type { WorktreeInfo } from "@/bindings";
 import { cn } from "@/lib/utils";
 import type { AgentItem } from "@/agents/AgentGroup";
 import { AgentGroup } from "@/agents/AgentGroup";
-import { ResumableList } from "@/workspace/ResumableList";
 import { WorktreeRow } from "@/workspace/worktrees/WorktreeRow";
 
 interface WorktreeGroupProps {
@@ -61,7 +60,6 @@ export function WorktreeGroup({
           <AgentGroup worktreePath={worktree.path} agents={agents} />
         </div>
       )}
-      <ResumableList worktreePath={worktree.path} />
     </li>
   );
 }

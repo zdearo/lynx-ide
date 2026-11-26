@@ -9,7 +9,6 @@ import { errorMessage } from "@/lib/error-message";
 import { TERMINAL_PRESETS, type TerminalPreset } from "@/agents/agent-presets";
 import { useTeamStore } from "@/team/team-store";
 import { activeSessionId, useTerminalStore } from "@/terminal/terminal-store";
-import { resumeCommand } from "@/workspace/resume-command";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 
 /** The line that starts a preset's agent, as the backend builds it from Settings. Null for a shell. */
@@ -20,21 +19,12 @@ export async function launchLine(
   return commands.agentLaunchLine(preset.harness);
 }
 
-/**
- * The line that starts a harness's agent with its resume arguments after it, or with none for a fresh agent. Null when
- * the harness has no preset to start it from.
- */
-export async function resumeLine(
-  harness: HarnessId,
-  resumeArguments: readonly string[],
-): Promise<string | null> {
+/** The line that starts a harness's agent as a new conversation. Null when the harness has no preset. */
+export async function agentLine(harness: HarnessId): Promise<string | null> {
   const preset = TERMINAL_PRESETS.find(
     (candidate) => candidate.harness === harness,
   );
-  return resumeCommand(
-    preset ? await launchLine(preset) : null,
-    resumeArguments,
-  );
+  return preset ? launchLine(preset) : null;
 }
 
 /** Starts a preset in a worktree, with the launch arguments Settings sets for its agent. */
@@ -62,6 +52,17 @@ export async function startTerminal(
       description: errorMessage(error),
     });
     return false;
+  }
+}
+
+/** Starts again a session that was open when the app quit, under the same id. */
+export async function restoreSession(id: string): Promise<void> {
+  try {
+    await useTerminalStore.getState().restore(id);
+  } catch (error) {
+    toast.error(copy.terminal.restore.failed, {
+      description: errorMessage(error),
+    });
   }
 }
 

@@ -191,11 +191,13 @@ export const commands = {
 	 *  reason as the message, while it cannot sleep.
 	 */
 	hibernateTerminal: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("hibernate_terminal", { id })),
-	/**  Takes an ended agent conversation off the resumable list. The agent keeps the conversation. */
-	forgetResumableSession: (id: string) => typedError<null, IpcError>(__TAURI_INVOKE("forget_resumable_session", { id })),
+	/**
+	 *  Starts again a session that was open when the app stopped, under the same id. Refused when the
+	 *  session does not wait to be restored.
+	 */
+	restoreTerminal: (id: string) => typedError<TerminalInfo, IpcError>(__TAURI_INVOKE("restore_terminal", { id })),
 	/**  The line that starts an agent, with the launch mode and the arguments Settings hold now. */
 	agentLaunchLine: (harness: HarnessId) => __TAURI_INVOKE<string>("agent_launch_line", { harness }),
-	listResumableSessions: (worktreePath: string) => typedError<ResumableSession[], IpcError>(__TAURI_INVOKE("list_resumable_sessions", { worktreePath })),
 	/**  Chooses what closing the app does with the daemon's sessions, before the window closes. */
 	prepareQuit: (keepSessions: boolean) => typedError<null, IpcError>(__TAURI_INVOKE("prepare_quit", { keepSessions })),
 	/**
@@ -401,6 +403,7 @@ export const events = {
 	terminalClosed: makeEvent<TerminalClosed>("terminal-closed"),
 	terminalCreated: makeEvent<TerminalCreated>("terminal-created"),
 	terminalExit: makeEvent<TerminalExit>("terminal-exit"),
+	terminalTitleChanged: makeEvent<TerminalTitleChanged>("terminal-title-changed"),
 	updateStatusChanged: makeEvent<UpdateStatusChanged>("update-status-changed"),
 	worktreeChanged: makeEvent<WorktreeChanged>("worktree-changed"),
 	worktreeCreated: makeEvent<WorktreeCreated>("worktree-created"),
@@ -1318,16 +1321,6 @@ export type RequestKind =
 /**  Start agents, which run without asking for permission, in a registered project. */
 "workers";
 
-/**  An ended agent session that can be resumed in its worktree. */
-export type ResumableSession = {
-	id: string,
-	harness: HarnessId,
-	/**  The arguments that resume the conversation, after the agent's own command. */
-	resumeArguments: string[],
-	/**  Unix seconds when the session ended. `u32` because the contract has no 64-bit integers. */
-	endedAt: number | null,
-};
-
 export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
 
 export type ReviewSummary = {
@@ -1504,6 +1497,10 @@ export type TerminalInfo = {
 	harness: HarnessId | null,
 	/**  The agent's status while it runs; None for a plain shell or an exited session. */
 	agentStatus: AgentStatus | null,
+	/**  Open when the app quit, so it can be relaunched with the same id. Its process is not running. */
+	restorable: boolean,
+	/**  The name the agent keeps for its conversation, when it has one. */
+	title: string | null,
 };
 
 export type TerminalSnapshot = {
@@ -1515,6 +1512,12 @@ export type TerminalSnapshot = {
 	/**  The size the session runs at: the screen takes it before replaying `data`, which was drawn for it. */
 	cols: number,
 	rows: number,
+};
+
+/**  The agent named its conversation, so the tab and the Team node show the new name. */
+export type TerminalTitleChanged = {
+	id: string,
+	title: string,
 };
 
 /**  A thread as the screen lists it. Times are Unix seconds; `title` is empty until it has one. */

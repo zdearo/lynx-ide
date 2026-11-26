@@ -24,7 +24,7 @@ use crate::team::team_commands as team;
 use crate::team::team_events::TeamChanged;
 use crate::terminal::terminal_commands as terminal;
 use crate::terminal::terminal_events::{
-    AgentStatusChanged, TerminalClosed, TerminalCreated, TerminalExit,
+    AgentStatusChanged, TerminalClosed, TerminalCreated, TerminalExit, TerminalTitleChanged,
 };
 use crate::updates::update_commands as updates;
 use crate::updates::update_events::UpdateStatusChanged;
@@ -131,9 +131,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             terminal::pty_daemon_status,
             terminal::pty_daemon_memory,
             terminal::hibernate_terminal,
-            terminal::forget_resumable_session,
+            terminal::restore_terminal,
             agents::agent_launch_line,
-            terminal::list_resumable_sessions,
             terminal::prepare_quit,
             terminal::terminal_attach,
             terminal::write_terminal,
@@ -208,6 +207,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             TerminalClosed,
             TerminalExit,
             AgentStatusChanged,
+            TerminalTitleChanged,
             ConfigChanged,
             WorktreeChanged,
             WorktreeCreated,

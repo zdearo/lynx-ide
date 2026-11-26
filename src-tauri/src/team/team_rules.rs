@@ -134,6 +134,23 @@ fn is_under(members: &[TeamMember], member: &TeamMember, ancestor_id: &str) -> b
     false
 }
 
+/// The orchestrators `member` answers to, nearest first. A member shows on the map only when each of them is open.
+pub fn orchestrators_above(members: &[TeamMember], member: &TeamMember) -> Vec<String> {
+    let mut above = Vec::new();
+    let mut current = member.parent_id.as_deref();
+    // Bounded like `is_under`, so a corrupt loop ends.
+    for _ in 0..members.len() {
+        let Some(id) = current else {
+            break;
+        };
+        above.push(id.to_owned());
+        current = member_of(members, id)
+            .ok()
+            .and_then(|found| found.parent_id.as_deref());
+    }
+    above
+}
+
 /// Whether `child` may answer to `parent_id`: a bot never does, and the parent must be another
 /// orchestrator of the same worktree that is not under the child.
 pub fn check_parent(

@@ -817,6 +817,21 @@ fn a_new_root_orchestrator_starts_open_and_every_other_new_member_starts_closed(
 }
 
 #[test]
+fn a_member_added_under_closed_orchestrators_opens_them_so_it_shows() {
+    let (service, _dir) = service();
+    let lead = add(&service, agent("Lead", None, true));
+    let mid = add(&service, agent("Mid", Some(&lead.id), true));
+    service.set_expanded(&lead.id, false).expect("close");
+    service.set_expanded(&mid.id, false).expect("close");
+
+    let worker = add(&service, agent("Worker", Some(&mid.id), false));
+
+    assert!(get(&service, &lead.id).expanded);
+    assert!(get(&service, &mid.id).expanded);
+    assert!(!worker.expanded, "the new member itself starts closed");
+}
+
+#[test]
 fn set_expanded_is_read_back_from_the_snapshot_and_an_unknown_member_is_refused() {
     let (service, _dir) = service();
     let lead = add(&service, agent("Lead", None, true));

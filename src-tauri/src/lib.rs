@@ -366,12 +366,13 @@ pub fn run() {
                 Some(daemon),
                 Some(terminal_database),
             );
-            terminals.restore();
+            app.manage(terminals.clone());
             app.manage(Arc::new(orchestration::agent_wake::AgentWakes::new(
                 terminals.clone(),
                 reports,
             )));
-            app.manage(terminals);
+            // Restore after both are managed: a restored session's status event reaches them from its own thread.
+            terminals.restore();
             Ok(())
         })
         .build(tauri::generate_context!())

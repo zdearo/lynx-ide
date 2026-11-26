@@ -1,5 +1,6 @@
 //! Runs real shells on a PTY, so these are Unix-only.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -13,9 +14,11 @@ use crate::agents::activity::AgentStatus;
 use crate::agents::harness::{HarnessId, harness_name};
 use crate::agents::hook_hub::{HookHub, PORT_ENV, TOKEN_ENV};
 use crate::browser::{PageOwner, SessionOwners};
+use crate::config::app_config::LaunchMode;
+use crate::persistence::{AppDatabase, TerminalSessionRecord};
 
 use super::terminal_events::TerminalEventSink;
-use super::terminal_manager::TerminalManager;
+use super::terminal_manager::{TerminalManager, relaunch_line};
 use super::terminal_test_support::{RecordingSink, WAIT, output_of, path_of};
 use super::{Shell, TerminalError};
 
@@ -543,61 +546,296 @@ fn a_shell_that_runs_opencode_becomes_an_agent_and_back_when_it_ends() {
     );
 }
 
-/// An agent that names its conversation in its first hook can be resumed once it has ended.
-#[test]
-fn an_agent_that_names_its_conversation_can_be_resumed_after_it_ends() {
-    let sink = Arc::new(RecordingSink::default());
-    let hub = HookHub::start();
-    let shell = Arc::new(|| Shell {
-        program: "/bin/sh".to_owned(),
-        args: Vec::new(),
-    });
-    let dir = tempfile::tempdir().expect("temp dir");
-    let database = Arc::new(
-        crate::persistence::AppDatabase::open(&dir.path().join("app.db")).expect("database"),
-    );
-    let manager = TerminalManager::new(
-        shell,
-        Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
-        hub.clone(),
+/// One run of the app over a database, built the way the app builds its manager.
+fn app_run(database: &Arc<AppDatabase>, sink: &Arc<RecordingSink>) -> TerminalManager {
+    TerminalManager::new(
+        Arc::new(|| Shell {
+            program: "/bin/sh".to_owned(),
+            args: Vec::new(),
+        }),
+        Arc::clone(sink) as Arc<dyn TerminalEventSink>,
+        HookHub::disabled(),
         SessionOwners::default(),
         None,
-        Some(Arc::clone(&database)),
+        Some(Arc::clone(database)),
+    )
+}
+
+fn database_in(dir: &tempfile::TempDir) -> Arc<AppDatabase> {
+    Arc::new(AppDatabase::open(&dir.path().join("app.db")).expect("database"))
+}
+
+/// A session as the app leaves it at quit: ended, and open at quit.
+fn left_at_quit(
+    id: &str,
+    worktree: &str,
+    harness: Option<&str>,
+    resume_id: Option<&str>,
+    shell: &str,
+) -> TerminalSessionRecord {
+    TerminalSessionRecord {
+        id: id.to_owned(),
+        worktree_path: worktree.to_owned(),
+        harness: harness.map(str::to_owned),
+        command: None,
+        shell: shell.to_owned(),
+        resume_id: resume_id.map(str::to_owned),
+        started_at: 10,
+        ended_at: Some(20),
+        exit_code: None,
+        open_at_quit: true,
+        agent_title: None,
+    }
+}
+
+/// Closing the app leaves the agent sessions it had open waiting to be restored, with their
+/// conversation. A session the person closed before that is not among them.
+#[test]
+fn the_sessions_open_at_quit_wait_to_be_restored_and_a_closed_one_does_not() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = database_in(&dir);
+    let sink = Arc::new(RecordingSink::default());
+    let manager = app_run(&database, &sink);
+    let open = manager
+        .create(&path_of(&dir), None, 80, 24)
+        .expect("create");
+    database
+        .set_terminal_harness(&open.id, "claude")
+        .expect("harness");
+    database
+        .set_terminal_resume_id(&open.id, "conv-open")
+        .expect("resume id");
+    let closed = manager
+        .create(&path_of(&dir), None, 80, 24)
+        .expect("create");
+    manager.close(&closed.id).expect("close");
+    sink.wait_for_exit(&closed.id);
+    manager.quit();
+    sink.wait_for_exit(&open.id);
+
+    let next = app_run(&database, &Arc::new(RecordingSink::default()));
+    next.restore();
+    let listed = next.list();
+    assert_eq!(listed.len(), 1, "only the agent open at quit is listed");
+    assert_eq!(listed[0].id, open.id);
+    assert!(listed[0].restorable && !listed[0].running);
+    assert!(next.info(&closed.id).is_err(), "the closed session is gone");
+}
+
+/// Only an agent that named its conversation can be restored. Any other session that was open at
+/// quit stays in the database, unlisted, with no warning.
+#[test]
+fn a_session_without_an_agent_or_its_conversation_is_not_listed_after_a_restart() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = database_in(&dir);
+    let worktree = path_of(&dir);
+    for record in [
+        left_at_quit("plain", &worktree, None, None, "/bin/sh"),
+        left_at_quit("unnamed", &worktree, Some("codex"), None, "/bin/sh"),
+        left_at_quit(
+            "named",
+            &worktree,
+            Some("claude"),
+            Some("conv-1"),
+            "/bin/sh",
+        ),
+    ] {
+        database.insert_terminal_session(&record).expect("insert");
+    }
+
+    let next = app_run(&database, &Arc::new(RecordingSink::default()));
+    next.restore();
+
+    let listed: Vec<String> = next.list().into_iter().map(|info| info.id).collect();
+    assert_eq!(listed, ["named"]);
+    assert!(next.info("plain").is_err());
+    assert!(next.info("unnamed").is_err());
+    assert!(database.terminal_session("plain").expect("read").is_some());
+    assert!(
+        database
+            .terminal_session("unnamed")
+            .expect("read")
+            .is_some()
     );
-    let worktree = dir.path().join("work");
-    std::fs::create_dir_all(&worktree).expect("worktree");
+}
+
+/// A session the app never ended, as after a crash, waits to be restored too, with its conversation.
+#[test]
+fn a_session_the_app_never_ended_waits_to_be_restored_too() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = database_in(&dir);
+    database
+        .insert_terminal_session(&TerminalSessionRecord {
+            id: "crashed".to_owned(),
+            worktree_path: path_of(&dir),
+            harness: Some("claude".to_owned()),
+            command: None,
+            shell: "/bin/sh".to_owned(),
+            resume_id: Some("conv-crashed".to_owned()),
+            started_at: 10,
+            ended_at: None,
+            exit_code: None,
+            open_at_quit: false,
+            agent_title: Some("Fix the login".to_owned()),
+        })
+        .expect("insert");
+
+    let next = app_run(&database, &Arc::new(RecordingSink::default()));
+    next.restore();
+
+    let listed = next.list();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|info| info.id.as_str())
+            .collect::<Vec<_>>(),
+        ["crashed"]
+    );
+    assert!(listed[0].restorable && !listed[0].running);
+    assert_eq!(listed[0].title.as_deref(), Some("Fix the login"));
+    assert!(
+        database
+            .terminal_session("crashed")
+            .expect("read")
+            .expect("row")
+            .ended_at
+            .is_some(),
+        "the record says it ended when the app stopped"
+    );
+}
+
+/// A restored session runs again under the id it had, and is listed once, as running. The restored
+/// line is typed into `cat`, which echoes it and runs none of it, so no agent starts in the test.
+#[test]
+fn a_restored_session_runs_again_under_the_same_id() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = database_in(&dir);
+    database
+        .insert_terminal_session(&left_at_quit(
+            "agent",
+            &path_of(&dir),
+            Some("claude"),
+            Some("conv-1"),
+            "/bin/cat",
+        ))
+        .expect("insert");
+
+    let sink = Arc::new(RecordingSink::default());
+    let next = app_run(&database, &sink);
+    next.restore();
+    let info = next
+        .relaunch("agent", LaunchMode::Manual, &BTreeMap::new())
+        .expect("relaunch");
+
+    assert_eq!(info.id, "agent");
+    assert!(info.running && !info.restorable);
+    assert_eq!(next.list().len(), 1, "listed once, as running");
+    let record = database
+        .terminal_session("agent")
+        .expect("read")
+        .expect("row");
+    assert_eq!(record.ended_at, None, "open again");
+    assert!(!record.open_at_quit);
+
+    next.write("agent", "back-restored\r")
+        .expect("the restored session takes input");
+    sink.wait_for_text("agent", "back-restored");
+}
+
+/// Only a session that waits can be restored, and it has no process until then. Closing one that
+/// waits forgets its record.
+#[test]
+fn only_a_waiting_session_can_be_restored_and_closing_one_forgets_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = database_in(&dir);
+    database
+        .insert_terminal_session(&left_at_quit(
+            "open",
+            &path_of(&dir),
+            Some("claude"),
+            Some("conv-1"),
+            "/bin/sh",
+        ))
+        .expect("insert");
+
+    let next = app_run(&database, &Arc::new(RecordingSink::default()));
+    next.restore();
+    assert!(matches!(
+        next.relaunch("missing", LaunchMode::Manual, &BTreeMap::new()),
+        Err(TerminalError::Refused(_))
+    ));
+    assert!(matches!(
+        next.write("open", "x"),
+        Err(TerminalError::NotRunning)
+    ));
+
+    next.close("open").expect("close");
+    assert!(next.list().is_empty());
+    assert!(database.terminal_session("open").expect("read").is_none());
+    assert!(matches!(
+        next.relaunch("open", LaunchMode::Manual, &BTreeMap::new()),
+        Err(TerminalError::Refused(_))
+    ));
+}
+
+/// The name the agent gave the conversation is what a live session lists, so its tab shows it.
+#[test]
+fn a_live_session_lists_the_name_its_agent_gave_the_conversation() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = database_in(&dir);
+    let manager = app_run(&database, &Arc::new(RecordingSink::default()));
     let info = manager
         .create(&path_of(&dir), None, 80, 24)
         .expect("create");
-    let reply = post_hook(
-        &hub,
-        &info.id,
-        "claude",
-        r#"{"hook_event_name":"SessionStart","source":"startup","session_id":"conversation-7"}"#,
-    );
-    assert_eq!(reply, "HTTP/1.1 204 No Content");
-    let deadline = std::time::Instant::now() + WAIT;
-    while database
-        .terminal_session(&info.id)
-        .expect("read")
-        .and_then(|record| record.resume_id)
-        .is_none()
-    {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the name was never recorded"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    assert_eq!(manager.info(&info.id).expect("info").title, None);
 
-    manager.close(&info.id).expect("close");
-    sink.wait_for_exit(&info.id);
-
-    let resumable = manager.resumable(&path_of(&dir));
-    assert_eq!(resumable.len(), 1, "the ended agent can be resumed");
+    database
+        .set_terminal_agent_title(&info.id, "Corrigir o login")
+        .expect("title");
     assert_eq!(
-        resumable[0].resume_arguments,
-        ["--resume", "conversation-7"]
+        manager.info(&info.id).expect("info").title.as_deref(),
+        Some("Corrigir o login")
+    );
+    let listed = manager.list();
+    assert_eq!(listed[0].title.as_deref(), Some("Corrigir o login"));
+    manager.close(&info.id).expect("close");
+}
+
+#[test]
+fn a_restored_agent_starts_again_with_the_arguments_that_resume_it() {
+    let none = BTreeMap::new();
+    assert_eq!(
+        relaunch_line(HarnessId::Claude, LaunchMode::Manual, &none, Some("conv-1")),
+        "claude --resume conv-1"
+    );
+    assert_eq!(
+        relaunch_line(HarnessId::Codex, LaunchMode::Manual, &none, Some("conv-1")),
+        "codex resume conv-1"
+    );
+    assert_eq!(
+        relaunch_line(HarnessId::Claude, LaunchMode::Manual, &none, None),
+        "claude",
+        "without a conversation it starts fresh"
+    );
+}
+
+/// The restored line is the one Settings start the agent with: YOLO and the typed arguments come back
+/// with it, and the conversation is named last.
+#[test]
+fn a_restored_agent_starts_again_in_yolo_with_its_settings_arguments() {
+    let set = BTreeMap::from([(HarnessId::Claude, "--model opus".to_owned())]);
+    assert_eq!(
+        relaunch_line(HarnessId::Claude, LaunchMode::Yolo, &set, Some("conv-1")),
+        "claude --dangerously-skip-permissions --model opus --resume conv-1"
+    );
+    assert_eq!(
+        relaunch_line(HarnessId::Claude, LaunchMode::Yolo, &set, None),
+        "claude --dangerously-skip-permissions --model opus"
+    );
+    let codex = BTreeMap::from([(HarnessId::Codex, "--search".to_owned())]);
+    assert_eq!(
+        relaunch_line(HarnessId::Codex, LaunchMode::Yolo, &codex, Some("conv-1")),
+        "codex --dangerously-bypass-approvals-and-sandbox --search resume conv-1"
     );
 }
 

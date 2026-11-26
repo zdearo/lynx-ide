@@ -279,6 +279,10 @@ const MIGRATIONS: &[&str] = &[
      -- 1 when the member's worker starts only once its team is released; 0, as before, when it starts at once.
      ALTER TABLE team_members ADD COLUMN start_when_released INTEGER NOT NULL DEFAULT 0
          CHECK (start_when_released IN (0, 1));",
+    // 1 when the session was open at quit, so it comes back restorable; agent_title is the name the agent keeps.
+    "ALTER TABLE terminal_sessions ADD COLUMN open_at_quit INTEGER NOT NULL DEFAULT 0
+         CHECK (open_at_quit IN (0, 1));
+     ALTER TABLE terminal_sessions ADD COLUMN agent_title TEXT;",
 ];
 
 #[derive(Debug, thiserror::Error)]

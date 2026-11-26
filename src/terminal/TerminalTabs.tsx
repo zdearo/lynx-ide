@@ -150,7 +150,9 @@ export function TerminalTabs({
                   <span className="truncate">{titles.get(session.id)}</span>
                   {!session.running && (
                     <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
-                      {copy.terminal.exited(session.exitCode)}
+                      {session.restorable
+                        ? copy.terminal.stopped
+                        : copy.terminal.exited(session.exitCode)}
                     </span>
                   )}
                   {session.hibernated && (

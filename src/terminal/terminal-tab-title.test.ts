@@ -29,6 +29,25 @@ describe("tabTitles", () => {
   });
 });
 
+describe("tabTitles with the agent's own name", () => {
+  it("names the tab after the title the agent keeps, and numbers repeats of it", () => {
+    const titles = tabTitles([
+      session("a", "/w", {
+        command: "claude",
+        harness: "claude",
+        title: "Login",
+      }),
+      session("b", "/w", {
+        command: "claude",
+        harness: "claude",
+        title: "Login",
+      }),
+      session("c", "/w", { command: "claude", harness: "claude" }),
+    ]);
+    expect([...titles.values()]).toEqual(["Login", "Login 2", "claude"]);
+  });
+});
+
 describe("tabTitles for a shell that became an agent", () => {
   it("is named after its harness, since it was never started with a command", () => {
     const titles = tabTitles([session("a", "/w", { harness: "claude" })]);

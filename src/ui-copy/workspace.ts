@@ -210,12 +210,4 @@ export const workspaceCopy = {
     title: "Add a project to get started",
     body: "Each task gets its own git worktree, with its agents and terminals next to it.",
   },
-
-  resumable: {
-    ended: "Ended",
-    resume: "Resume this agent",
-    failed: "Could not resume the agent.",
-    remove: "Remove from the list",
-    removeFailed: "Could not remove it from the list.",
-  },
 } as const;

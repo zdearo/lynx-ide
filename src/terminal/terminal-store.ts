@@ -2,12 +2,12 @@ import { create } from "zustand";
 
 import {
   commands,
+  events,
   type AgentStatus,
   type HarnessId,
   type TerminalInfo,
 } from "@/bindings";
 import { unwrap } from "@/lib/ipc-result";
-import { useResumableStore } from "@/workspace/resumable-store";
 
 // The real size is sent as soon as the view fits itself.
 const INITIAL_COLS = 120;
@@ -44,7 +44,14 @@ interface TerminalState {
   hibernate: (id: string) => Promise<void>;
   /** The terminal got input, so the daemon has run it again. */
   woken: (id: string) => void;
+  /** Starts a session that was open when the app quit, under the same id. */
+  restore: (id: string) => Promise<void>;
+  /** The agent named its conversation: the tab takes the name. */
+  setTitle: (id: string, title: string) => void;
 }
+
+// The title events are listened to once, when the sessions first load.
+let listeningTitles = false;
 
 /** Sessions the backend closed on its own. The team keeps their members, so a worker's card can show how it ended. */
 const closedByBackend = new Set<string>();
@@ -92,6 +99,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   /** Sessions outlive a webview reload, so the list comes from the backend. */
   async load() {
+    if (!listeningTitles) {
+      listeningTitles = true;
+      void events.terminalTitleChanged.listen(({ payload }) =>
+        get().setTitle(payload.id, payload.title),
+      );
+    }
     set({ sessions: await unwrap(commands.listTerminals()) });
   },
 
@@ -157,9 +170,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         s.id === id ? { ...s, running: false, exitCode, agentStatus: null } : s,
       ),
     }));
-    // The backend records the end before it reports it, so the list read now includes it.
-    const worktreePath = get().sessions.find((s) => s.id === id)?.worktreePath;
-    if (worktreePath) void useResumableStore.getState().refresh(worktreePath);
   },
 
   setAgentState(id, harness, status) {
@@ -195,6 +205,26 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   markSeen(id) {
     // The backend clears "done" and reports it back as a status change, so the store waits for that.
     void commands.markAgentSeen(id);
+  },
+
+  async restore(id) {
+    const session = await unwrap(commands.restoreTerminal(id));
+    set((state) => ({
+      sessions: state.sessions.map((s) => (s.id === id ? session : s)),
+    }));
+  },
+
+  setTitle(id, title) {
+    // Returns the same state when the title is unchanged, so the tabs do not redraw.
+    set((state) =>
+      state.sessions.some((s) => s.id === id && s.title !== title)
+        ? {
+            sessions: state.sessions.map((s) =>
+              s.id === id ? { ...s, title } : s,
+            ),
+          }
+        : state,
+    );
   },
 }));
 

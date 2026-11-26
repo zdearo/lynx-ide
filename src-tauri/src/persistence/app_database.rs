@@ -806,6 +806,10 @@ pub struct TerminalSessionRecord {
     pub started_at: i64,
     pub ended_at: Option<i64>,
     pub exit_code: Option<i32>,
+    /// Set when the app quit, or stopped, with the session open. Restorable only with an agent and its conversation.
+    pub open_at_quit: bool,
+    /// The name the agent keeps for its conversation.
+    pub agent_title: Option<String>,
 }
 
 fn terminal_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TerminalSessionRecord> {
@@ -819,11 +823,12 @@ fn terminal_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TerminalSes
         started_at: row.get(6)?,
         ended_at: row.get(7)?,
         exit_code: row.get(8)?,
+        open_at_quit: row.get(9)?,
+        agent_title: row.get(10)?,
     })
 }
 
-const TERMINAL_SESSION_COLUMNS: &str =
-    "id, worktree_path, harness, command, shell, resume_id, started_at, ended_at, exit_code";
+const TERMINAL_SESSION_COLUMNS: &str = "id, worktree_path, harness, command, shell, resume_id, started_at, ended_at, exit_code, open_at_quit, agent_title";
 
 impl AppDatabase {
     pub fn insert_terminal_session(
@@ -831,8 +836,8 @@ impl AppDatabase {
         record: &TerminalSessionRecord,
     ) -> Result<(), DatabaseError> {
         self.lock().execute(
-            "INSERT INTO terminal_sessions (id, worktree_path, harness, command, shell, resume_id, started_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO terminal_sessions (id, worktree_path, harness, command, shell, resume_id, started_at, open_at_quit, agent_title)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 record.id,
                 record.worktree_path,
@@ -841,6 +846,8 @@ impl AppDatabase {
                 record.shell,
                 record.resume_id,
                 record.started_at,
+                record.open_at_quit,
+                record.agent_title,
             ],
         )?;
         Ok(())
@@ -877,7 +884,15 @@ impl AppDatabase {
         Ok(())
     }
 
-    #[cfg(test)]
+    /// The name the agent keeps for the conversation, shown on the tab and the Team node.
+    pub fn set_terminal_agent_title(&self, id: &str, title: &str) -> Result<(), DatabaseError> {
+        self.lock().execute(
+            "UPDATE terminal_sessions SET agent_title = ?2 WHERE id = ?1",
+            params![id, title],
+        )?;
+        Ok(())
+    }
+
     pub fn terminal_session(
         &self,
         id: &str,
@@ -900,40 +915,48 @@ impl AppDatabase {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Ended agent sessions of one worktree that can be resumed, newest first.
-    pub fn resumable_terminal_sessions(
+    /// Marks a session the app is closing with as open at quit. A session that already ended is
+    /// left alone: it was not open when the app stopped.
+    pub fn mark_open_at_quit(&self, id: &str) -> Result<(), DatabaseError> {
+        self.lock().execute(
+            "UPDATE terminal_sessions SET open_at_quit = 1 WHERE id = ?1 AND ended_at IS NULL",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Sessions that were open when the app stopped and can be restored, oldest first. Only an agent that
+    /// named its conversation can resume it; the other sessions stay in the table and are not listed.
+    pub fn restorable_terminal_sessions(
         &self,
-        worktree_path: &str,
     ) -> Result<Vec<TerminalSessionRecord>, DatabaseError> {
         let connection = self.lock();
-        // Only the newest session of a conversation is offered: resuming it makes a newer one.
         let mut statement = connection.prepare(&format!(
-            "SELECT {TERMINAL_SESSION_COLUMNS} FROM terminal_sessions AS t
-             WHERE worktree_path = ?1 AND ended_at IS NOT NULL
-               AND harness IS NOT NULL AND resume_id IS NOT NULL
-               AND NOT EXISTS (
-                 SELECT 1 FROM terminal_sessions AS newer
-                 WHERE newer.harness = t.harness AND newer.resume_id = t.resume_id
-                   AND newer.started_at > t.started_at
-               )
-             ORDER BY started_at DESC, id LIMIT 10"
+            "SELECT {TERMINAL_SESSION_COLUMNS} FROM terminal_sessions
+             WHERE open_at_quit = 1 AND harness IS NOT NULL AND resume_id IS NOT NULL
+             ORDER BY started_at, id"
         ))?;
-        let rows = statement.query_map([worktree_path], terminal_session_row)?;
+        let rows = statement.query_map([], terminal_session_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Takes an ended agent conversation off the resumable list: every ended record of it. The
-    /// conversation itself stays in the agent. Returns whether `id` was such a record.
-    pub fn forget_resumable_session(&self, id: &str) -> Result<bool, DatabaseError> {
-        let deleted = self.lock().execute(
-            "DELETE FROM terminal_sessions
-             WHERE ended_at IS NOT NULL AND (harness, resume_id) IN (
-               SELECT harness, resume_id FROM terminal_sessions
-               WHERE id = ?1 AND ended_at IS NOT NULL AND resume_id IS NOT NULL
-             )",
+    /// A restored session runs again under its id: it is open, and no longer waits to be restored.
+    pub fn reopen_terminal_session(&self, id: &str) -> Result<(), DatabaseError> {
+        self.lock().execute(
+            "UPDATE terminal_sessions SET ended_at = NULL, exit_code = NULL, open_at_quit = 0
+             WHERE id = ?1",
             params![id],
         )?;
-        Ok(deleted > 0)
+        Ok(())
+    }
+
+    /// Forgets a session that waits to be restored. A session that does not wait is left alone.
+    pub fn delete_terminal_session(&self, id: &str) -> Result<(), DatabaseError> {
+        self.lock().execute(
+            "DELETE FROM terminal_sessions WHERE id = ?1 AND open_at_quit = 1",
+            params![id],
+        )?;
+        Ok(())
     }
 }
 
@@ -957,6 +980,8 @@ mod terminal_session_tests {
             started_at: 10,
             ended_at: None,
             exit_code: None,
+            open_at_quit: false,
+            agent_title: None,
         }
     }
 
@@ -979,122 +1004,98 @@ mod terminal_session_tests {
     }
 
     #[test]
-    fn only_ended_agent_sessions_with_a_conversation_can_be_resumed() {
+    fn a_quit_marks_only_the_sessions_that_are_still_open() {
         let database = database();
         database
-            .insert_terminal_session(&record("agent", Some("claude")))
+            .insert_terminal_session(&record("open", None))
             .expect("insert");
         database
-            .set_terminal_resume_id("agent", "abc")
-            .expect("resume id");
-        database
-            .insert_terminal_session(&record("shell", None))
+            .insert_terminal_session(&record("ended", None))
             .expect("insert");
-        database
-            .set_terminal_resume_id("shell", "xyz")
-            .expect("resume id");
-        database
-            .insert_terminal_session(&record("unnamed", Some("codex")))
-            .expect("insert");
-        database.end_terminal_session("agent", None).expect("end");
-        database.end_terminal_session("shell", None).expect("end");
-        database.end_terminal_session("unnamed", None).expect("end");
+        database.end_terminal_session("ended", None).expect("end");
 
-        let resumable = database
-            .resumable_terminal_sessions("/work/a")
-            .expect("list");
-        assert_eq!(resumable.len(), 1);
-        assert_eq!(resumable[0].id, "agent");
-        assert!(
-            database
-                .resumable_terminal_sessions("/work/b")
-                .expect("list")
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn resuming_a_conversation_hides_the_session_it_came_from() {
-        let database = database();
-        database
-            .insert_terminal_session(&record("first", Some("codex")))
-            .expect("insert");
-        database
-            .set_terminal_resume_id("first", "conv")
-            .expect("resume id");
-        database.end_terminal_session("first", None).expect("end");
-        assert_eq!(
-            database
-                .resumable_terminal_sessions("/work/a")
-                .expect("list")
-                .len(),
-            1
-        );
-
-        // The resumed session has the same conversation, and is newer; it is still running.
-        let mut resumed = record("second", Some("codex"));
-        resumed.started_at = 20;
-        database.insert_terminal_session(&resumed).expect("insert");
-        database
-            .set_terminal_resume_id("second", "conv")
-            .expect("resume id");
-        assert!(
-            database
-                .resumable_terminal_sessions("/work/a")
-                .expect("list")
-                .is_empty()
-        );
-
-        database.end_terminal_session("second", None).expect("end");
-        let offered = database
-            .resumable_terminal_sessions("/work/a")
-            .expect("list");
-        assert_eq!(offered.len(), 1);
-        assert_eq!(offered[0].id, "second");
-    }
-
-    #[test]
-    fn a_conversation_taken_off_the_list_stays_off_and_a_running_one_is_kept() {
-        let database = database();
-        database
-            .insert_terminal_session(&record("old", Some("claude")))
-            .expect("insert");
-        database
-            .set_terminal_resume_id("old", "conv")
-            .expect("resume id");
-        database.end_terminal_session("old", None).expect("end");
-        let mut newer = record("new", Some("claude"));
-        newer.started_at = 20;
-        database.insert_terminal_session(&newer).expect("insert");
-        database
-            .set_terminal_resume_id("new", "conv")
-            .expect("resume id");
-        database.end_terminal_session("new", None).expect("end");
-        database
-            .insert_terminal_session(&record("live", Some("claude")))
-            .expect("insert");
-        database
-            .set_terminal_resume_id("live", "other")
-            .expect("resume id");
-
-        assert!(database.forget_resumable_session("new").expect("forget"));
+        database.mark_open_at_quit("open").expect("mark");
+        database.mark_open_at_quit("ended").expect("mark");
 
         assert!(
             database
-                .resumable_terminal_sessions("/work/a")
-                .expect("list")
-                .is_empty()
+                .terminal_session("open")
+                .expect("read")
+                .expect("row")
+                .open_at_quit
         );
-        assert!(database.terminal_session("old").expect("read").is_none());
-        assert!(
-            database.terminal_session("live").expect("read").is_some(),
-            "a running session is not removed"
-        );
-        assert!(!database.forget_resumable_session("live").expect("forget"));
         assert!(
             !database
-                .forget_resumable_session("missing")
-                .expect("forget")
+                .terminal_session("ended")
+                .expect("read")
+                .expect("row")
+                .open_at_quit
+        );
+    }
+
+    #[test]
+    fn a_restored_session_runs_again_under_its_id_and_a_closed_one_is_forgotten() {
+        let database = database();
+        database
+            .insert_terminal_session(&record("kept", Some("claude")))
+            .expect("insert");
+        database
+            .set_terminal_resume_id("kept", "conv")
+            .expect("resume id");
+        database.mark_open_at_quit("kept").expect("mark");
+        database.end_terminal_session("kept", Some(1)).expect("end");
+        database
+            .insert_terminal_session(&record("closed", Some("codex")))
+            .expect("insert");
+        database
+            .set_terminal_resume_id("closed", "conv-closed")
+            .expect("resume id");
+        database.mark_open_at_quit("closed").expect("mark");
+        database.end_terminal_session("closed", None).expect("end");
+
+        let waiting: Vec<String> = database
+            .restorable_terminal_sessions()
+            .expect("list")
+            .into_iter()
+            .map(|record| record.id)
+            .collect();
+        assert_eq!(waiting, ["closed", "kept"], "same start time, so by id");
+
+        database.reopen_terminal_session("kept").expect("reopen");
+        let running = database
+            .terminal_session("kept")
+            .expect("read")
+            .expect("row");
+        assert_eq!(running.ended_at, None);
+        assert_eq!(running.exit_code, None);
+        assert!(!running.open_at_quit, "a running session waits for nothing");
+        assert_eq!(running.resume_id.as_deref(), Some("conv"));
+        assert_eq!(database.open_terminal_sessions().expect("open").len(), 1);
+
+        database.delete_terminal_session("closed").expect("delete");
+        database.delete_terminal_session("kept").expect("delete");
+        assert!(database.terminal_session("closed").expect("read").is_none());
+        assert!(
+            database.terminal_session("kept").expect("read").is_some(),
+            "only a session that waits can be forgotten"
+        );
+    }
+
+    #[test]
+    fn the_agent_title_is_read_back_with_its_session() {
+        let database = database();
+        let mut titled = record("agent", Some("claude"));
+        titled.agent_title = Some("Refactor the auth flow".to_owned());
+        database.insert_terminal_session(&titled).expect("insert");
+
+        assert_eq!(
+            database
+                .terminal_session("agent")
+                .expect("read")
+                .expect("row")
+                .agent_title
+                .as_deref(),
+            Some("Refactor the auth flow")
         );
     }
 }

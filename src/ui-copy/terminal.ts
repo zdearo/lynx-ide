@@ -10,6 +10,13 @@ export const terminalCopy = {
     sleep: "Sleep terminal",
     sleeping: "sleeping",
     sleepFailed: "Could not put the terminal to sleep",
+    stopped: "stopped",
+    restore: {
+      notice: "This terminal was open when the app closed.",
+      hint: "Restoring starts it again in its worktree. An agent picks up its conversation.",
+      button: "Restore",
+      failed: "Could not restore the terminal",
+    },
     closeDialog: {
       title: "Close this terminal?",
       body: "Whatever is running in it will be stopped.",

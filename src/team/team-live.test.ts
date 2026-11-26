@@ -53,6 +53,8 @@ const session = (
   startedAt,
   harness: "claude",
   agentStatus: "working",
+  restorable: false,
+  title: null,
 });
 
 describe("runningLabelOf", () => {

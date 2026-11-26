@@ -5,9 +5,6 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
-use specta::Type;
-
 use lynx_pty_daemon::message::PendingEvent;
 
 use lynx_pty_daemon::message::Request;
@@ -18,7 +15,9 @@ use crate::agents::harness::{
     HarnessId, harness_for_command, harness_name, harness_named, resume_arguments,
 };
 use crate::agents::hook_hub::HookHub;
+use crate::agents::launch_line::launch_line;
 use crate::browser::{PageOwner, SessionOwners};
+use crate::config::app_config::LaunchMode;
 use crate::persistence::{AppDatabase, TerminalSessionRecord};
 
 use super::daemon_host::{DaemonHost, DaemonState, DaemonStatus};
@@ -40,18 +39,6 @@ pub struct TerminalManager {
 /// Resolved on every new terminal, so a changed setting applies without a restart.
 pub type ShellProvider = Arc<dyn Fn() -> Shell + Send + Sync>;
 
-/// An ended agent session that can be resumed in its worktree.
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ResumableSession {
-    pub id: String,
-    pub harness: HarnessId,
-    /// The arguments that resume the conversation, after the agent's own command.
-    pub resume_arguments: Vec<String>,
-    /// Unix seconds when the session ended. `u32` because the contract has no 64-bit integers.
-    pub ended_at: Option<u32>,
-}
-
 struct Inner {
     shell: ShellProvider,
     /// Where events go: straight to the screen, or through the database record first.
@@ -64,6 +51,8 @@ struct Inner {
     /// Whether closing the app leaves the daemon's sessions running for the next start.
     keep_on_exit: AtomicBool,
     sessions: Mutex<BTreeMap<String, Arc<TerminalSession>>>,
+    /// Sessions the app stopped with, listed but not running until the person restores them.
+    restorable: Mutex<BTreeMap<String, TerminalSessionRecord>>,
 }
 
 impl TerminalManager {
@@ -90,6 +79,7 @@ impl TerminalManager {
                 database,
                 keep_on_exit: AtomicBool::new(false),
                 sessions: Mutex::new(BTreeMap::new()),
+                restorable: Mutex::new(BTreeMap::new()),
             }),
         }
     }
@@ -107,24 +97,39 @@ impl TerminalManager {
         let harness = command.and_then(harness_for_command);
         // Recorded before the process starts, so an agent that names its conversation at once finds it.
         self.record_new(&id, worktree_path, harness, command, &shell.program);
+        self.launch(&id, worktree_path, command, &shell, cols, rows)
+            .inspect_err(|_| self.record_ended(&id))
+    }
+
+    /// Starts the monitor and the process of a session under `id`. The caller keeps the record:
+    /// a failed start is ended there, and a restored one stays as it was until it starts.
+    fn launch(
+        &self,
+        id: &str,
+        worktree_path: &str,
+        command: Option<&str>,
+        shell: &Shell,
+        cols: u16,
+        rows: u16,
+    ) -> Result<TerminalInfo, TerminalError> {
+        let harness = command.and_then(harness_for_command);
         // Set before anything below can fail, so each error path must remove it again.
         self.inner.owners.set(
-            &id,
+            id,
             PageOwner::Workspace {
                 worktree_path: worktree_path.to_owned(),
             },
         );
         // Every session is followed, so an agent started by hand in a shell is recognised too.
-        let monitor = match agent_monitor::start(&id, harness, Arc::clone(&self.inner.sink)) {
+        let monitor = match agent_monitor::start(id, harness, Arc::clone(&self.inner.sink)) {
             Ok(monitor) => monitor,
             Err(error) => {
-                self.inner.owners.remove(&id);
-                self.record_ended(&id);
+                self.inner.owners.remove(id);
                 return Err(error);
             }
         };
-        self.inner.hooks.register(&id, monitor.input.clone());
-        let mut env = self.inner.hooks.session_env(&id);
+        self.inner.hooks.register(id, monitor.input.clone());
+        let mut env = self.inner.hooks.session_env(id);
         if let Some(daemon) = &self.inner.daemon {
             // A hook that finds the app closed leaves its event with this folder's daemon.
             env.push((
@@ -135,7 +140,7 @@ impl TerminalManager {
 
         let request = SpawnRequest {
             cwd: Path::new(worktree_path),
-            shell: &shell,
+            shell,
             command,
             cols,
             rows,
@@ -143,26 +148,28 @@ impl TerminalManager {
         };
         let daemon_process = self.inner.daemon.as_ref().and_then(|daemon| {
             check_request(&request).ok()?;
-            daemon.spawn(&id, &request)
+            daemon.spawn(id, &request)
         });
         let spawned = match daemon_process {
             Some(process) => TerminalSession::start(
-                id.clone(),
+                id.to_owned(),
                 &request,
                 Arc::clone(&self.inner.sink),
                 monitor,
                 process,
             ),
-            None => {
-                TerminalSession::spawn(id.clone(), &request, Arc::clone(&self.inner.sink), monitor)
-            }
+            None => TerminalSession::spawn(
+                id.to_owned(),
+                &request,
+                Arc::clone(&self.inner.sink),
+                monitor,
+            ),
         };
         let session = match spawned {
             Ok(session) => session,
             Err(error) => {
-                self.inner.hooks.unregister(&id);
-                self.inner.owners.remove(&id);
-                self.record_ended(&id);
+                self.inner.hooks.unregister(id);
+                self.inner.owners.remove(id);
                 return Err(error);
             }
         };
@@ -195,7 +202,7 @@ impl TerminalManager {
                     self.record_ended(&record.id);
                 }
             } else {
-                self.record_ended(&record.id);
+                self.record_stopped_open(&record.id);
             }
         }
         let known: Vec<String> = open
@@ -207,6 +214,12 @@ impl TerminalManager {
         if let (Some(daemon), false) = (self.inner.daemon.as_ref(), unknown.is_empty()) {
             daemon.end_sessions(&unknown);
         }
+        let waiting = database.restorable_terminal_sessions().unwrap_or_default();
+        self.restorable().extend(
+            waiting
+                .into_iter()
+                .map(|record| (record.id.clone(), record)),
+        );
     }
 
     /// A daemon of another version cannot answer the questions this one asks. It keeps its sessions;
@@ -240,6 +253,8 @@ impl TerminalManager {
                 started_at: now_seconds(),
                 ended_at: None,
                 exit_code: None,
+                open_at_quit: false,
+                agent_title: None,
             };
             let _ = database.insert_terminal_session(&record);
             match self.reattach(&record) {
@@ -300,45 +315,42 @@ impl TerminalManager {
         Ok(())
     }
 
-    /// The ended agent sessions of a worktree that can be resumed. A database that cannot be read
-    /// lists nothing; the terminals still work.
-    pub fn resumable(&self, worktree_path: &str) -> Vec<ResumableSession> {
-        let Some(database) = self.inner.database.as_ref() else {
-            return Vec::new();
-        };
-        database
-            .resumable_terminal_sessions(worktree_path)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|record| {
-                let harness = harness_named(record.harness.as_deref()?)?;
-                let resume_id = record.resume_id.as_deref()?;
-                Some(ResumableSession {
-                    id: record.id,
-                    harness,
-                    resume_arguments: resume_arguments(harness, resume_id),
-                    ended_at: record.ended_at.and_then(|at| u32::try_from(at).ok()),
-                })
-            })
-            .collect()
-    }
-
-    /// Takes an ended agent conversation off the resumable list. The conversation stays in the agent.
-    pub fn forget_resumable(&self, id: &str) -> Result<(), TerminalError> {
-        let database =
-            self.inner.database.as_ref().ok_or_else(|| {
-                TerminalError::Refused("the session list is unavailable".to_owned())
+    /// Starts again a session the app stopped with, under the same id, so the tab and the team
+    /// member that point to it keep working. The agent starts with the launch mode and arguments
+    /// Settings hold now. Refused when the session does not wait to be restored.
+    pub fn relaunch(
+        &self,
+        id: &str,
+        mode: LaunchMode,
+        arguments: &BTreeMap<HarnessId, String>,
+    ) -> Result<TerminalInfo, TerminalError> {
+        let record =
+            self.restorable().get(id).cloned().ok_or_else(|| {
+                TerminalError::Refused(format!("terminal {id} cannot be restored"))
             })?;
-        let forgotten = database
-            .forget_resumable_session(id)
-            .map_err(|error| TerminalError::Refused(error.to_string()))?;
-        if forgotten {
-            Ok(())
-        } else {
-            Err(TerminalError::Refused(
-                "only an ended agent session can be removed from the list".to_owned(),
-            ))
+        let command = record
+            .harness
+            .as_deref()
+            .and_then(harness_named)
+            .map(|harness| relaunch_line(harness, mode, arguments, record.resume_id.as_deref()));
+        let shell = Shell {
+            program: record.shell.clone(),
+            args: Vec::new(),
+        };
+        let info = self.launch(
+            id,
+            &record.worktree_path,
+            command.as_deref(),
+            &shell,
+            80,
+            24,
+        )?;
+        // Reopened after the start, so a failed start leaves the record as it was.
+        if let Some(database) = self.inner.database.as_ref() {
+            let _ = database.reopen_terminal_session(id);
         }
+        self.restorable().remove(id);
+        Ok(info)
     }
 
     /// Chooses what closing the app does with the daemon's sessions: left running, or ended.
@@ -361,10 +373,18 @@ impl TerminalManager {
     /// chose to keep them, and then the daemon outlives the app for the next start.
     pub fn quit(&self) {
         let keep = self.inner.keep_on_exit.load(Ordering::SeqCst);
-        let sessions: Vec<Arc<TerminalSession>> = self.sessions().values().cloned().collect();
-        for session in sessions {
+        let sessions: Vec<(String, Arc<TerminalSession>)> = self
+            .sessions()
+            .iter()
+            .map(|(id, session)| (id.clone(), Arc::clone(session)))
+            .collect();
+        for (id, session) in sessions {
             if keep && session.daemon_owned() {
                 continue;
+            }
+            // Marked before the process ends, so the record says the session was open at quit.
+            if let Some(database) = self.inner.database.as_ref() {
+                let _ = database.mark_open_at_quit(&id);
             }
             session.terminate();
         }
@@ -392,12 +412,23 @@ impl TerminalManager {
                 started_at: now_seconds(),
                 ended_at: None,
                 exit_code: None,
+                open_at_quit: false,
+                agent_title: None,
             });
         }
     }
 
     fn record_ended(&self, id: &str) {
         if let Some(database) = self.inner.database.as_ref() {
+            let _ = database.end_terminal_session(id, None);
+        }
+    }
+
+    /// A session the app had open when it stopped, and the daemon no longer runs: it ends here and
+    /// waits to be restored.
+    fn record_stopped_open(&self, id: &str) {
+        if let Some(database) = self.inner.database.as_ref() {
+            let _ = database.mark_open_at_quit(id);
             let _ = database.end_terminal_session(id, None);
         }
     }
@@ -433,14 +464,31 @@ impl TerminalManager {
 
     /// One session as the screen sees it: whether it runs, and its agent status.
     pub fn info(&self, id: &str) -> Result<TerminalInfo, TerminalError> {
-        Ok(self.session(id)?.info())
+        let session = self.sessions().get(id).cloned();
+        match session {
+            Some(session) => Ok(self.with_title(session.info())),
+            None => self
+                .restorable()
+                .get(id)
+                .map(restorable_info)
+                .ok_or_else(|| TerminalError::NotFound(id.to_owned())),
+        }
     }
 
     pub fn list(&self) -> Vec<TerminalInfo> {
-        self.sessions()
+        let sessions = self.sessions();
+        let mut infos: Vec<TerminalInfo> = sessions
             .values()
-            .map(|session| session.info())
-            .collect()
+            .map(|session| self.with_title(session.info()))
+            .collect();
+        // A session that runs again is listed once, as running.
+        infos.extend(
+            self.restorable()
+                .values()
+                .filter(|record| !sessions.contains_key(&record.id))
+                .map(restorable_info),
+        );
+        infos
     }
 
     pub fn snapshot(&self, id: &str) -> Result<TerminalSnapshot, TerminalError> {
@@ -497,15 +545,30 @@ impl TerminalManager {
         self.session(id)?.resize(cols, rows)
     }
 
-    /// Stops the process if it is still running and forgets the session.
+    /// Stops the process if it is still running and forgets the session. A session that waits to be
+    /// restored has no process: closing it forgets its record.
     pub fn close(&self, id: &str) -> Result<(), TerminalError> {
-        let session = self
-            .sessions()
-            .remove(id)
-            .ok_or_else(|| TerminalError::NotFound(id.to_owned()))?;
+        let session = self.sessions().remove(id);
+        let Some(session) = session else {
+            return self.close_restorable(id);
+        };
         self.inner.hooks.unregister(id);
         self.inner.owners.remove(id);
         session.terminate();
+        Ok(())
+    }
+
+    fn close_restorable(&self, id: &str) -> Result<(), TerminalError> {
+        let mut restorable = self.restorable();
+        if !restorable.contains_key(id) {
+            return Err(TerminalError::NotFound(id.to_owned()));
+        }
+        if let Some(database) = self.inner.database.as_ref() {
+            database
+                .delete_terminal_session(id)
+                .map_err(|error| TerminalError::Refused(error.to_string()))?;
+        }
+        restorable.remove(id);
         Ok(())
     }
 
@@ -528,10 +591,14 @@ impl TerminalManager {
     }
 
     fn session(&self, id: &str) -> Result<Arc<TerminalSession>, TerminalError> {
-        self.sessions()
-            .get(id)
-            .cloned()
-            .ok_or_else(|| TerminalError::NotFound(id.to_owned()))
+        let session = self.sessions().get(id).cloned();
+        session.ok_or_else(|| {
+            if self.restorable().contains_key(id) {
+                TerminalError::NotRunning
+            } else {
+                TerminalError::NotFound(id.to_owned())
+            }
+        })
     }
 
     fn sessions(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Arc<TerminalSession>>> {
@@ -541,6 +608,59 @@ impl TerminalManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+
+    fn restorable(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, TerminalSessionRecord>> {
+        self.inner
+            .restorable
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The name the agent gave its conversation: the title the record keeps, written when it changes.
+    fn with_title(&self, mut info: TerminalInfo) -> TerminalInfo {
+        info.title = self
+            .inner
+            .database
+            .as_ref()
+            .and_then(|database| database.terminal_session(&info.id).ok().flatten())
+            .and_then(|record| record.agent_title);
+        info
+    }
+}
+
+/// What the screen shows for a session that waits to be restored: listed, not running.
+fn restorable_info(record: &TerminalSessionRecord) -> TerminalInfo {
+    TerminalInfo {
+        id: record.id.clone(),
+        worktree_path: record.worktree_path.clone(),
+        command: record.command.clone(),
+        shell: record.shell.clone(),
+        running: false,
+        hibernated: false,
+        exit_code: record.exit_code,
+        started_at: u32::try_from(record.started_at).unwrap_or_default(),
+        harness: record.harness.as_deref().and_then(harness_named),
+        agent_status: None,
+        restorable: true,
+        title: record.agent_title.clone(),
+    }
+}
+
+/// The line that starts an agent again: the line Settings start it with, then the arguments that resume
+/// the conversation when the agent named it.
+pub(super) fn relaunch_line(
+    harness: HarnessId,
+    mode: LaunchMode,
+    arguments: &BTreeMap<HarnessId, String>,
+    resume_id: Option<&str>,
+) -> String {
+    let resume = resume_id
+        .map(|id| resume_arguments(harness, id))
+        .unwrap_or_default();
+    std::iter::once(launch_line(harness, mode, arguments))
+        .chain(resume)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Hands a stored event to the session's monitor, as the hook hub does for a live one.

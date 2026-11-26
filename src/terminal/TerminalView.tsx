@@ -19,6 +19,7 @@ import {
   webglBudget,
   type WebglRendererSlot,
 } from "@/terminal/terminal-renderer";
+import { RestoreNotice } from "@/terminal/RestoreNotice";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { terminalExitHub } from "@/terminal/terminal-event-hub";
 import { attachTerminalOutput } from "@/terminal/terminal-output-stream";
@@ -308,7 +309,25 @@ function mountTerminal(
 
 /** Shows one backend terminal session. The session outlives the view. */
 // Its parents redraw on every worktree or team change, so it re-renders only for its own props.
-export const TerminalView = memo(TerminalViewBase);
+const LiveTerminalView = memo(TerminalViewBase);
+
+/** A session that was open when the app quit has no process to attach to: its screen offers to restore it. */
+export const TerminalView = memo(function TerminalView(
+  props: TerminalViewProps,
+) {
+  const restorable = useTerminalStore((state) =>
+    state.sessions.some((s) => s.id === props.terminalId && s.restorable),
+  );
+  if (restorable) {
+    return (
+      <RestoreNotice
+        terminalId={props.terminalId}
+        className={props.className}
+      />
+    );
+  }
+  return <LiveTerminalView {...props} />;
+});
 
 function TerminalViewBase({
   terminalId,

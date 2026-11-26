@@ -30,9 +30,8 @@ import type { SiblingOrder } from "@/team/team-layout";
 import type { CardSize } from "@/team/team-canvas-model";
 import { activityOf } from "@/team/team-live";
 import type { TeamPair } from "@/team/team-pairs";
-import { requestCloseTerminal, resumeLine } from "@/terminal/terminal-actions";
+import { agentLine, requestCloseTerminal } from "@/terminal/terminal-actions";
 import { isClosedByBackend, useTerminalStore } from "@/terminal/terminal-store";
-import { useResumableStore } from "@/workspace/resumable-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import { copy } from "@/ui-copy";
 
@@ -298,16 +297,15 @@ export function isSeededMember(id: string): boolean {
 }
 
 /**
- * Starts an agent's terminal in a worktree: its conversation when resume arguments name one, else a fresh agent, as the
- * terminal menu starts it. Null when it could not start; the reason is shown.
+ * Starts a fresh agent's terminal in a worktree, as the terminal menu starts it. Null when it could not start; the
+ * reason is shown.
  */
 async function startAgentSession(
   worktree: string,
   harness: HarnessId,
-  resumeArguments: readonly string[] = [],
 ): Promise<TerminalInfo | null> {
   try {
-    const command = await resumeLine(harness, resumeArguments);
+    const command = await agentLine(harness);
     if (command === null) throw new Error(`no terminal preset for ${harness}`);
     return await useTerminalStore.getState().create(worktree, command);
   } catch (error) {
@@ -325,11 +323,10 @@ async function startAgentSession(
 async function startMemberSession(
   worktree: string,
   harness: HarnessId,
-  resumeArguments?: readonly string[],
 ): Promise<TerminalInfo | null> {
   useTeamStore.setState({ addingSession: true });
   try {
-    const session = await startAgentSession(worktree, harness, resumeArguments);
+    const session = await startAgentSession(worktree, harness);
     if (session) takenSessionIds.add(session.id);
     return session;
   } finally {
@@ -826,18 +823,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     // Set before the first await, so a second click while this one runs starts nothing.
     revivingIds.add(id);
     try {
-      // Read now, so a conversation that ended a moment ago is offered too.
-      await useResumableStore.getState().refresh(member.worktree);
-      const old = useResumableStore
-        .getState()
-        .byWorktree[member.worktree]?.find(
-          (item) => item.id === member.sessionId,
-        );
-      const session = await startMemberSession(
-        member.worktree,
-        member.harness,
-        old?.resumeArguments,
-      );
+      const session = await startMemberSession(member.worktree, member.harness);
       if (!session) return false;
 
       const tied = await change(() => teamBackend.setSession(id, session.id));
@@ -845,13 +831,6 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         // The member keeps its old session, so the one just started belongs to no one: it closes.
         await closeSessionQuietly(session.id);
         return false;
-      }
-      // The conversation runs in the new session now, so the sidebar stops offering the old record.
-      if (old) {
-        void useResumableStore
-          .getState()
-          .remove(member.worktree, old.id)
-          .catch(() => undefined);
       }
       await get().load();
       return true;

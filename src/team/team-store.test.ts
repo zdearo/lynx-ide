@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
-import type { ResumableSession, TeamSnapshot, TerminalInfo } from "@/bindings";
+import type { TeamSnapshot, TerminalInfo } from "@/bindings";
 import { IpcRequestError } from "@/lib/ipc-result";
 import type { TeamStatus, WorkerState } from "@/team/team-fixtures";
 import { onTeamChanged, teamBackend } from "@/team/team-backend";
@@ -14,7 +14,7 @@ import {
   watchTeam,
   OPEN_PER_FRAME,
 } from "@/team/team-store";
-import { requestCloseTerminal, resumeLine } from "@/terminal/terminal-actions";
+import { agentLine, requestCloseTerminal } from "@/terminal/terminal-actions";
 import { useTerminalStore } from "@/terminal/terminal-store";
 import { useWorkspaceStore } from "@/workspace/workspace-store";
 import { copy } from "@/ui-copy";
@@ -48,17 +48,8 @@ vi.mock("@/terminal/terminal-store", () => ({
   isClosedByBackend: (id: string) => closedByBackend.has(id),
 }));
 vi.mock("@/terminal/terminal-actions", () => ({
-  resumeLine: vi.fn(),
+  agentLine: vi.fn(),
   requestCloseTerminal: vi.fn(),
-}));
-// The ended sessions the list holds, by worktree, and the calls the team makes of the list.
-const resumable = vi.hoisted(() => ({
-  byWorktree: {} as Record<string, ResumableSession[]>,
-  refresh: vi.fn(),
-  remove: vi.fn(),
-}));
-vi.mock("@/workspace/resumable-store", () => ({
-  useResumableStore: { getState: () => resumable },
 }));
 
 const api = vi.mocked(teamBackend);
@@ -170,6 +161,8 @@ const session = (
   startedAt: 0,
   harness: "claude",
   agentStatus: "idle",
+  restorable: false,
+  title: null,
   ...overrides,
 });
 
@@ -201,8 +194,6 @@ beforeEach(() => {
   vi.resetAllMocks();
   terminal.sessions = [];
   closedByBackend.clear();
-  resumable.byWorktree = {};
-  resumable.remove.mockResolvedValue(undefined);
   useTeamStore.setState(initialState, true);
   useWorkspaceStore.setState({ selectedWorktreePath: null });
 });
@@ -413,7 +404,7 @@ describe("team changes", () => {
   beforeEach(async () => {
     await loadTeam();
     useWorkspaceStore.setState({ selectedWorktreePath: AUTH });
-    vi.mocked(resumeLine).mockResolvedValue("claude");
+    vi.mocked(agentLine).mockResolvedValue("claude");
     terminal.create.mockResolvedValue({ id: "s1" });
   });
 
@@ -639,7 +630,7 @@ describe("team sessions", () => {
   beforeEach(async () => {
     await loadTeam();
     useWorkspaceStore.setState({ selectedWorktreePath: AUTH });
-    vi.mocked(resumeLine).mockResolvedValue("claude");
+    vi.mocked(agentLine).mockResolvedValue("claude");
     terminal.create.mockResolvedValue({ id: "s1" });
   });
 
@@ -654,7 +645,7 @@ describe("team sessions", () => {
 
     expect(await store().addMember(agentDraft)).toBe(true);
 
-    expect(resumeLine).toHaveBeenCalledWith("claude", []);
+    expect(agentLine).toHaveBeenCalledWith("claude");
     expect(terminal.create).toHaveBeenCalledWith(AUTH, "claude");
     expect(api.addMember).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1188,57 +1179,29 @@ describe("team sessions", () => {
   });
 
   describe("reviving an agent whose session ended", () => {
-    const ENDED: ResumableSession = {
-      id: "old-1",
-      harness: "claude",
-      resumeArguments: ["--resume", "conv-7"],
-      endedAt: 1,
-    };
-
     /** The reviewer, a Claude agent, is on its old session, which is not open: its terminal is closed. */
     const closedReviewer = () =>
       loadTeam(teamWithSessions({ reviewer: "old-1" }));
 
-    it("resumes the conversation the list holds, and ties the new session to the member", async () => {
+    it("starts a fresh agent in the same worktree and ties the new session to the member", async () => {
       await closedReviewer();
-      resumable.byWorktree[AUTH] = [ENDED];
-      vi.mocked(resumeLine).mockResolvedValue("claude --resume conv-7");
+      vi.mocked(agentLine).mockResolvedValue("claude");
       terminal.create.mockResolvedValue(session("s2"));
       api.setSession.mockResolvedValue(null);
       api.snapshot.mockResolvedValue(teamWithSessions({ reviewer: "s2" }));
 
       expect(await store().reviveMember("reviewer")).toBe(true);
 
-      expect(resumeLine).toHaveBeenCalledWith("claude", ["--resume", "conv-7"]);
-      expect(terminal.create).toHaveBeenCalledWith(
-        AUTH,
-        "claude --resume conv-7",
-      );
+      expect(agentLine).toHaveBeenCalledWith("claude");
+      expect(terminal.create).toHaveBeenCalledWith(AUTH, "claude");
       expect(api.setSession).toHaveBeenCalledWith("reviewer", "s2");
-      expect(resumable.remove).toHaveBeenCalledWith(AUTH, "old-1");
       expect(member("reviewer")).toMatchObject({ sessionId: "s2" });
       expect(api.addMember).not.toHaveBeenCalled();
     });
 
-    it("starts a fresh agent in the same worktree when the list has no conversation of the member", async () => {
-      await closedReviewer();
-      vi.mocked(resumeLine).mockResolvedValue("claude");
-      terminal.create.mockResolvedValue(session("s2"));
-      api.setSession.mockResolvedValue(null);
-      api.snapshot.mockResolvedValue(teamWithSessions({ reviewer: "s2" }));
-
-      expect(await store().reviveMember("reviewer")).toBe(true);
-
-      expect(resumeLine).toHaveBeenCalledWith("claude", []);
-      expect(terminal.create).toHaveBeenCalledWith(AUTH, "claude");
-      expect(api.setSession).toHaveBeenCalledWith("reviewer", "s2");
-      expect(resumable.remove).not.toHaveBeenCalled();
-    });
-
     it("does not adopt the new session as a second loose member, even when the store reports it while it is tied", async () => {
       await closedReviewer();
-      resumable.byWorktree[AUTH] = [ENDED];
-      vi.mocked(resumeLine).mockResolvedValue("claude --resume conv-7");
+      vi.mocked(agentLine).mockResolvedValue("claude");
       const started = session("s2");
       terminal.create.mockImplementation(async () => {
         // The store takes the session while the team starts it: nothing is adopted meanwhile.
@@ -1267,8 +1230,7 @@ describe("team sessions", () => {
 
     it("closes the new session and keeps the old one when the backend refuses the tie", async () => {
       await closedReviewer();
-      resumable.byWorktree[AUTH] = [ENDED];
-      vi.mocked(resumeLine).mockResolvedValue("claude --resume conv-7");
+      vi.mocked(agentLine).mockResolvedValue("claude");
       terminal.create.mockResolvedValue(session("s2"));
       api.setSession.mockRejectedValue(
         refused("the session belongs to another member"),
@@ -1280,7 +1242,6 @@ describe("team sessions", () => {
       expect(toast.error).toHaveBeenCalledWith(copy.team.changeRefused, {
         description: "the session belongs to another member",
       });
-      expect(resumable.remove).not.toHaveBeenCalled();
       expect(member("reviewer")).toMatchObject({ sessionId: "old-1" });
     });
 
